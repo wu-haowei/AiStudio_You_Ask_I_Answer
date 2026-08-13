@@ -3,29 +3,81 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Two-player rooms. The room code acts as the shared secret.
-    match /rooms/{roomCode} {
-      allow read, write: if roomCode.size() > 0 && roomCode.size() <= 64;
+    /*
+     * Access switch.
+     *
+     * config/access.requireInvite is the single source of truth for whether the
+     * invite gate is on. The app reads the same document, so flipping this one
+     * boolean in the Firebase console turns the gate on or off for both the UI
+     * and these rules — no redeploy needed.
+     *
+     * If the document is missing, the gate is OFF and the app is open. That is
+     * the deliberate default so the rules can be published before the gate is
+     * ever configured.
+     */
+    function inviteRequired() {
+      return exists(/databases/$(database)/documents/config/access)
+        && get(/databases/$(database)/documents/config/access).data.requireInvite == true;
+    }
 
-      // Chat history and reveal reports for a room.
+    function isMember() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/members/$(request.auth.uid));
+    }
+
+    function allowed() {
+      return !inviteRequired() || isMember();
+    }
+
+    function inviteCode() {
+      return get(/databases/$(database)/documents/config/invite).data.code;
+    }
+
+    /*
+     * Allowlist. A device joins by writing its own document with the shared
+     * invite code; the rule compares it against config/invite, which the client
+     * can never read. Entries cannot be edited or removed from the app —
+     * manage them in the Firebase console.
+     */
+    match /members/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow create: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.code is string
+        && request.resource.data.code == inviteCode();
+      allow update, delete: if false;
+    }
+
+    match /config/{document} {
+      // The app needs to see whether the gate is on...
+      allow read: if document == 'access';
+      // ...but the invite code itself stays server-side only.
+      allow write: if false;
+    }
+
+    // Rooms and their chat history.
+    match /rooms/{roomCode} {
+      allow read, write: if allowed();
+
       match /messages/{messageId} {
-        allow read, create: if roomCode.size() > 0 && roomCode.size() <= 64;
+        allow read, create: if allowed();
         // History is append-only: existing messages cannot be edited or removed.
         allow update, delete: if false;
       }
     }
 
-    // Shared Q&A content managed from the admin view.
+    // Shared question library managed from the admin view.
     match /faqs/{faqId} {
-      allow read, write: if true;
+      allow read, write: if allowed();
     }
 
     match /categories/{categoryId} {
-      allow read, write: if true;
+      allow read, write: if allowed();
     }
 
-    match /userQuestions/{questionId} {
-      allow read, write: if true;
+    // Anything not listed above is denied.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

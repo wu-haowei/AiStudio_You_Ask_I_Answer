@@ -16,7 +16,9 @@ import {
   writeBatch,
   runTransaction,
   serverTimestamp,
+  type QueryDocumentSnapshot,
 } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged, type User } from 'firebase/auth';
 import {
   Category,
   CoPlayRoom,
@@ -25,7 +27,6 @@ import {
   RoomMessage,
   RoomPlayer,
   RoomQuestion,
-  UserQuestion,
 } from '../types';
 
 const env = (import.meta as any).env || {};
@@ -41,6 +42,7 @@ export const firebaseConfig = {
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
+export const auth = getAuth(app);
 
 /** Collection names — single source of truth. */
 export const COLLECTIONS = {
@@ -48,11 +50,91 @@ export const COLLECTIONS = {
   MESSAGES: 'messages',
   FAQS: 'faqs',
   CATEGORIES: 'categories',
-  USER_QUESTIONS: 'userQuestions',
+  /** Allowlist of anonymous UIDs permitted to use the app. */
+  MEMBERS: 'members',
+  CONFIG: 'config',
 } as const;
 
 /** Messages fetched on entry, and per "load older" page. */
 export const MESSAGE_PAGE_SIZE = 50;
+
+/* ------------------------------------------------------------------ *
+ * Access control
+ * ------------------------------------------------------------------ */
+
+/**
+ * Reads the access switch at config/access.
+ *
+ * This single flag drives both halves of the gate: the app reads it here, and
+ * the security rules read the same document. Flipping it in the Firebase
+ * console turns the invite gate on or off without redeploying anything.
+ *
+ * Missing document or unreadable => treated as off, matching the rules.
+ */
+export const isInviteRequired = async (): Promise<boolean> => {
+  try {
+    const snap = await getDoc(doc(db, COLLECTIONS.CONFIG, 'access'));
+    return snap.exists() && snap.data()?.requireInvite === true;
+  } catch (err) {
+    console.warn('[firestore] could not read access config, treating as open:', err);
+    return false;
+  }
+};
+
+/**
+ * Signs the browser in anonymously. Anonymous auth alone proves nothing — it
+ * just gives this device a stable uid that the allowlist can be checked against.
+ */
+export const ensureSignedIn = (): Promise<User> =>
+  new Promise((resolve, reject) => {
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      (user) => {
+        if (user) {
+          unsubscribe();
+          resolve(user);
+          return;
+        }
+        signInAnonymously(auth).catch((err) => {
+          unsubscribe();
+          reject(err);
+        });
+      },
+      (err) => {
+        unsubscribe();
+        reject(err);
+      }
+    );
+  });
+
+/** True when this uid is on the allowlist. */
+export const isMember = async (uid: string): Promise<boolean> => {
+  try {
+    const snap = await getDoc(doc(db, COLLECTIONS.MEMBERS, uid));
+    return snap.exists();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Joins the allowlist by presenting the shared invite code. Security rules
+ * compare the submitted code against a config document the client cannot read,
+ * so a wrong code is rejected server-side.
+ */
+export const claimMembership = async (uid: string, code: string, name = ''): Promise<boolean> => {
+  try {
+    await setDoc(doc(db, COLLECTIONS.MEMBERS, uid), {
+      code: code.trim(),
+      name,
+      joinedAt: new Date().toISOString(),
+    });
+    return true;
+  } catch (err) {
+    console.warn('[firestore] membership rejected:', err);
+    return false;
+  }
+};
 
 /* ------------------------------------------------------------------ *
  * Utilities
@@ -132,11 +214,6 @@ export const ensureRoom = async (code: string, hostName = ''): Promise<CoPlayRoo
   };
   await setDoc(ref, fresh, { merge: true });
   return normalizeRoom(code, fresh);
-};
-
-export const getRoom = async (code: string): Promise<CoPlayRoom | null> => {
-  const snap = await getDoc(roomRef(code));
-  return snap.exists() ? normalizeRoom(code, snap.data()) : null;
 };
 
 export const subscribeToRoom = (code: string, onUpdate: (room: CoPlayRoom) => void) => {
@@ -287,54 +364,72 @@ export const appendMessage = async (
   return payload;
 };
 
+/** Opaque paging cursor — the oldest document of the page just delivered. */
+export type MessageCursor = QueryDocumentSnapshot | null;
+
+export interface MessagePage {
+  messages: RoomMessage[];
+  cursor: MessageCursor;
+  hasMore: boolean;
+}
+
 /**
- * Fetches the page of messages immediately older than `beforeCreatedAt`.
- * Returns them oldest-first, plus whether a further page probably exists.
+ * Reads a document as a message. `serverTimestamps: 'estimate'` matters: a
+ * message this device just sent has no server timestamp until the write lands,
+ * and an unresolved timestamp sorts as null — which would make the message jump
+ * to the top of the thread for a moment.
  */
+const toMessage = (d: QueryDocumentSnapshot): RoomMessage =>
+  d.data({ serverTimestamps: 'estimate' }) as RoomMessage;
+
+/** Fetches the page of messages immediately older than `cursor`, oldest-first. */
 export const loadOlderMessages = async (
   code: string,
-  beforeCreatedAt: string,
+  cursor: QueryDocumentSnapshot,
   max = MESSAGE_PAGE_SIZE
-): Promise<{ messages: RoomMessage[]; hasMore: boolean }> => {
+): Promise<MessagePage> => {
   try {
     const snap = await getDocs(
-      query(
-        messagesRef(code),
-        orderBy('createdAt', 'desc'),
-        startAfter(beforeCreatedAt),
-        fsLimit(max)
-      )
+      query(messagesRef(code), orderBy('serverTime', 'desc'), startAfter(cursor), fsLimit(max))
     );
     return {
-      messages: snap.docs.map((d) => d.data() as RoomMessage).reverse(),
+      messages: snap.docs.map(toMessage).reverse(),
+      cursor: snap.docs[snap.docs.length - 1] ?? null,
       hasMore: snap.docs.length === max,
     };
   } catch (err) {
     console.warn('[firestore] failed to load older messages:', err);
-    return { messages: [], hasMore: false };
+    return { messages: [], cursor: null, hasMore: false };
   }
 };
 
 /**
- * Realtime listener over the most recent `max` messages, delivered oldest-first.
- * The first callback doubles as the initial load; anything older is paged in
- * separately via loadOlderMessages.
+ * Realtime listener over the most recent `max` messages, delivered oldest-first
+ * and ordered by server time so the two devices' clocks cannot disagree.
+ * The first callback doubles as the initial load; older pages come from
+ * loadOlderMessages.
  */
 export const subscribeToMessages = (
   code: string,
-  onUpdate: (messages: RoomMessage[]) => void,
+  onUpdate: (page: MessagePage) => void,
   max = MESSAGE_PAGE_SIZE
 ) => {
   if (!code) return () => {};
   return onSnapshot(
-    query(messagesRef(code), orderBy('createdAt', 'desc'), fsLimit(max)),
-    (snap) => onUpdate(snap.docs.map((d) => d.data() as RoomMessage).reverse()),
+    query(messagesRef(code), orderBy('serverTime', 'desc'), fsLimit(max)),
+    (snap) =>
+      onUpdate({
+        messages: snap.docs.map(toMessage).reverse(),
+        // Ordered newest-first, so the last document is the oldest of the page
+        cursor: snap.docs[snap.docs.length - 1] ?? null,
+        hasMore: snap.docs.length === max,
+      }),
     (err) => console.warn('[firestore] messages snapshot error:', err)
   );
 };
 
 /* ------------------------------------------------------------------ *
- * Content collections: faqs / categories / userQuestions
+ * Content collections: faqs / categories
  * ------------------------------------------------------------------ */
 
 const contentRef = (name: string) => collection(db, name);
@@ -429,5 +524,3 @@ export const subscribeToFAQs = (cb: (items: FAQItem[]) => void) =>
   subscribeToCollection<FAQItem>(COLLECTIONS.FAQS, cb);
 export const subscribeToCategories = (cb: (items: Category[]) => void) =>
   subscribeToCollection<Category>(COLLECTIONS.CATEGORIES, cb);
-export const subscribeToUserQuestions = (cb: (items: UserQuestion[]) => void) =>
-  subscribeToCollection<UserQuestion>(COLLECTIONS.USER_QUESTIONS, cb);

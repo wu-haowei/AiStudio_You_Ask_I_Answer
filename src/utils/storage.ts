@@ -1,18 +1,14 @@
 /**
- * Local-device preferences only.
+ * Local-device housekeeping only.
  *
- * All shared content (FAQs, categories, user questions, rooms and chat history)
- * lives in Firebase Firestore — see src/lib/firebase.ts. This module is limited
- * to per-browser state that is meaningless to sync: vote receipts, the saved
- * passcode/display name, and cache-version housekeeping.
+ * All shared content — the question library, rooms and chat history — lives in
+ * Firebase Firestore (see src/lib/firebase.ts). This module just tracks which
+ * cache version this browser last ran, so stale keys from older builds can be
+ * cleared on upgrade.
  */
 
-export const CURRENT_APP_VERSION = '3.0.0';
+export const CURRENT_APP_VERSION = '3.1.0';
 export const APP_VERSION_KEY = 'milktea_qa_app_version';
-
-const STORAGE_KEYS = {
-  VOTED_FAQS: 'milktea_qa_voted_faqs_v1',
-};
 
 /** Keys written by pre-Firebase builds; removed on upgrade. */
 const LEGACY_KEYS = [
@@ -22,6 +18,9 @@ const LEGACY_KEYS = [
   'milktea_qa_notion_config_v1',
   'coplay_rooms_static_v1',
   'coplay_session_passcode',
+  'milktea_qa_voted_faqs_v1',
+  'milktea_coplay_passcode',
+  'milktea_coplay_session_passcode',
 ];
 
 /**
@@ -70,22 +69,3 @@ export function clearAllStorageAndSession(): void {
   }
 }
 
-/* Vote receipts — per device, so one browser cannot vote twice. */
-export function getVotedFAQIds(): Record<string, 'helpful' | 'unhelpful'> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.VOTED_FAQS);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-
-export function saveVotedFAQId(faqId: string, type: 'helpful' | 'unhelpful'): void {
-  const current = getVotedFAQIds();
-  current[faqId] = type;
-  try {
-    localStorage.setItem(STORAGE_KEYS.VOTED_FAQS, JSON.stringify(current));
-  } catch (err) {
-    console.error('Failed to save voted status:', err);
-  }
-}

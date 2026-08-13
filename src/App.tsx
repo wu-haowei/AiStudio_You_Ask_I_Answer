@@ -1,25 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { ActiveTab, Category, FAQItem, ToastMessage, UserQuestion } from './types';
+import { ActiveTab, Category, FAQItem, ToastMessage } from './types';
 import { checkAndMigrateStorageVersion, CURRENT_APP_VERSION } from './utils/storage';
+import { INITIAL_CATEGORIES, INITIAL_FAQS, SEED_FAQ_IDS } from './data/initialData';
 import {
-  INITIAL_CATEGORIES,
-  INITIAL_FAQS,
-  INITIAL_USER_QUESTIONS,
-  SEED_FAQ_IDS,
-} from './data/initialData';
-import {
+  claimMembership,
   COLLECTIONS,
   deleteItem,
   deleteItems,
+  ensureSignedIn,
+  isInviteRequired,
+  isMember,
   replaceCollection,
   saveItem,
   saveItems,
   seedCollectionIfEmpty,
   subscribeToCategories,
   subscribeToFAQs,
-  subscribeToUserQuestions,
 } from './lib/firebase';
 import { useIdentity } from './lib/identity';
+import { AccessGate } from './components/AccessGate';
 import { Header } from './components/Header';
 import { CoPlayView } from './components/CoPlayView';
 import { AdminManageView } from './components/AdminManageView';
@@ -30,8 +29,10 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('co_play');
   const [faqs, setFaqs] = useState<FAQItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [userQuestions, setUserQuestions] = useState<UserQuestion[]>([]);
   const [isLoadingContent, setIsLoadingContent] = useState(true);
+  /** Allowlist state for this device. */
+  const [access, setAccess] = useState<'checking' | 'blocked' | 'granted' | 'offline'>('checking');
+  const [uid, setUid] = useState('');
   const [roomStatus, setRoomStatus] = useState({ onlineCount: 0, isRoundActive: false });
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -53,9 +54,37 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Seed defaults on a fresh database, then live-subscribe to Firestore content.
+  /*
+   * Access check. The invite gate is a switch stored in Firestore
+   * (config/access.requireInvite) so it can be turned on later without a
+   * redeploy. While it is off, nobody signs in and nobody is asked for a code.
+   */
   useEffect(() => {
     const wasUpdated = checkAndMigrateStorageVersion();
+    if (wasUpdated) {
+      showToast(`已自動升級至最新版本 (v${CURRENT_APP_VERSION})`, undefined, 'info');
+    }
+
+    (async () => {
+      try {
+        if (!(await isInviteRequired())) {
+          setAccess('granted');
+          return;
+        }
+
+        const user = await ensureSignedIn();
+        setUid(user.uid);
+        setAccess((await isMember(user.uid)) ? 'granted' : 'blocked');
+      } catch (err) {
+        console.error('Access check failed:', err);
+        setAccess('offline');
+      }
+    })();
+  }, []);
+
+  // Once allowed in: seed defaults on a fresh database, then live-subscribe.
+  useEffect(() => {
+    if (access !== 'granted') return;
 
     let unsubscribers: Array<() => void> = [];
 
@@ -63,49 +92,33 @@ export default function App() {
       await Promise.all([
         seedCollectionIfEmpty(COLLECTIONS.FAQS, INITIAL_FAQS),
         seedCollectionIfEmpty(COLLECTIONS.CATEGORIES, INITIAL_CATEGORIES),
-        seedCollectionIfEmpty(COLLECTIONS.USER_QUESTIONS, INITIAL_USER_QUESTIONS),
       ]);
 
       unsubscribers = [
         subscribeToFAQs((items) => {
-          setFaqs(
-            [...items].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
-          );
+          setFaqs([...items].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')));
           setIsLoadingContent(false);
         }),
         subscribeToCategories(setCategories),
-        subscribeToUserQuestions((items) =>
-          setUserQuestions(
-            [...items].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-          )
-        ),
       ];
     })();
 
-    if (wasUpdated) {
-      showToast(
-        `已自動升級至最新版本 (v${CURRENT_APP_VERSION})`,
-        '資料已全面改由 Firebase 雲端同步，舊版本機快取已清除。',
-        'info'
-      );
-    }
-
     return () => unsubscribers.forEach((fn) => fn());
-  }, []);
+  }, [access]);
+
+  const handleClaimAccess = async (code: string) => {
+    const ok = await claimMembership(uid, code);
+    if (ok) setAccess('granted');
+    return ok;
+  };
 
   // FAQ CRUD — writes go straight to Firestore; the subscription updates local state.
-  const handleAddFAQ = (
-    newFaqData: Omit<FAQItem, 'id' | 'updatedAt' | 'helpfulCount' | 'unhelpfulCount'>
-  ) => {
-    const created: FAQItem = {
+  const handleAddFAQ = (newFaqData: Omit<FAQItem, 'id' | 'updatedAt'>) => {
+    saveItem(COLLECTIONS.FAQS, {
       ...newFaqData,
       id: `faq-${Date.now()}`,
-      helpfulCount: 0,
-      unhelpfulCount: 0,
-      views: 0,
       updatedAt: new Date().toISOString(),
-    };
-    saveItem(COLLECTIONS.FAQS, created);
+    });
   };
 
   const handleUpdateFAQ = (updatedFaq: FAQItem) => {
@@ -126,7 +139,6 @@ export default function App() {
         exportDate: new Date().toISOString(),
         faqs,
         categories,
-        userQuestions,
       },
       null,
       2
@@ -157,11 +169,8 @@ export default function App() {
             question: item.question,
             answer: item.answer || '對應真心話題目',
             category: item.category || '習性與喜好',
-            tags: Array.isArray(item.tags) ? item.tags : [],
             options: options.length > 0 ? options : undefined,
             updatedAt: new Date().toISOString(),
-            helpfulCount: item.helpfulCount || 0,
-            unhelpfulCount: item.unhelpfulCount || 0,
           };
         });
       } else if (parsed.faqs && Array.isArray(parsed.faqs)) {
@@ -217,12 +226,32 @@ export default function App() {
     await Promise.all([
       replaceCollection(COLLECTIONS.FAQS, INITIAL_FAQS),
       replaceCollection(COLLECTIONS.CATEGORIES, INITIAL_CATEGORIES),
-      replaceCollection(COLLECTIONS.USER_QUESTIONS, INITIAL_USER_QUESTIONS),
     ]);
     showToast('已還原預設題庫', '雲端題庫已重設為出廠內容。', 'success');
   };
 
-  // Keep an unauthenticated visitor out of the admin tab
+  if (access === 'checking') {
+    return (
+      <div className="h-screen h-dvh bg-[#F5E6D3] flex items-center justify-center text-sm text-[#7A6C5E]">
+        連線中…
+      </div>
+    );
+  }
+
+  if (access === 'offline') {
+    return (
+      <div className="h-screen h-dvh bg-[#F5E6D3] flex flex-col items-center justify-center gap-2 p-6 text-center">
+        <p className="text-sm font-bold text-[#4A3F35]">無法連線</p>
+        <p className="text-xs text-[#7A6C5E]">請檢查網路後重新整理頁面</p>
+      </div>
+    );
+  }
+
+  if (access === 'blocked') {
+    return <AccessGate onSubmit={handleClaimAccess} />;
+  }
+
+  // Keep a visitor who has not chosen a name out of the admin tab
   const currentTab: ActiveTab = isSignedIn ? activeTab : 'co_play';
 
   return (

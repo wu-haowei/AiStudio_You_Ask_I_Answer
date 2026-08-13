@@ -19,6 +19,7 @@ import {
   ensureRoom,
   loadOlderMessages,
   MESSAGE_PAGE_SIZE,
+  type MessageCursor,
   setActiveGameQuestion,
   setGameInvitation,
   prunePlayers,
@@ -91,6 +92,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   /** Older pages fetched on demand when scrolling up. */
   const [olderMessages, setOlderMessages] = useState<RoomMessage[]>([]);
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
+  /** Firestore cursor pointing at the oldest message currently loaded. */
+  const [historyCursor, setHistoryCursor] = useState<MessageCursor>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [myPlayerId, setMyPlayerId] = useState<string>('');
@@ -110,6 +113,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   const isLoadingMoreRef = useRef(false);
   /** Previous live window, used to catch messages pushed out of it. */
   const prevLiveMessagesRef = useRef<RoomMessage[]>([]);
+  /** Guards the initial paging setup against later live snapshots. */
+  const historyInitialisedRef = useRef(false);
 
   // Game Creator Modal Form
   const [isQuestionModalOpen, setIsQuestionModalOpen] = useState(false);
@@ -183,17 +188,17 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
 
   /** Fetches the next page of older messages, keeping the viewport anchored. */
   const handleLoadOlder = async () => {
-    const oldest = visibleMessages[0];
-    if (!currentRoom || !oldest || isLoadingMoreRef.current || !hasMoreHistory) return;
+    if (!currentRoom || !historyCursor || isLoadingMoreRef.current || !hasMoreHistory) return;
 
     isLoadingMoreRef.current = true;
     setIsLoadingMore(true);
     pendingScrollAdjustRef.current = streamRef.current?.scrollHeight ?? null;
     try {
-      const page = await loadOlderMessages(currentRoom.code, oldest.createdAt, MESSAGE_PAGE_SIZE);
+      const page = await loadOlderMessages(currentRoom.code, historyCursor, MESSAGE_PAGE_SIZE);
       setHasMoreHistory(page.hasMore);
       if (page.messages.length > 0) {
         setOlderMessages((prev) => [...page.messages, ...prev]);
+        if (page.cursor) setHistoryCursor(page.cursor);
       } else {
         pendingScrollAdjustRef.current = null;
       }
@@ -221,8 +226,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
 
     setOlderMessages((prev) => {
       const known = new Set(prev.map((m) => m.id));
-      const merged = [...prev, ...evicted.filter((m) => !known.has(m.id))];
-      return merged.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+      // Evicted messages are the oldest of the live window, so they belong
+      // immediately after the already-paged history — already in order.
+      return [...prev, ...evicted.filter((m) => !known.has(m.id))];
     });
   }, [messages]);
 
@@ -241,7 +247,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
       setCurrentRoom(null);
       setMessages([]);
       setOlderMessages([]);
+      setHistoryCursor(null);
       setHasMoreHistory(true);
+      historyInitialisedRef.current = false;
       setMyPlayerId('');
       return;
     }
@@ -338,8 +346,16 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
       setCurrentRoom(updatedRoom);
     });
 
-    const unsubscribeMessages = subscribeToMessages(roomCode, (history) => {
-      setMessages(history);
+    const unsubscribeMessages = subscribeToMessages(roomCode, (page) => {
+      setMessages(page.messages);
+
+      // The first snapshot seeds paging; later ones must not reset it, or
+      // reaching the start of the thread would be forgotten on every new message.
+      if (!historyInitialisedRef.current) {
+        historyInitialisedRef.current = true;
+        setHistoryCursor(page.cursor);
+        setHasMoreHistory(page.hasMore);
+      }
       setIsLoadingHistory(false);
     });
 

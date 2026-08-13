@@ -21,7 +21,7 @@ import { AdminJsonImportModal } from './admin/AdminJsonImportModal';
 interface AdminManageViewProps {
   faqs: FAQItem[];
   categories: Category[];
-  onAddFAQ: (faq: Omit<FAQItem, 'id' | 'updatedAt' | 'helpfulCount' | 'unhelpfulCount'>) => void;
+  onAddFAQ: (faq: Omit<FAQItem, 'id' | 'updatedAt'>) => void;
   onUpdateFAQ: (faq: FAQItem) => void;
   onDeleteFAQ: (id: string) => void;
   onDeleteFAQs: (ids: string[]) => void | Promise<void>;
@@ -59,8 +59,6 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   const [formIsPinned, setFormIsPinned] = useState(false);
   const [formIsHidden, setFormIsHidden] = useState(false);
   const [formOptions, setFormOptions] = useState<string[]>(['', '']);
-  const [formCorrectIndex, setFormCorrectIndex] = useState(0);
-  const [formExplanation, setFormExplanation] = useState('');
 
 
   // JSON Template Modal
@@ -78,11 +76,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     if (selectedCategory !== 'all' && f.category !== selectedCategory) return false;
     if (search.trim()) {
       const q = search.toLowerCase();
-      return (
-        f.question.toLowerCase().includes(q) ||
-        f.answer.toLowerCase().includes(q) ||
-        f.tags?.some((t) => t.toLowerCase().includes(q))
-      );
+      return f.question.toLowerCase().includes(q) || f.answer.toLowerCase().includes(q);
     }
     return true;
   });
@@ -135,8 +129,6 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     setFormIsPinned(false);
     setFormIsHidden(false);
     setFormOptions(['', '']);
-    setFormCorrectIndex(0);
-    setFormExplanation('');
     setIsEditModalOpen(true);
   };
 
@@ -148,8 +140,6 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     setFormIsPinned(!!faq.isPinned);
     setFormIsHidden(!!faq.isHidden);
     setFormOptions(faq.options?.length ? [...faq.options] : ['', '']);
-    setFormCorrectIndex(faq.correctOptionIndex || 0);
-    setFormExplanation(faq.explanation || '');
     setIsEditModalOpen(true);
   };
 
@@ -184,13 +174,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         question: formQuestion.trim(),
         answer: formAnswer.trim(),
         category: formCategory,
-        tags: editingFaq.tags || [],
         isPinned: formIsPinned,
         isHidden: formIsHidden,
         options: optionsArray.length > 0 ? optionsArray : undefined,
-        correctOptionIndex:
-          optionsArray.length > 0 ? Math.min(formCorrectIndex, optionsArray.length - 1) : undefined,
-        explanation: formExplanation.trim() || undefined,
         updatedAt: new Date().toISOString(),
       });
       showToast('已更新', undefined, 'success');
@@ -199,12 +185,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         question: formQuestion.trim(),
         answer: formAnswer.trim(),
         category: formCategory,
-        tags: [],
         isPinned: formIsPinned,
         isHidden: formIsHidden,
         options: optionsArray.length > 0 ? optionsArray : undefined,
-        correctOptionIndex: optionsArray.length > 0 ? 0 : undefined,
-        explanation: formExplanation.trim() || undefined,
       });
       showToast('已新增題目', undefined, 'success');
     }

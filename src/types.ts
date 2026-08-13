@@ -1,19 +1,14 @@
 export interface FAQItem {
   id: string;
   question: string;
+  /** Context or intent behind the question — shown in the admin list only. */
   answer: string;
   category: string;
-  tags: string[];
   isPinned?: boolean;
   isHidden?: boolean;
-  helpfulCount: number;
-  unhelpfulCount: number;
-  views?: number;
-  updatedAt: string;
-  // Interactive Quiz / Challenge support
+  /** Two or more choices. Absent means the question has no preset options. */
   options?: string[];
-  correctOptionIndex?: number;
-  explanation?: string;
+  updatedAt: string;
 }
 
 export interface Category {
@@ -22,17 +17,6 @@ export interface Category {
   slug: string;
   colorClass: 'badge-milktea' | 'badge-matcha' | 'badge-rosetea' | 'badge-taro' | 'badge-earlgrey';
   description?: string;
-}
-
-export interface UserQuestion {
-  id: string;
-  authorName: string;
-  authorEmail?: string;
-  questionText: string;
-  category: string;
-  createdAt: string;
-  status: 'pending' | 'answered' | 'archived';
-  officialReply?: string;
 }
 
 export type ActiveTab = 'co_play' | 'admin_manage';
