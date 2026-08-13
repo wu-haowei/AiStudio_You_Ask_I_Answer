@@ -146,17 +146,24 @@ export default function App() {
       const parsed = JSON.parse(jsonStr);
       let importedItems: FAQItem[] = [];
       if (Array.isArray(parsed)) {
-        importedItems = parsed.map((item, idx) => ({
-          id: item.id || `faq-imported-${idx}-${Date.now()}`,
-          question: item.question,
-          answer: item.answer || '對應真心話題目',
-          category: item.category || '習性與喜好',
-          tags: item.tags || ['匯入題目'],
-          options: item.options || [item.answer, '選項 A', '選項 B', '選項 C'],
-          updatedAt: new Date().toISOString(),
-          helpfulCount: item.helpfulCount || 0,
-          unhelpfulCount: item.unhelpfulCount || 0,
-        }));
+        importedItems = parsed.map((item, idx) => {
+          // Options are free-length; keep whatever the file provides, or none.
+          const options = Array.isArray(item.options)
+            ? item.options.map((o: unknown) => String(o).trim()).filter(Boolean)
+            : [];
+
+          return {
+            id: item.id || `faq-imported-${idx}-${Date.now()}`,
+            question: item.question,
+            answer: item.answer || '對應真心話題目',
+            category: item.category || '習性與喜好',
+            tags: Array.isArray(item.tags) ? item.tags : [],
+            options: options.length > 0 ? options : undefined,
+            updatedAt: new Date().toISOString(),
+            helpfulCount: item.helpfulCount || 0,
+            unhelpfulCount: item.unhelpfulCount || 0,
+          };
+        });
       } else if (parsed.faqs && Array.isArray(parsed.faqs)) {
         importedItems = parsed.faqs;
       }

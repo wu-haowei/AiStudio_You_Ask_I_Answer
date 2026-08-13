@@ -14,8 +14,7 @@ const sampleJsonTemplate = JSON.stringify(
       question: '假日最喜歡的放鬆度過方式是什麼？',
       answer: '考驗對方的日常習性與放鬆偏好。',
       category: '習性與喜好',
-      tags: ['日常習慣', '假日休閒'],
-      options: ['在家躺平追劇看動漫', '約朋友出門踩點喝咖啡', '戶外運動踏青接觸大自然', '好好睡覺打電競打整天'],
+      options: ['在家躺平追劇', '約朋友喝咖啡', '戶外運動踏青'],
     },
   ],
   null,
@@ -53,7 +52,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-[#3A2E2B] flex items-center gap-1.5">
                 <Sparkles className="w-4 h-4 text-[#8C6D53]" />
-                JSON 範本
+                JSON 範本（options 數量不限）
               </span>
               <div className="flex items-center gap-2">
                 <button

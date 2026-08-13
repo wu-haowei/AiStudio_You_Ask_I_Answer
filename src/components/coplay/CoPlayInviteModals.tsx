@@ -240,18 +240,19 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                     <div>
                       <span className="text-[11px] font-bold text-[#7A6C5E] block mb-1">選項</span>
                       <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#E8D8C4] text-[#4A3F35] font-medium truncate">
-                          <span className="font-bold text-[#A68B6D]">A.</span> {optA}
-                        </div>
-                        <div className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#E8D8C4] text-[#4A3F35] font-medium truncate">
-                          <span className="font-bold text-[#A68B6D]">B.</span> {optB}
-                        </div>
-                        <div className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#E8D8C4] text-[#4A3F35] font-medium truncate">
-                          <span className="font-bold text-[#A68B6D]">C.</span> {optC}
-                        </div>
-                        <div className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#E8D8C4] text-[#4A3F35] font-medium truncate">
-                          <span className="font-bold text-[#A68B6D]">D.</span> {optD}
-                        </div>
+                        {[optA, optB, optC, optD].map((opt, idx) =>
+                          opt.trim() ? (
+                            <div
+                              key={idx}
+                              className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#E8D8C4] text-[#4A3F35] font-medium truncate"
+                            >
+                              <span className="font-bold text-[#A68B6D]">
+                                {String.fromCharCode(65 + idx)}.
+                              </span>{' '}
+                              {opt}
+                            </div>
+                          ) : null
+                        )}
                       </div>
                     </div>
 
@@ -298,16 +299,16 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                           />
                           <input
                             type="text"
-                            required
                             value={optC}
                             onChange={(e) => setOptC(e.target.value)}
+                            placeholder="選項 C（可留白）"
                             className="px-3 py-1.5 text-xs rounded-xl milk-tea-input"
                           />
                           <input
                             type="text"
-                            required
                             value={optD}
                             onChange={(e) => setOptD(e.target.value)}
+                            placeholder="選項 D（可留白）"
                             className="px-3 py-1.5 text-xs rounded-xl milk-tea-input"
                           />
                         </div>
@@ -350,7 +351,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   </div>
 
                   <div>
-                    <label className="text-xs font-bold text-[#4A3F35] mb-1 block">四個選項</label>
+                    <label className="text-xs font-bold text-[#4A3F35] mb-1 block">選項（至少兩個）</label>
                     <div className="grid grid-cols-2 gap-2">
                       <input
                         type="text"
@@ -370,18 +371,16 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                       />
                       <input
                         type="text"
-                        required
                         value={optC}
                         onChange={(e) => setOptC(e.target.value)}
-                        placeholder="選項 C"
+                        placeholder="選項 C（可留白）"
                         className="px-3 py-2 text-xs rounded-xl milk-tea-input"
                       />
                       <input
                         type="text"
-                        required
                         value={optD}
                         onChange={(e) => setOptD(e.target.value)}
-                        placeholder="選項 D"
+                        placeholder="選項 D（可留白）"
                         className="px-3 py-2 text-xs rounded-xl milk-tea-input"
                       />
                     </div>

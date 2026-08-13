@@ -11,7 +11,6 @@ import {
   Download,
   Upload,
   RotateCcw,
-  Wand2,
   X,
   Check,
 } from 'lucide-react';
@@ -57,15 +56,12 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   const [formQuestion, setFormQuestion] = useState('');
   const [formAnswer, setFormAnswer] = useState('');
   const [formCategory, setFormCategory] = useState('');
-  const [formTagsStr, setFormTagsStr] = useState('');
   const [formIsPinned, setFormIsPinned] = useState(false);
   const [formIsHidden, setFormIsHidden] = useState(false);
-  const [formOptionsStr, setFormOptionsStr] = useState('');
+  const [formOptions, setFormOptions] = useState<string[]>(['', '']);
   const [formCorrectIndex, setFormCorrectIndex] = useState(0);
   const [formExplanation, setFormExplanation] = useState('');
 
-  // AI Answer Polish
-  const [isPolishing, setIsPolishing] = useState(false);
 
   // JSON Template Modal
   const [isJsonModalOpen, setIsJsonModalOpen] = useState(false);
@@ -136,10 +132,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     setFormQuestion('');
     setFormAnswer('');
     setFormCategory(categories[0]?.name || '習性與喜好');
-    setFormTagsStr('');
     setFormIsPinned(false);
     setFormIsHidden(false);
-    setFormOptionsStr('');
+    setFormOptions(['', '']);
     setFormCorrectIndex(0);
     setFormExplanation('');
     setIsEditModalOpen(true);
@@ -150,13 +145,23 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     setFormQuestion(faq.question);
     setFormAnswer(faq.answer);
     setFormCategory(faq.category);
-    setFormTagsStr(faq.tags ? faq.tags.join(', ') : '');
     setFormIsPinned(!!faq.isPinned);
     setFormIsHidden(!!faq.isHidden);
-    setFormOptionsStr(faq.options ? faq.options.join('\n') : '');
+    setFormOptions(faq.options?.length ? [...faq.options] : ['', '']);
     setFormCorrectIndex(faq.correctOptionIndex || 0);
     setFormExplanation(faq.explanation || '');
     setIsEditModalOpen(true);
+  };
+
+  /** Options are a free-length list — at least two, no upper bound. */
+  const updateOption = (index: number, value: string) => {
+    setFormOptions((prev) => prev.map((o, i) => (i === index ? value : o)));
+  };
+
+  const addOption = () => setFormOptions((prev) => [...prev, '']);
+
+  const removeOption = (index: number) => {
+    setFormOptions((prev) => (prev.length <= 2 ? prev : prev.filter((_, i) => i !== index)));
   };
 
   const handleSaveForm = (e: React.FormEvent) => {
@@ -166,15 +171,12 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
       return;
     }
 
-    const tagsArray = formTagsStr
-      .split(/[,，\s]+/)
-      .map((t) => t.trim())
-      .filter(Boolean);
+    const optionsArray = formOptions.map((o) => o.trim()).filter(Boolean);
 
-    const optionsArray = formOptionsStr
-      .split('\n')
-      .map((o) => o.trim())
-      .filter(Boolean);
+    if (optionsArray.length === 1) {
+      showToast('選項至少要兩個', '請再補一個選項，或全部留白', 'warning');
+      return;
+    }
 
     if (editingFaq) {
       onUpdateFAQ({
@@ -182,11 +184,12 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         question: formQuestion.trim(),
         answer: formAnswer.trim(),
         category: formCategory,
-        tags: tagsArray,
+        tags: editingFaq.tags || [],
         isPinned: formIsPinned,
         isHidden: formIsHidden,
         options: optionsArray.length > 0 ? optionsArray : undefined,
-        correctOptionIndex: optionsArray.length > 0 ? formCorrectIndex : undefined,
+        correctOptionIndex:
+          optionsArray.length > 0 ? Math.min(formCorrectIndex, optionsArray.length - 1) : undefined,
         explanation: formExplanation.trim() || undefined,
         updatedAt: new Date().toISOString(),
       });
@@ -196,44 +199,17 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         question: formQuestion.trim(),
         answer: formAnswer.trim(),
         category: formCategory,
-        tags: tagsArray,
+        tags: [],
         isPinned: formIsPinned,
         isHidden: formIsHidden,
         options: optionsArray.length > 0 ? optionsArray : undefined,
-        correctOptionIndex: optionsArray.length > 0 ? formCorrectIndex : undefined,
+        correctOptionIndex: optionsArray.length > 0 ? 0 : undefined,
         explanation: formExplanation.trim() || undefined,
       });
       showToast('已新增題目', undefined, 'success');
     }
 
     setIsEditModalOpen(false);
-  };
-
-  const handlePolishAnswer = async () => {
-    if (!formQuestion.trim() || !formAnswer.trim()) {
-      showToast('請先填寫題目與說明', undefined, 'warning');
-      return;
-    }
-
-    setIsPolishing(true);
-    try {
-      const res = await fetch('/api/polish-answer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: formQuestion, answer: formAnswer }),
-      });
-      const data = await res.json();
-      if (data.success && data.polishedAnswer) {
-        setFormAnswer(data.polishedAnswer);
-        showToast('已完成潤飾', undefined, 'success');
-      } else {
-        throw new Error(data.error || '潤飾失敗');
-      }
-    } catch (err: any) {
-      showToast('AI 潤飾失敗', err.message || '請確認 API 金鑰', 'error');
-    } finally {
-      setIsPolishing(false);
-    }
   };
 
   return (
@@ -501,20 +477,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-semibold text-[#3A2E2B]">
-                    題目解析與說明 <span className="text-rose-500">*</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handlePolishAnswer}
-                    disabled={isPolishing}
-                    className="text-xs text-[#8C6D53] hover:underline flex items-center gap-1 font-semibold"
-                  >
-                    <Wand2 className="w-3.5 h-3.5" />
-                    <span>{isPolishing ? '潤飾中…' : 'AI 潤飾'}</span>
-                  </button>
-                </div>
+                <label className="block text-xs font-semibold text-[#3A2E2B] mb-1.5">
+                  題目解析與說明 <span className="text-rose-500">*</span>
+                </label>
                 <textarea
                   required
                   rows={3}
@@ -525,54 +490,69 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-[#3A2E2B] mb-1.5">
-                    題目方向分類
-                  </label>
-                  <select
-                    value={formCategory}
-                    onChange={(e) => setFormCategory(e.target.value)}
-                    className="w-full px-3.5 py-2.5 text-sm rounded-xl milk-tea-input"
-                  >
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.name}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-[#3A2E2B] mb-1.5">
-                    相關標籤 (用逗號隔開)
-                  </label>
-                  <input
-                    type="text"
-                    value={formTagsStr}
-                    onChange={(e) => setFormTagsStr(e.target.value)}
-                    placeholder="日常生活, 偏好, 習慣"
-                    className="w-full px-4 py-2.5 text-sm rounded-xl milk-tea-input"
-                  />
-                </div>
+              <div>
+                <label className="block text-xs font-semibold text-[#3A2E2B] mb-1.5">
+                  題目方向分類
+                </label>
+                <select
+                  value={formCategory}
+                  onChange={(e) => setFormCategory(e.target.value)}
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl milk-tea-input"
+                >
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.name}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              {/* Options */}
-              <div className="border-t border-[#E8DFD3] pt-4 space-y-3">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#8C6D53]">
-                  <Sparkles className="w-4 h-4" />
-                  <span>題目選項 (每行一個，共 4 個)</span>
+              {/* Options — free-length list */}
+              <div className="border-t border-[#E8DFD3] pt-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-[#8C6D53]">
+                    <Sparkles className="w-4 h-4" />
+                    <span>題目選項 ({formOptions.filter((o) => o.trim()).length} 個)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addOption}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold text-[#8C6D53] hover:bg-[#F4ECE1] transition-colors inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    新增選項
+                  </button>
                 </div>
 
-                <div>
-                  <textarea
-                    rows={4}
-                    value={formOptionsStr}
-                    onChange={(e) => setFormOptionsStr(e.target.value)}
-                    placeholder="選項 1&#10;選項 2&#10;選項 3&#10;選項 4"
-                    className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input resize-none"
-                  />
+                <div className="space-y-2">
+                  {formOptions.map((opt, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <span className="w-5 shrink-0 text-xs font-bold text-[#A68B6D] text-center">
+                        {String.fromCharCode(65 + idx)}
+                      </span>
+                      <input
+                        type="text"
+                        value={opt}
+                        onChange={(e) => updateOption(idx, e.target.value)}
+                        placeholder={`選項 ${String.fromCharCode(65 + idx)}`}
+                        className="flex-1 min-w-0 px-3.5 py-2 text-sm rounded-xl milk-tea-input"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeOption(idx)}
+                        disabled={formOptions.length <= 2}
+                        aria-label={`移除選項 ${String.fromCharCode(65 + idx)}`}
+                        className="shrink-0 p-2 rounded-xl text-[#7A6C65] hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
+
+                <p className="text-[11px] text-[#7A6C65]">
+                  留白代表不設定選項；若要設定，至少需要兩個。
+                </p>
               </div>
 
               <div className="pt-4 flex items-center justify-end gap-3 border-t border-[#E8DFD3]">

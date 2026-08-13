@@ -554,6 +554,19 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     }
   };
 
+  /**
+   * Fills the four option slots from a question's option list. Questions can
+   * carry any number of options (two or more), so unused slots are cleared and
+   * later filtered out when the question is published.
+   */
+  const applyOptionsToForm = (options?: string[]) => {
+    const list = options || [];
+    setOptA(list[0] || '');
+    setOptB(list[1] || '');
+    setOptC(list[2] || '');
+    setOptD(list[3] || '');
+  };
+
   // Helper to randomize a question given a category
   const randomizeQuestionForCategory = (cat: string) => {
     let pool = faqs;
@@ -566,12 +579,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     const randomFaq = pool[Math.floor(Math.random() * pool.length)];
     setQuestionText(randomFaq.question);
     if (randomFaq.category) setQuestionCategory(randomFaq.category);
-    if (randomFaq.options && randomFaq.options.length >= 4) {
-      setOptA(randomFaq.options[0]);
-      setOptB(randomFaq.options[1]);
-      setOptC(randomFaq.options[2]);
-      setOptD(randomFaq.options[3]);
-    }
+    applyOptionsToForm(randomFaq.options);
   };
 
   const handleCategoryChange = (cat: string) => {
@@ -579,10 +587,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     setIsEditingPreset(false);
     if (cat === 'CUSTOM') {
       setQuestionText('');
-      setOptA('');
-      setOptB('');
-      setOptC('');
-      setOptD('');
+      applyOptionsToForm([]);
     } else {
       randomizeQuestionForCategory(cat);
     }
@@ -591,12 +596,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   const handleSelectPresetFAQ = (f: FAQItem) => {
     setQuestionText(f.question);
     if (f.category) setQuestionCategory(f.category);
-    if (f.options && f.options.length >= 4) {
-      setOptA(f.options[0]);
-      setOptB(f.options[1]);
-      setOptC(f.options[2]);
-      setOptD(f.options[3]);
-    }
+    applyOptionsToForm(f.options);
     showToast('已套用題目', f.question, 'info');
   };
 
@@ -619,12 +619,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     if (randomFaq.category) {
       setQuestionCategory(randomFaq.category);
     }
-    if (randomFaq.options && randomFaq.options.length >= 4) {
-      setOptA(randomFaq.options[0]);
-      setOptB(randomFaq.options[1]);
-      setOptC(randomFaq.options[2]);
-      setOptD(randomFaq.options[3]);
-    }
+    applyOptionsToForm(randomFaq.options);
     showToast('已換題', randomFaq.category || '自訂題庫', 'success');
   };
 
@@ -638,7 +633,11 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
 
     const finalCategory =
       questionCategory === 'CUSTOM' ? CUSTOM_CATEGORY_LABEL : questionCategory;
-    const options = [optA, optB, optC, optD].filter((o) => o.trim() !== '');
+    const options = [optA, optB, optC, optD].map((o) => o.trim()).filter(Boolean);
+    if (options.length < 2) {
+      showToast('選項至少要兩個', undefined, 'warning');
+      return;
+    }
 
     const gameQuestion: RoomQuestion = {
       id: `gq-${Date.now()}`,
