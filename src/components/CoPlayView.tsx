@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { CoPlayRoom, FAQItem, RoomQuestion } from '../types';
 import { getStoredNotionConfig } from '../utils/storage';
+import { subscribeToFirebaseRoom, syncRoomToFirebase } from '../lib/firebase';
 
 interface CoPlayViewProps {
   faqs: FAQItem[];
@@ -97,6 +98,8 @@ const saveLocalStaticRoom = (room: CoPlayRoom) => {
   if (!room || !room.code) return;
   const key = LOCAL_STATIC_ROOM_KEY(room.code);
   localStorage.setItem(key, JSON.stringify(room));
+  // Sync in real-time to Firebase Firestore for cross-device support
+  syncRoomToFirebase(room);
 };
 
 export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
@@ -239,9 +242,16 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     }
   }, [currentRoom, passcode]);
 
-  // Poll room status every 1000ms for fast real-time co-play
+  // Poll room status every 1000ms for fast real-time co-play & Firebase sync
   useEffect(() => {
-    if (!currentRoom || !passcode) return;
+    if (!currentRoom?.code || !passcode) return;
+
+    // Real-time Firebase Firestore listener for cross-device sync
+    const unsubscribeFirebase = subscribeToFirebaseRoom(currentRoom.code, (updatedRoom) => {
+      if (updatedRoom && updatedRoom.updatedAt !== currentRoom.updatedAt) {
+        setCurrentRoom(updatedRoom);
+      }
+    });
 
     const interval = setInterval(async () => {
       try {
@@ -259,8 +269,11 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       }
     }, 1000);
 
-    return () => clearInterval(interval);
-  }, [currentRoom?.code, myPlayerId, passcode]);
+    return () => {
+      clearInterval(interval);
+      unsubscribeFirebase();
+    };
+  }, [currentRoom?.code, currentRoom?.updatedAt, myPlayerId, passcode]);
 
   // Handle Saving Renamed Name
   const handleSaveName = (e?: React.FormEvent) => {
