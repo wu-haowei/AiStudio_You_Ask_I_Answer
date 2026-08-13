@@ -36,8 +36,68 @@ interface CoPlayViewProps {
 const PASSCODE_STORAGE_KEY = 'milktea_coplay_passcode';
 const SESSION_PASSCODE_KEY = 'milktea_coplay_session_passcode';
 const TAB_SESSION_ID_KEY = 'milktea_coplay_tab_id';
-const HARDCODED_NOTION_DB_ID = '2906e882096082cabb9308140fc10942'; // Corrected Notion Database ID
-const HARDCODED_NOTION_TOKEN = 'bbd6e88209608305a41a883089e88811'; // Corrected Notion API Token
+
+// Helper for safe JSON API response parsing (detects GitHub Pages HTML fallback)
+const fetchRoomApi = async (url: string, options?: RequestInit) => {
+  try {
+    const res = await fetch(url, options);
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('text/html') || (!res.ok && contentType.includes('html'))) {
+      return { success: false, isStaticFallback: true };
+    }
+    const data = await res.json().catch(() => null);
+    if (!data) return { success: false, isStaticFallback: true };
+    return { ...data, isStaticFallback: false };
+  } catch (err) {
+    return { success: false, isStaticFallback: true };
+  }
+};
+
+const LOCAL_STATIC_ROOM_KEY = (code: string) => `milktea_static_room_${code.toUpperCase()}`;
+
+const getLocalStaticRoom = (code: string, defaultQuestions: FAQItem[] = []): CoPlayRoom => {
+  const key = LOCAL_STATIC_ROOM_KEY(code);
+  const stored = localStorage.getItem(key);
+  if (stored) {
+    try {
+      return JSON.parse(stored);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  const initialRoom: CoPlayRoom = {
+    code: code.toUpperCase(),
+    hostName: '1105',
+    players: [
+      { id: 'p-1105', name: '1105', score: 20, isHost: true, lastActive: new Date().toISOString() },
+      { id: 'p-1115', name: '1115', score: 10, isHost: false, lastActive: new Date().toISOString() },
+    ],
+    questions: defaultQuestions,
+    messages: [
+      {
+        id: 'msg-init-1',
+        author: '系統提示',
+        text: '歡迎進入【雙人猜心對話框】！本機雙人連線已就緒。',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isSyncedToNotion: true,
+      },
+    ],
+    currentQuestionIndex: 0,
+    status: 'playing',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  localStorage.setItem(key, JSON.stringify(initialRoom));
+  return initialRoom;
+};
+
+const saveLocalStaticRoom = (room: CoPlayRoom) => {
+  if (!room || !room.code) return;
+  const key = LOCAL_STATIC_ROOM_KEY(room.code);
+  localStorage.setItem(key, JSON.stringify(room));
+};
 
 export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
   // Helper to load saved display name for a passcode
@@ -185,15 +245,17 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
 
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/rooms/${currentRoom.code}?playerId=${myPlayerId}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && data.room) {
-            setCurrentRoom(data.room);
+        const data = await fetchRoomApi(`/api/rooms/${currentRoom.code}?playerId=${myPlayerId}`);
+        if (data.success && data.room) {
+          setCurrentRoom(data.room);
+        } else if (data.isStaticFallback) {
+          const localRoom = getLocalStaticRoom(currentRoom.code, faqs);
+          if (localRoom && localRoom.updatedAt !== currentRoom.updatedAt) {
+            setCurrentRoom(localRoom);
           }
         }
       } catch (err) {
-        console.error('Room poll error:', err);
+        // silent
       }
     }, 1000);
 
@@ -233,19 +295,16 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
 
     setIsAuthLoading(true);
     try {
-      const res = await fetch('/api/rooms/login-with-passcode', {
+      const data = await fetchRoomApi('/api/rooms/login-with-passcode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ passcode: cleanCode, questions: faqs, tabSessionId }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (data.success && data.room) {
         const thisPlayerId = data.playerId || `p-${cleanCode}-${tabSessionId}`;
 
         // Multi-tab co-play auto detection:
-        // If this browser/tab has no explicit session saved, and '1105' is ALREADY online from ANOTHER player ID (<30s ago),
-        // automatically log this tab into '1115' (2P) so both windows connect seamlessly!
         const isSessionExplicit = !!sessionStorage.getItem(SESSION_PASSCODE_KEY);
         if (!isSessionExplicit && cleanCode === '1105' && data.room?.players) {
           const otherActive1105 = data.room.players.find(
@@ -265,6 +324,45 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         sessionStorage.setItem(SESSION_PASSCODE_KEY, cleanCode);
         localStorage.setItem(PASSCODE_STORAGE_KEY, cleanCode);
         setCurrentRoom(data.room);
+        setMyPlayerId(thisPlayerId);
+
+        const loadedName = getSavedNameForPasscode(cleanCode);
+        setDisplayName(loadedName);
+
+        if (!silent) {
+          showToast(`連線成功！`, `已以帳號「${loadedName} (${cleanCode})」登入房間`, 'success');
+        }
+      } else {
+        // Static Host / GitHub Pages Fallback Mode
+        const thisPlayerId = `p-${cleanCode}-${tabSessionId}`;
+        const room = getLocalStaticRoom('DUAL-1105-1115', faqs);
+
+        let player = room.players.find((p) => p.id === thisPlayerId);
+        if (!player) {
+          const defaultPlayer = room.players.find((p) => p.name === cleanCode);
+          if (defaultPlayer) {
+            defaultPlayer.id = thisPlayerId;
+            defaultPlayer.lastActive = new Date().toISOString();
+          } else {
+            room.players.push({
+              id: thisPlayerId,
+              name: cleanCode,
+              score: 0,
+              isHost: false,
+              lastActive: new Date().toISOString(),
+            });
+          }
+        } else {
+          player.lastActive = new Date().toISOString();
+        }
+
+        room.updatedAt = new Date().toISOString();
+        saveLocalStaticRoom(room);
+
+        setPasscode(cleanCode);
+        sessionStorage.setItem(SESSION_PASSCODE_KEY, cleanCode);
+        localStorage.setItem(PASSCODE_STORAGE_KEY, cleanCode);
+        setCurrentRoom(room);
         setMyPlayerId(thisPlayerId);
 
         const loadedName = getSavedNameForPasscode(cleanCode);
@@ -302,7 +400,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     const config = getStoredNotionConfig();
 
     try {
-      const res = await fetch(`/api/rooms/${currentRoom.code}/chat`, {
+      const data = await fetchRoomApi(`/api/rooms/${currentRoom.code}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -313,8 +411,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (data.success && data.room) {
         setCurrentRoom(data.room);
         setChatMessageText('');
         scrollToBottom();
@@ -327,6 +424,24 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
             'warning'
           );
         }
+      } else {
+        const newMsg = {
+          id: `msg-${Date.now()}`,
+          author: displayName || passcode,
+          text: chatMessageText.trim(),
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isSyncedToNotion: false,
+        };
+        const room = {
+          ...currentRoom,
+          messages: [...currentRoom.messages, newMsg],
+          updatedAt: new Date().toISOString(),
+        };
+        saveLocalStaticRoom(room);
+        setCurrentRoom(room);
+        setChatMessageText('');
+        scrollToBottom();
+        showToast('對話已發送', '訊息已成功儲存於對話視窗', 'success');
       }
     } catch (err: any) {
       showToast('發送訊息失敗', err.message, 'error');
@@ -338,7 +453,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     if (!currentRoom) return;
     const config = getStoredNotionConfig();
     try {
-      const res = await fetch(`/api/rooms/${currentRoom.code}/invite`, {
+      const data = await fetchRoomApi(`/api/rooms/${currentRoom.code}/invite`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -348,9 +463,32 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (data.success && data.room) {
         setCurrentRoom(data.room);
+        showToast('發起猜心考驗', `已向 ${partnerDisplayName} 發出挑戰邀請！`, 'info');
+      } else {
+        const sysMsg = {
+          id: `msg-inv-${Date.now()}`,
+          author: '系統廣播',
+          text: `🎮 【人員 ${passcode}】向【人員 ${partnerPasscode}】發起了猜心考驗！等待對方確認...`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          type: 'invite' as const,
+          isSyncedToNotion: false,
+        };
+        const room: CoPlayRoom = {
+          ...currentRoom,
+          gameInvitation: {
+            id: `inv-${Date.now()}`,
+            sender: passcode,
+            target: partnerPasscode,
+            status: 'pending',
+            createdAt: new Date().toISOString(),
+          },
+          messages: [...currentRoom.messages, sysMsg],
+          updatedAt: new Date().toISOString(),
+        };
+        saveLocalStaticRoom(room);
+        setCurrentRoom(room);
         showToast('發起猜心考驗', `已向 ${partnerDisplayName} 發出挑戰邀請！`, 'info');
       }
     } catch (err: any) {
@@ -363,7 +501,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     if (!currentRoom) return;
     const config = getStoredNotionConfig();
     try {
-      const res = await fetch(`/api/rooms/${currentRoom.code}/respond-invite`, {
+      const data = await fetchRoomApi(`/api/rooms/${currentRoom.code}/respond-invite`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -374,9 +512,34 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (data.success && data.room) {
         setCurrentRoom(data.room);
+        if (accept) {
+          showToast('已接受挑戰！', `等待 ${partnerDisplayName} 設定考驗題目`, 'success');
+        } else {
+          showToast('已婉拒本次挑戰', '', 'info');
+        }
+      } else {
+        const newStatus = accept ? 'accepted' : 'declined';
+        const sysMsg = {
+          id: `msg-res-${Date.now()}`,
+          author: '系統廣播',
+          text: accept
+            ? `✅ 【人員 ${passcode}】接受了對決考驗！請對決發起人選擇題目。`
+            : `❌ 【人員 ${passcode}】婉拒了本次猜心考驗。`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          type: 'system' as const,
+        };
+        const room: CoPlayRoom = {
+          ...currentRoom,
+          gameInvitation: currentRoom.gameInvitation
+            ? { ...currentRoom.gameInvitation, status: newStatus }
+            : undefined,
+          messages: [...currentRoom.messages, sysMsg],
+          updatedAt: new Date().toISOString(),
+        };
+        saveLocalStaticRoom(room);
+        setCurrentRoom(room);
         if (accept) {
           showToast('已接受挑戰！', `等待 ${partnerDisplayName} 設定考驗題目`, 'success');
         } else {
@@ -392,18 +555,32 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
   const handleCancelInvite = async () => {
     if (!currentRoom) return;
     try {
-      const res = await fetch(`/api/rooms/${currentRoom.code}/cancel-invite`, {
+      const data = await fetchRoomApi(`/api/rooms/${currentRoom.code}/cancel-invite`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ passcode }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (data.success && data.room) {
         setCurrentRoom(data.room);
         showToast('已取消發起', '已取消本次考驗邀請', 'info');
       } else {
-        showToast('取消失敗', data.error, 'error');
+        const sysMsg = {
+          id: `msg-cancel-${Date.now()}`,
+          author: '系統廣播',
+          text: `🚫 【人員 ${passcode}】已取消了猜心考驗發起。`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          type: 'system' as const,
+        };
+        const room: CoPlayRoom = {
+          ...currentRoom,
+          gameInvitation: undefined,
+          messages: [...currentRoom.messages, sysMsg],
+          updatedAt: new Date().toISOString(),
+        };
+        saveLocalStaticRoom(room);
+        setCurrentRoom(room);
+        showToast('已取消發起', '已取消本次考驗邀請', 'info');
       }
     } catch (err: any) {
       showToast('取消失敗', err.message, 'error');
@@ -497,7 +674,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
 
     try {
       const options = [optA, optB, optC, optD].filter((o) => o.trim() !== '');
-      const res = await fetch(`/api/rooms/${currentRoom.code}/submit-game-question`, {
+      const data = await fetchRoomApi(`/api/rooms/${currentRoom.code}/submit-game-question`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -510,8 +687,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (data.success && data.room) {
         setCurrentRoom(data.room);
         setIsQuestionModalOpen(false);
         setQuestionText('');
@@ -520,7 +696,37 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         scrollToBottom();
         showToast('題目已發布！', `題目類型：[${finalCategory}]，已發送至考驗視窗`, 'success');
       } else {
-        showToast('發布失敗', data.error, 'error');
+        const gameQuestionObj: RoomQuestion = {
+          id: `gq-${Date.now()}`,
+          initiator: passcode,
+          target: partnerPasscode,
+          question: questionText.trim(),
+          category: finalCategory,
+          options,
+          createdAt: new Date().toISOString(),
+        };
+        const sysMsg = {
+          id: `msg-gq-${Date.now()}`,
+          author: '🎮 考驗發布',
+          text: `❓ 【猜心考驗題目】：${questionText.trim()}\n等待【人員 ${partnerPasscode}】猜測您的真實選擇...`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          type: 'system' as const,
+        };
+        const room: CoPlayRoom = {
+          ...currentRoom,
+          activeGameQuestion: gameQuestionObj,
+          gameInvitation: undefined,
+          messages: [...currentRoom.messages, sysMsg],
+          updatedAt: new Date().toISOString(),
+        };
+        saveLocalStaticRoom(room);
+        setCurrentRoom(room);
+        setIsQuestionModalOpen(false);
+        setQuestionText('');
+        setSelectedOptIndex(null);
+        setAnswerExplanation('');
+        scrollToBottom();
+        showToast('題目已發布！', `題目類型：[${finalCategory}]，已發送至考驗視窗`, 'success');
       }
     } catch (err: any) {
       showToast('連線失敗', err.message, 'error');
@@ -549,7 +755,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
 
     setIsSubmittingOpt(true);
     try {
-      const res = await fetch(`/api/rooms/${currentRoom.code}/submit-game-answer`, {
+      const data = await fetchRoomApi(`/api/rooms/${currentRoom.code}/submit-game-answer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -562,8 +768,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (data.success && data.room) {
         setCurrentRoom(data.room);
         setSelectedOptIndex(null);
         setAnswerExplanation('');
@@ -577,10 +782,69 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
           scrollToBottom();
         }
       } else {
-        showToast('作答失敗', data.error, 'error');
+        const isTarget = passcode === q.target;
+        const updatedQ: RoomQuestion = { ...q };
+        if (isTarget) {
+          updatedQ.targetAnswer = selectedOptIndex;
+          updatedQ.targetAnswerText = selectedText;
+        } else {
+          updatedQ.initiatorGuess = selectedOptIndex;
+          updatedQ.initiatorGuessText = selectedText;
+        }
+
+        if (updatedQ.targetAnswer !== undefined && updatedQ.initiatorGuess !== undefined) {
+          updatedQ.isRevealed = true;
+          updatedQ.isCorrect = updatedQ.targetAnswer === updatedQ.initiatorGuess;
+        }
+
+        const sysMsg = {
+          id: `msg-opt-${Date.now()}`,
+          author: '系統連動',
+          text: isTarget
+            ? `🔒 【人員 ${passcode}】已設定真心話答案！`
+            : `🎯 【人員 ${passcode}】已選擇猜測選項！`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          type: 'system' as const,
+        };
+
+        const roomMessages = [...currentRoom.messages, sysMsg];
+
+        if (updatedQ.isRevealed) {
+          const resultText = updatedQ.isCorrect
+            ? `🎉 【猜心結果揭曉：猜對了！】\n猜測者成功猜中！\n真心話答案是「${updatedQ.targetAnswerText}」。`
+            : `❌ 【猜心結果揭曉：沒猜中！】\n真心話選擇是「${updatedQ.targetAnswerText}」\n猜測選項是「${updatedQ.initiatorGuessText}」。`;
+
+          roomMessages.push({
+            id: `msg-rev-${Date.now()}`,
+            author: '🎯 揭曉報告',
+            text: resultText,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            type: 'system' as const,
+          });
+        }
+
+        const room: CoPlayRoom = {
+          ...currentRoom,
+          activeGameQuestion: updatedQ,
+          messages: roomMessages,
+          updatedAt: new Date().toISOString(),
+        };
+
+        saveLocalStaticRoom(room);
+        setCurrentRoom(room);
+        setSelectedOptIndex(null);
+        setAnswerExplanation('');
+        showToast(
+          isTarget ? '真心話已送出！' : '猜測已送出！',
+          isTarget ? `等待對方完成猜測` : `等待對方送出真心話`,
+          'success'
+        );
+        if (updatedQ.isRevealed) {
+          scrollToBottom();
+        }
       }
     } catch (err: any) {
-      showToast('連線錯誤', err.message, 'error');
+      showToast('作答失敗', err.message, 'error');
     } finally {
       setIsSubmittingOpt(false);
     }
