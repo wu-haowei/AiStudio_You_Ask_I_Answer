@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
+import { getFirestore, doc, onSnapshot, setDoc, getDoc, deleteField } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { CoPlayRoom } from '../types';
 
@@ -15,6 +15,41 @@ export const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+
+// Helper to sanitize objects for Firestore (removes undefined values or uses deleteField)
+const sanitizeForFirestore = (obj: any, isTopLevel = true): any => {
+  if (obj === null || obj === undefined) {
+    return isTopLevel ? deleteField() : null;
+  }
+  if (Array.isArray(obj)) {
+    return obj
+      .filter((item) => item !== undefined)
+      .map((item) => sanitizeForFirestore(item, false));
+  }
+  if (typeof obj === 'object') {
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value === undefined) {
+        if (isTopLevel) {
+          cleaned[key] = deleteField();
+        }
+        // If nested, omit the key completely
+      } else if (value === null) {
+        if (isTopLevel) {
+          cleaned[key] = deleteField();
+        } else {
+          cleaned[key] = null;
+        }
+      } else if (typeof value === 'object') {
+        cleaned[key] = sanitizeForFirestore(value, false);
+      } else {
+        cleaned[key] = value;
+      }
+    }
+    return cleaned;
+  }
+  return obj;
+};
 
 // Realtime Firestore synchronization for CoPlay rooms
 export const subscribeToFirebaseRoom = (
@@ -40,7 +75,8 @@ export const syncRoomToFirebase = async (room: CoPlayRoom) => {
   if (!db || !room?.code) return;
   try {
     const roomRef = doc(db, 'rooms', room.code.toUpperCase());
-    await setDoc(roomRef, room, { merge: true });
+    const sanitized = sanitizeForFirestore(room, true);
+    await setDoc(roomRef, sanitized, { merge: true });
   } catch (err) {
     console.warn('Failed to sync room to Firebase:', err);
   }
