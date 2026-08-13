@@ -269,6 +269,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     if (activeQ && activeQ.targetAnswer === undefined && passcode !== activeQ.initiator) {
       if (prevQuestionIdRef.current !== activeQ.id) {
         prevQuestionIdRef.current = activeQ.id;
+        setIsAnswerModalDismissed(false);
+        setSelectedOptIndex(null);
+        setAnswerExplanation('');
         showToast('❓ 收到猜心考驗題目！', `發問人：${getNameByPasscode(activeQ.initiator)}`, 'info');
       }
     }
@@ -284,6 +287,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
   useEffect(() => {
     if (currentRoom?.activeGameQuestion?.id) {
       setIsAnswerModalDismissed(false);
+      setSelectedOptIndex(null);
+      setAnswerExplanation('');
     }
   }, [currentRoom?.activeGameQuestion?.id]);
 
@@ -563,6 +568,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         };
         const room: CoPlayRoom = {
           ...currentRoom,
+          activeGameQuestion: undefined,
           gameInvitation: {
             id: `inv-${Date.now()}`,
             sender: passcode,
@@ -601,6 +607,10 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       if (data.success && data.room) {
         setCurrentRoom(data.room);
         if (accept) {
+          setIsAnswerModalDismissed(false);
+          setIsQuestionModalDismissed(false);
+          setSelectedOptIndex(null);
+          setAnswerExplanation('');
           showToast('已接受挑戰！', `等待 ${partnerDisplayName} 設定考驗題目`, 'success');
         } else {
           showToast('已婉拒本次挑戰', '', 'info');
@@ -627,6 +637,10 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         saveLocalStaticRoom(room);
         setCurrentRoom(room);
         if (accept) {
+          setIsAnswerModalDismissed(false);
+          setIsQuestionModalDismissed(false);
+          setSelectedOptIndex(null);
+          setAnswerExplanation('');
           showToast('已接受挑戰！', `等待 ${partnerDisplayName} 設定考驗題目`, 'success');
         } else {
           showToast('已婉拒本次挑戰', '', 'info');

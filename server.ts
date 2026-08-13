@@ -1242,6 +1242,7 @@ async function startServer() {
 
     const partner = room.players.find((p) => p.name !== sender);
     const target = partner ? partner.name : (sender === '1105' ? '1115' : '1105');
+    room.activeGameQuestion = undefined;
     room.gameInvitation = {
       id: generateId('inv'),
       sender,
