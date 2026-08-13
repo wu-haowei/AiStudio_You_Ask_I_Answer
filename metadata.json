@@ -1,0 +1,6 @@
+{
+  "name": "你問我答常問與後台管理系統",
+  "description": "支援手機板的現代簡約奶茶色系你問我答與常見問題系統，內含前台即時搜尋、問答測驗與後台內容管理。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
