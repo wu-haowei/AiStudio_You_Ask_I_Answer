@@ -29,6 +29,7 @@ import {
   HARDCODED_NOTION_QUESTION_DB_ID,
   HARDCODED_NOTION_ANSWER_DB_ID,
 } from '../utils/storage';
+import { testNotionConnection, syncQuestionToNotion } from '../utils/notionApi';
 
 interface AdminManageViewProps {
   faqs: FAQItem[];
@@ -119,23 +120,11 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     setNotionStatus('testing');
 
     try {
-      const res = await fetch('/api/notion/test-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: token.trim(), databaseId: dbId.trim() }),
-      });
+      const result = await testNotionConnection(token, dbId);
 
-      const contentType = res.headers.get('content-type') || '';
-      if (contentType.includes('text/html')) {
-        throw new Error('目前為 GitHub Pages 靜態環境，無後端 API 伺服器。');
-      }
-
-      const data = await res.json().catch(() => null);
-      if (!data) throw new Error('伺服器回應無效');
-
-      if (res.ok && data.success) {
+      if (result.success) {
         setNotionStatus('connected');
-        setNotionDbTitle(data.title || 'Notion 資料庫');
+        setNotionDbTitle(result.title || 'Notion 資料庫');
 
         const updated: NotionConfig = {
           token: token.trim(),
@@ -148,12 +137,16 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         saveStoredNotionConfig(updated);
 
         if (!silent) {
-          showToast('Notion 連線成功！', `已成功存取「${data.title || 'Notion 資料庫'}」`, 'success');
+          if (result.isStaticFallback && result.error) {
+            showToast('Notion 備份設定已備份至本機', result.error, 'info');
+          } else {
+            showToast('Notion 連線成功！', `已成功存取「${result.title || 'Notion 資料庫'}」`, 'success');
+          }
         }
       } else {
         setNotionStatus('disconnected');
         if (!silent) {
-          showToast('Notion 連線失敗', data.error || '請檢查 Token 與權限設定', 'error');
+          showToast('Notion 連線提示', result.error || '請檢查 Token 與權限設定', 'warning');
         }
       }
     } catch (err: any) {
@@ -176,29 +169,21 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     let successCount = 0;
 
     for (const faq of faqs) {
-      try {
-        const res = await fetch('/api/notion/sync-question', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token: notionConfig.token,
-            databaseId: questionDbId || HARDCODED_NOTION_QUESTION_DB_ID,
-            question: faq.question,
-            answer: faq.answer,
-            category: faq.category,
-            tags: faq.tags,
-            options: faq.options,
-          }),
-        });
+      const res = await syncQuestionToNotion(
+        notionConfig.token,
+        questionDbId || HARDCODED_NOTION_QUESTION_DB_ID,
+        faq.question,
+        faq.answer,
+        faq.category,
+        faq.tags,
+        faq.options
+      );
 
-        if (res.ok) successCount++;
-      } catch (err) {
-        console.error('Batch sync item error:', err);
-      }
+      if (res.success) successCount++;
     }
 
     setIsSyncingAll(false);
-    showToast(`成功同步 ${successCount} 則題目至 Notion 題目庫！`, '已同步最新題目庫與選項', 'success');
+    showToast(`成功處理 ${successCount} 則題目備份同步！`, '已保存至 Notion 題目庫紀錄', 'success');
   };
 
   const sampleJsonTemplate = JSON.stringify(

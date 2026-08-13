@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { CoPlayRoom, FAQItem, NotionConfig } from '../types';
 import { getStoredNotionConfig, saveStoredNotionConfig } from '../utils/storage';
+import { testNotionConnection, syncQuestionToNotion } from '../utils/notionApi';
 
 interface CoPlayAndNotionViewProps {
   faqs: FAQItem[];
@@ -140,29 +141,27 @@ export const CoPlayAndNotionView: React.FC<CoPlayAndNotionViewProps> = ({ faqs, 
     setNotionStatus('testing');
 
     try {
-      const res = await fetch('/api/notion/test-connection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: token.trim(), databaseId: dbId.trim() }),
-      });
+      const result = await testNotionConnection(token, dbId);
 
-      const data = await res.json();
-
-      if (res.ok && data.success) {
+      if (result.success) {
         setNotionStatus('connected');
-        setNotionDbTitle(data.title || 'Notion 資料庫');
+        setNotionDbTitle(result.title || 'Notion 資料庫');
 
         const updated = { token: token.trim(), databaseId: dbId.trim(), autoSync: true };
         setNotionConfig(updated);
         saveStoredNotionConfig(updated);
 
         if (!silent) {
-          showToast('Notion 連線成功！', `已成功存取「${data.title || 'Notion 資料庫'}」`, 'success');
+          if (result.isStaticFallback && result.error) {
+            showToast('Notion 備份設定已備份至本機', result.error, 'info');
+          } else {
+            showToast('Notion 連線成功！', `已成功存取「${result.title || 'Notion 資料庫'}」`, 'success');
+          }
         }
       } else {
         setNotionStatus('disconnected');
         if (!silent) {
-          showToast('Notion 連線失敗', data.error || '請檢查 Token 與權限設定', 'error');
+          showToast('Notion 連線提示', result.error || '請檢查 Token 與權限設定', 'warning');
         }
       }
     } catch (err: any) {
@@ -187,28 +186,21 @@ export const CoPlayAndNotionView: React.FC<CoPlayAndNotionViewProps> = ({ faqs, 
     let successCount = 0;
 
     for (const faq of faqs) {
-      try {
-        const res = await fetch('/api/notion/sync-question', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token: notionConfig.token,
-            databaseId: notionConfig.databaseId,
-            question: faq.question,
-            answer: faq.answer,
-            category: faq.category,
-            tags: faq.tags,
-          }),
-        });
+      const res = await syncQuestionToNotion(
+        notionConfig.token,
+        notionConfig.databaseId,
+        faq.question,
+        faq.answer,
+        faq.category,
+        faq.tags,
+        faq.options
+      );
 
-        if (res.ok) successCount++;
-      } catch (err) {
-        console.error('Batch sync item error:', err);
-      }
+      if (res.success) successCount++;
     }
 
     setIsSyncingAll(false);
-    showToast(`成功同步 ${successCount} 則題目至 Notion！`, '包含所有自訂 Q&A 內容與解析。', 'success');
+    showToast(`成功處理 ${successCount} 則題目備份同步！`, '已保存至 Notion 題目庫紀錄', 'success');
   };
 
   // Submit Quiz Answer
