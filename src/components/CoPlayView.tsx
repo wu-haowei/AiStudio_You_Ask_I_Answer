@@ -184,6 +184,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
 
   // Toast notification tracking
   const prevInviteIdRef = useRef<string | null>(null);
+  const prevInviteAcceptedRef = useRef<string | null>(null);
   const prevQuestionIdRef = useRef<string | null>(null);
 
   // Keep currentRoomRef in sync to avoid effect dependency re-subscribe loops
@@ -245,12 +246,21 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
   useEffect(() => {
     if (!currentRoom) return;
 
-    // Invitation alert
+    // Invitation alert for target
     const invite = currentRoom.gameInvitation;
     if (invite && invite.status === 'pending' && invite.sender !== passcode) {
       if (prevInviteIdRef.current !== invite.id) {
         prevInviteIdRef.current = invite.id;
         showToast('🎮 收到對決考驗邀請！', `發起人：${getNameByPasscode(invite.sender)}`, 'info');
+      }
+    }
+
+    // Invitation accepted alert for initiator (sender)
+    if (invite && invite.status === 'accepted' && invite.sender === passcode) {
+      if (prevInviteAcceptedRef.current !== invite.id) {
+        prevInviteAcceptedRef.current = invite.id;
+        setIsQuestionModalDismissed(false);
+        showToast('🎉 對方已接受挑戰！', `【${getNameByPasscode(invite.target)}】已接受挑戰，請設定考驗題目`, 'success');
       }
     }
 
@@ -526,7 +536,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
   const handleSendGameInvite = async () => {
     if (!currentRoom) return;
     setIsQuestionModalDismissed(false);
-    setIsQuestionModalOpen(true);
+    setIsQuestionModalOpen(false);
     const config = getStoredNotionConfig();
     try {
       const data = await fetchRoomApi(`/api/rooms/${currentRoom.code}/invite`, {
@@ -1311,8 +1321,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         </div>
       )}
 
-      {/* Modal Popup 2 - Initiator Selects Category & Question */}
-      {(isAcceptedWaitingInitiator || isQuestionModalOpen) && !isQuestionModalDismissed && (
+      {/* Modal Popup 2 - Initiator Selects Category & Question (Triggers ONLY when recipient accepts) */}
+      {(isAcceptedWaitingInitiator || (isQuestionModalOpen && inviteState?.status === 'accepted')) && !isQuestionModalDismissed && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in overflow-y-auto">
           <div className="bg-[#FAF7F2] border-2 border-[#D9C5B2] rounded-3xl p-5 sm:p-6 max-w-xl w-full shadow-2xl space-y-4 my-auto">
             <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-3">
