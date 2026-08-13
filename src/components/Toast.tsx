@@ -7,10 +7,20 @@ interface ToastProps {
   onDismiss: (id: string) => void;
 }
 
+/** Never stack more than this many notifications at once. */
+const MAX_VISIBLE_TOASTS = 2;
+
 export const ToastContainer: React.FC<ToastProps> = ({ toasts, onDismiss }) => {
+  // Keep the newest notifications; anything older is dropped immediately.
+  const visible = toasts.slice(-MAX_VISIBLE_TOASTS);
+
+  useEffect(() => {
+    for (const toast of toasts.slice(0, -MAX_VISIBLE_TOASTS)) onDismiss(toast.id);
+  }, [toasts, onDismiss]);
+
   return (
     <div className="fixed top-16 sm:top-20 right-4 sm:right-6 z-50 flex flex-col gap-2.5 max-w-sm w-full px-4 sm:px-0 pointer-events-none">
-      {toasts.map((toast) => (
+      {visible.map((toast) => (
         <ToastItem key={toast.id} toast={toast} onDismiss={onDismiss} />
       ))}
     </div>

@@ -2,28 +2,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Send,
   Sparkles,
-  HelpCircle,
   MessageSquare,
-  Database,
   PlusCircle,
-  Check,
   UserCheck,
   RefreshCw,
-  CheckCircle2,
-  Gamepad2,
-  X,
-  ThumbsUp,
   Clock,
   Target,
   ArrowDown,
   Award,
-  AlertCircle,
   Edit3,
-  LogOut,
-  User,
-  Shuffle,
-  Dices,
-  XCircle,
 } from 'lucide-react';
 import { CoPlayRoom, FAQItem, RoomMessage, RoomQuestion } from '../types';
 import {
@@ -53,6 +40,9 @@ const TAB_SESSION_ID_KEY = 'milktea_coplay_tab_id';
 
 /** The single shared Firestore room for this two-player app. */
 const ROOM_CODE = 'DUAL-1105-1115';
+
+/** Author label used for reveal report cards in the message stream. */
+const REVEAL_AUTHOR = '揭曉結果';
 
 /** Presence heartbeat interval; a player counts as online for 30s after lastActive. */
 const HEARTBEAT_MS = 12000;
@@ -205,7 +195,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     if (invite && invite.status === 'pending' && invite.sender !== passcode) {
       if (prevInviteIdRef.current !== invite.id) {
         prevInviteIdRef.current = invite.id;
-        showToast('🎮 收到對決考驗邀請！', `發起人：${getNameByPasscode(invite.sender)}`, 'info');
+        showToast('收到考驗邀請', `來自 ${getNameByPasscode(invite.sender)}`, 'info');
       }
     }
 
@@ -214,7 +204,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       if (prevInviteAcceptedRef.current !== invite.id) {
         prevInviteAcceptedRef.current = invite.id;
         setIsQuestionModalDismissed(false);
-        showToast('🎉 對方已接受挑戰！', `【${getNameByPasscode(invite.target)}】已接受挑戰，請設定考驗題目`, 'success');
+        showToast('對方已接受挑戰', '請設定考驗題目', 'success');
       }
     }
 
@@ -226,7 +216,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         setIsAnswerModalDismissed(false);
         setSelectedOptIndex(null);
         setAnswerExplanation('');
-        showToast('❓ 收到猜心考驗題目！', `發問人：${getNameByPasscode(activeQ.initiator)}`, 'info');
+        showToast('收到考驗題目', `來自 ${getNameByPasscode(activeQ.initiator)}`, 'info');
       }
     }
   }, [currentRoom, passcode]);
@@ -282,13 +272,13 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     if (e) e.preventDefault();
     const clean = nameInput.trim();
     if (!clean) {
-      showToast('名稱不可為空', '請輸入有效的使用者名稱', 'warning');
+      showToast('請輸入名稱', undefined, 'warning');
       return;
     }
     setDisplayName(clean);
     localStorage.setItem(`milktea_username_${passcode}`, clean);
     setIsEditingName(false);
-    showToast('名稱更新成功！', `已為帳號 ${passcode} 儲存名稱為「${clean}」`, 'success');
+    showToast('名稱已更新', `${clean}`, 'success');
   };
 
   // Handle Logout
@@ -298,14 +288,14 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     localStorage.removeItem(PASSCODE_STORAGE_KEY);
     setCurrentRoom(null);
     setMessages([]);
-    showToast('已成功登出', '請選擇或輸入暗號重新登入', 'info');
+    showToast('已登出', undefined, 'info');
   };
 
   // Login / Switch Identity
   const handleLoginWithPasscode = async (codeToUse: string, silent = false) => {
     const cleanCode = codeToUse.trim();
     if (!cleanCode) {
-      if (!silent) showToast('請輸入暗號或帳號名稱', '不可為空', 'error');
+      if (!silent) showToast('請輸入暗號', undefined, 'warning');
       return;
     }
 
@@ -328,11 +318,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
             Date.now() - new Date(p.lastActive).getTime() < 30000
         );
         if (otherActive1105) {
-          showToast(
-            '⚡ 自動切換 2P 帳號',
-            '檢測到 1105 (1P) 已有其他視窗連線中，本視窗已自動為您切換為 1115 (2P)！',
-            'info'
-          );
+          showToast('已自動切換為 1115', '1105 已在其他視窗連線中', 'info');
           setIsAuthLoading(false);
           return handleLoginWithPasscode('1115', silent);
         }
@@ -357,11 +343,11 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       setDisplayName(loadedName);
 
       if (!silent) {
-        showToast('連線成功！', `已以帳號「${loadedName} (${cleanCode})」登入雲端房間`, 'success');
+        showToast('已連線', `${loadedName} (${cleanCode})`, 'success');
       }
     } catch (err: any) {
       console.error('Failed to enter room:', err);
-      if (!silent) showToast('連線失敗', err?.message || '無法連線至 Firebase，請檢查網路', 'error');
+      if (!silent) showToast('連線失敗', err?.message || '請檢查網路連線', 'error');
     } finally {
       setIsAuthLoading(false);
     }
@@ -401,7 +387,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       scrollToBottom();
     } catch (err: any) {
       setChatMessageText(text);
-      showToast('發送訊息失敗', err?.message || '請稍後再試', 'error');
+      showToast('發送失敗', err?.message || '請稍後再試', 'error');
     }
   };
 
@@ -425,12 +411,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         currentRoom.code,
         buildMessage({
           id: `msg-inv-${Date.now()}`,
-          author: '系統廣播',
-          text: `🎮 【人員 ${passcode}】向【人員 ${partnerPasscode}】發起了猜心考驗！等待對方確認...`,
+          author: '系統',
+          text: `${getNameByPasscode(passcode)} 向 ${partnerDisplayName} 發起考驗，等待回應…`,
           type: 'invite',
         })
       );
-      showToast('發起猜心考驗', `已向 ${partnerDisplayName} 發出挑戰邀請！`, 'info');
+      showToast('已發出邀請', `等待 ${partnerDisplayName} 回應`, 'info');
     } catch (err: any) {
       showToast('邀請失敗', err?.message || '請稍後再試', 'error');
     }
@@ -449,10 +435,10 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         currentRoom.code,
         buildMessage({
           id: `msg-res-${Date.now()}`,
-          author: '系統廣播',
+          author: '系統',
           text: accept
-            ? `✅ 【人員 ${passcode}】接受了對決考驗！請對決發起人選擇題目。`
-            : `❌ 【人員 ${passcode}】婉拒了本次猜心考驗。`,
+            ? `${getNameByPasscode(passcode)} 接受了考驗，等待出題。`
+            : `${getNameByPasscode(passcode)} 婉拒了這次考驗。`,
           type: 'system',
         })
       );
@@ -462,9 +448,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         setIsQuestionModalDismissed(false);
         setSelectedOptIndex(null);
         setAnswerExplanation('');
-        showToast('已接受挑戰！', `等待 ${partnerDisplayName} 設定考驗題目`, 'success');
+        showToast('已接受挑戰', `等待 ${partnerDisplayName} 出題`, 'success');
       } else {
-        showToast('已婉拒本次挑戰', '', 'info');
+        showToast('已婉拒挑戰', undefined, 'info');
       }
     } catch (err: any) {
       showToast('回應失敗', err?.message || '請稍後再試', 'error');
@@ -480,12 +466,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         currentRoom.code,
         buildMessage({
           id: `msg-cancel-${Date.now()}`,
-          author: '系統廣播',
-          text: `🚫 【人員 ${passcode}】已取消了猜心考驗發起。`,
+          author: '系統',
+          text: `${getNameByPasscode(passcode)} 取消了邀請。`,
           type: 'system',
         })
       );
-      showToast('已取消發起', '已取消本次考驗邀請', 'info');
+      showToast('已取消邀請', undefined, 'info');
     } catch (err: any) {
       showToast('取消失敗', err?.message || '請稍後再試', 'error');
     }
@@ -500,13 +486,13 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         currentRoom.code,
         buildMessage({
           id: `msg-cancel-q-${Date.now()}`,
-          author: '系統廣播',
-          text: `🚫 【人員 ${passcode}】取消了本次猜心考驗題目。`,
+          author: '系統',
+          text: `${getNameByPasscode(passcode)} 取消了這題。`,
           type: 'system',
         })
       );
       setIsAnswerModalDismissed(false);
-      showToast('已取消考驗', '已取消目前的考驗題目', 'info');
+      showToast('已取消題目', undefined, 'info');
     } catch (err: any) {
       showToast('取消失敗', err?.message || '請稍後再試', 'error');
     }
@@ -555,7 +541,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       setOptC(f.options[2]);
       setOptD(f.options[3]);
     }
-    showToast('套用成功', `已選擇題目：${f.question}`, 'info');
+    showToast('已套用題目', f.question, 'info');
   };
 
   // Randomize Question by Category using imported FAQ data
@@ -568,7 +554,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     }
     if (pool.length === 0) pool = faqs;
     if (pool.length === 0) {
-      showToast('暫無資料', '題庫中目前沒有可抽取的題目', 'warning');
+      showToast('題庫沒有題目', undefined, 'warning');
       return;
     }
 
@@ -583,14 +569,14 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       setOptC(randomFaq.options[2]);
       setOptD(randomFaq.options[3]);
     }
-    showToast('隨機換題成功！', `已為您載入「${randomFaq.category || '自訂題庫'}」題目`, 'success');
+    showToast('已換題', randomFaq.category || '自訂題庫', 'success');
   };
 
   // Submit Chosen Question & Options
   const handlePublishGameQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentRoom || !questionText.trim()) {
-      showToast('請填寫題目', '請輸入要問對方的題目', 'warning');
+      showToast('請輸入題目', undefined, 'warning');
       return;
     }
 
@@ -615,8 +601,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         currentRoom.code,
         buildMessage({
           id: `msg-gq-${Date.now()}`,
-          author: '🎮 考驗發布',
-          text: `❓ 【猜心考驗題目】：${gameQuestion.question}\n等待【人員 ${partnerPasscode}】猜測您的真實選擇...`,
+          author: '系統',
+          text: `新題目：${gameQuestion.question}\n等待 ${partnerDisplayName} 作答…`,
           type: 'system',
           gameQuestion,
         })
@@ -627,7 +613,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       setSelectedOptIndex(null);
       setAnswerExplanation('');
       scrollToBottom();
-      showToast('題目已發布！', `題目類型：[${finalCategory}]，已發送至考驗視窗`, 'success');
+      showToast('題目已發布', finalCategory, 'success');
     } catch (err: any) {
       showToast('發布失敗', err?.message || '請稍後再試', 'error');
     }
@@ -641,7 +627,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
    */
   const handleSubmitOption = async (q: RoomQuestion) => {
     if (selectedOptIndex === null) {
-      showToast('請選擇選項', '請選擇一個選項後再點擊送出', 'warning');
+      showToast('請先選擇選項', undefined, 'warning');
       return;
     }
     if (!currentRoom) return;
@@ -673,10 +659,10 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         currentRoom.code,
         buildMessage({
           id: `msg-opt-${Date.now()}`,
-          author: '系統連動',
+          author: '系統',
           text: isTargetSubmitting
-            ? `🔒 【人員 ${passcode}】已設定真心話答案！`
-            : `🎯 【人員 ${passcode}】已選擇猜測選項！`,
+            ? `${getNameByPasscode(passcode)} 已送出真心話。`
+            : `${getNameByPasscode(passcode)} 已送出猜測。`,
           type: 'system',
         })
       );
@@ -684,14 +670,14 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       // Only the submission that completed the pair publishes the reveal.
       if (updatedQ?.isRevealed) {
         const resultText = updatedQ.isCorrect
-          ? `🎉 【猜心結果揭曉：猜對了！】\n猜測者成功猜中！\n真心話答案是「${updatedQ.targetAnswerText}」。`
-          : `❌ 【猜心結果揭曉：沒猜中！】\n真心話選擇是「${updatedQ.targetAnswerText}」\n猜測選項是「${updatedQ.initiatorGuessText}」。`;
+          ? `猜對了！\n真心話答案是「${updatedQ.targetAnswerText}」。`
+          : `沒猜中。\n真心話是「${updatedQ.targetAnswerText}」\n猜測是「${updatedQ.initiatorGuessText}」。`;
 
         await appendMessage(
           currentRoom.code,
           buildMessage({
             id: `msg-rev-${Date.now()}`,
-            author: '🎯 揭曉報告',
+            author: REVEAL_AUTHOR,
             text: resultText,
             type: 'system',
           })
@@ -700,8 +686,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       }
 
       showToast(
-        isTargetSubmitting ? '真心話已送出！' : '猜測已送出！',
-        isTargetSubmitting ? '等待對方完成猜測' : '等待對方送出真心話',
+        isTargetSubmitting ? '真心話已送出' : '猜測已送出',
+        isTargetSubmitting ? '等待對方猜測' : '等待對方作答',
         'success'
       );
     } catch (err: any) {
@@ -725,18 +711,11 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
   const hasTargetAnswered = activeQ ? activeQ.targetAnswer !== undefined : false;
   const hasInitiatorGuessed = activeQ ? activeQ.initiatorGuess !== undefined : false;
 
-  // Multi-device/tab online status helpers
+  // A player counts as online while their heartbeat is less than 30s old
   const onlinePlayerCount =
     currentRoom?.players.filter(
       (p) => p.lastActive && Date.now() - new Date(p.lastActive).getTime() < 30000
     ).length || 0;
-
-  const is1105Online = currentRoom?.players.some(
-    (p) => p.name === '1105' && p.lastActive && Date.now() - new Date(p.lastActive).getTime() < 30000
-  );
-  const is1115Online = currentRoom?.players.some(
-    (p) => p.name === '1115' && p.lastActive && Date.now() - new Date(p.lastActive).getTime() < 30000
-  );
 
   // Identity conflict detection: another active client has the exact same passcode
   const activeConflictPlayer = currentRoom?.players.find(
@@ -761,33 +740,20 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col space-y-2 sm:space-y-3 h-full animate-fade-in overflow-hidden">
-      {/* Identity Conflict Warning Banner */}
+      {/* Duplicate identity hint */}
       {isDuplicateActiveAccount && (
-        <div className="shrink-0 p-3 sm:p-4 rounded-2xl bg-amber-50 border-2 border-amber-300 text-amber-900 shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 animate-fade-in">
-          <div className="flex items-start gap-2.5">
-            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-            <div className="text-xs space-y-0.5">
-              <div className="font-bold text-amber-900">
-                ⚠️ 身分重複提示：線上另一台裝置也正在使用【{passcode}】帳號！
-              </div>
-              <div className="text-amber-800 leading-relaxed">
-                這會導致雙方都被判定為相同使用者而無法接收考驗與選項。請點擊右側按鈕切換為【{passcode === '1105' ? '1115 (2P)' : '1105 (1P)'}】即可正常連線對決！
-              </div>
-            </div>
-          </div>
+        <div className="shrink-0 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center justify-between gap-3">
+          <span className="truncate">另一台裝置也在使用【{passcode}】，請切換帳號才能正常對決</span>
           <button
             type="button"
-            onClick={() => {
-              const targetCode = passcode === '1105' ? '1115' : '1105';
-              handleLoginWithPasscode(targetCode, false);
-            }}
-            className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors cursor-pointer shrink-0 shadow-xs flex items-center gap-1.5"
+            onClick={() => handleLoginWithPasscode(passcode === '1105' ? '1115' : '1105', false)}
+            className="shrink-0 px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold transition-colors cursor-pointer"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>⚡ 一鍵切換為 {passcode === '1105' ? '1115 (2P)' : '1105 (1P)'}</span>
+            切換為 {passcode === '1105' ? '1115' : '1105'}
           </button>
         </div>
       )}
+
       {/* Top Bar: Identity & Actions */}
       <div className="shrink-0 p-3 sm:p-4 rounded-2xl bg-[#FAF7F2] border border-[#D9C5B2] flex flex-wrap items-center justify-between gap-3 shadow-2xs">
         <div className="flex flex-wrap items-center gap-3">
@@ -820,7 +786,6 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
             ) : (
               <div className="flex flex-wrap items-center gap-2">
                 <div className="flex items-center gap-1.5 bg-white/80 px-2.5 py-1 rounded-xl border border-[#D9C5B2]">
-                  <span className="text-xs text-[#7A6C5E] font-medium">代表帳號：</span>
                   <span className="text-xs sm:text-sm font-bold text-[#4A3F35]">
                     {displayName} <span className="text-[10px] text-[#A68B6D]">({passcode})</span>
                   </span>
@@ -842,32 +807,18 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
                   className="px-2.5 py-1 rounded-xl bg-[#E8D8C4] text-[#4A3F35] text-xs font-bold hover:bg-[#D9C5B2] transition-colors flex items-center gap-1 cursor-pointer"
                   title="修改名稱"
                 >
-                  <Edit3 className="w-3.5 h-3.5 text-[#A68B6D]" />
+                  <Edit3 className="w-3.5 h-3.5" />
                   <span>改名</span>
-                </button>
-
-                {/* Quick Toggle 1105 / 1115 button for multi-window testing */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const targetCode = passcode === '1105' ? '1115' : '1105';
-                    handleLoginWithPasscode(targetCode, false);
-                  }}
-                  className="px-2.5 py-1 rounded-xl bg-purple-100 border border-purple-300 text-purple-900 text-xs font-bold hover:bg-purple-200 transition-colors flex items-center gap-1 cursor-pointer"
-                  title={`快速切換為 ${passcode === '1105' ? '1115' : '1105'} 測試雙人對決`}
-                >
-                  <RefreshCw className="w-3.5 h-3.5 text-purple-700" />
-                  <span>切為 {passcode === '1105' ? '1115 (2P)' : '1105 (1P)'}</span>
                 </button>
 
                 {/* Switch Account Button */}
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="px-2.5 py-1 rounded-xl bg-amber-100 border border-amber-300 text-amber-900 text-xs font-bold hover:bg-amber-200 transition-colors flex items-center gap-1 cursor-pointer"
+                  className="px-2.5 py-1 rounded-xl bg-[#E8D8C4] text-[#4A3F35] text-xs font-bold hover:bg-[#D9C5B2] transition-colors flex items-center gap-1 cursor-pointer"
                   title="切換其他帳號"
                 >
-                  <UserCheck className="w-3.5 h-3.5 text-amber-700" />
+                  <UserCheck className="w-3.5 h-3.5" />
                   <span>切換帳號</span>
                 </button>
               </div>
@@ -918,7 +869,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs text-emerald-900 font-bold shrink-0 shadow-2xs mb-2">
           <span className="flex items-center gap-2">
             <Clock className="w-4 h-4 animate-spin text-emerald-600" />
-            已同意挑戰！等待【{partnerDisplayName}】選擇/設定考驗題目...
+            已接受挑戰，等待【{partnerDisplayName}】出題…
           </span>
         </div>
       )}
@@ -928,7 +879,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         <div className="p-3 bg-amber-50 border border-amber-300 rounded-2xl flex items-center justify-between text-xs text-amber-900 font-bold shrink-0 shadow-2xs animate-fade-in mb-2">
           <span className="flex items-center gap-2 truncate pr-2">
             <Sparkles className="w-4 h-4 text-amber-600 shrink-0 animate-pulse" />
-            <span className="truncate">【{partnerDisplayName}】已同意挑戰！請設定猜心題目</span>
+            <span className="truncate">【{partnerDisplayName}】已接受挑戰，請出題</span>
           </span>
           <div className="flex items-center gap-2 shrink-0">
             <button
@@ -939,7 +890,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
               }}
               className="px-3 py-1.5 rounded-xl bg-[#A68B6D] hover:bg-[#8E7256] text-white text-xs font-bold transition-colors cursor-pointer shadow-2xs"
             >
-              設定題目 🎯
+              出題
             </button>
             <button
               type="button"
@@ -958,7 +909,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
           <div className="flex items-center gap-2 truncate pr-2">
             <Target className="w-4 h-4 text-amber-600 shrink-0 animate-pulse" />
             <span className="truncate">
-              🎯 猜心考驗作答進行中 [{activeQ.category}]：{activeQ.question}
+              作答中 [{activeQ.category}]：{activeQ.question}
             </span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -967,7 +918,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
               onClick={() => setIsAnswerModalDismissed(false)}
               className="px-3 py-1.5 rounded-xl bg-[#A68B6D] hover:bg-[#8E7256] text-white text-xs font-bold transition-colors cursor-pointer shadow-2xs"
             >
-              開啟作答 🎯
+              開啟作答
             </button>
             <button
               type="button"
@@ -1008,8 +959,10 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
               <MessageSquare className="w-4 h-4 text-[#A68B6D]" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-[#4A3F35]">猜心對話交流框</h3>
-              <p className="text-[10px] text-[#7A6C5E]">訊息與考驗結果即時同步至 Firebase 雲端</p>
+              <h3 className="text-sm font-bold text-[#4A3F35]">對話</h3>
+              <p className="text-[10px] text-[#7A6C5E]">
+                {isLoadingHistory ? '載入中…' : `${messages.length} 則訊息 ‧ 雲端同步`}
+              </p>
             </div>
           </div>
 
@@ -1018,8 +971,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
             onClick={handleSendGameInvite}
             className="px-3 py-1.5 rounded-xl bg-[#E8D8C4] hover:bg-[#D9C5B2] text-[#4A3F35] text-xs font-bold flex items-center gap-1 transition-colors"
           >
-            <PlusCircle className="w-3.5 h-3.5 text-[#A68B6D]" />
-            <span>發起猜心題目</span>
+            <PlusCircle className="w-3.5 h-3.5" />
+            <span>發起考驗</span>
           </button>
         </div>
 
@@ -1031,28 +984,11 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
               onClick={scrollToBottom}
               className="pointer-events-auto px-4 py-2 rounded-full bg-[#A68B6D] text-white text-xs font-bold shadow-lg flex items-center gap-2 hover:bg-[#8E7256] transition-colors border border-white/20 cursor-pointer"
             >
-              <ArrowDown className="w-4 h-4 text-amber-200" />
-              <span>有新對話／結果訊息 (點擊滾動至最新) ↓</span>
+              <ArrowDown className="w-4 h-4" />
+              <span>有新訊息</span>
             </button>
           </div>
         )}
-
-        {/* Cloud Sync Status Banner */}
-        <div className="mb-3 p-3 rounded-2xl bg-[#FAF7F2] border border-[#D9C5B2] text-[#5C4B3A] text-xs flex items-start gap-2.5 shadow-2xs">
-          <Database className="w-4 h-4 text-[#A68B6D] shrink-0 mt-0.5" />
-          <div className="flex-1 space-y-1">
-            <div className="font-bold text-[#4A3F35] flex items-center justify-between">
-              <span>☁️ Firebase 雲端即時同步</span>
-              <span className="text-[10px] text-[#8C6D53] bg-[#E8D8C4]/60 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                {isLoadingHistory ? '載入歷史紀錄中…' : `已載入 ${messages.length} 則歷史訊息`}
-              </span>
-            </div>
-            <p className="text-[11px] leading-relaxed text-[#7A6C5E]">
-              對話、考驗題目與揭曉報告皆儲存於雲端，任何裝置登入相同暗號都會看到完整歷史紀錄。
-            </p>
-          </div>
-        </div>
 
         {/* Embedded Dialogue Stream */}
         <div className="flex-1 min-h-0 overflow-y-auto space-y-3.5 pr-1.5 scrollbar-thin relative">
@@ -1063,13 +999,17 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
             </div>
           ) : messages.length === 0 ? (
             <div className="flex items-center justify-center h-full text-xs text-[#7A6C5E]">
-              <span>還沒有任何對話，發送第一則訊息開始吧！</span>
+              <span>還沒有任何對話</span>
             </div>
           ) : (
             messages.map((m, idx) => {
               const isSystem = m.author.includes('系統');
               const isMe = m.author === passcode;
-              const isResultReport = m.author === '🎯 揭曉報告' || m.text.includes('【猜心結果揭曉');
+              // Legacy messages used a decorated author label; keep both working.
+              const isResultReport =
+                m.author === REVEAL_AUTHOR ||
+                m.author === '🎯 揭曉報告' ||
+                m.text.includes('【猜心結果揭曉');
               const messageKey = m.id ? `${m.id}-${idx}` : `msg-${idx}`;
 
               // Issue 2 Requirement: Result Report Cards in Dialogue Stream
@@ -1084,13 +1024,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
                     } shadow-md space-y-2`}>
                       <div className="flex items-center justify-between border-b border-black/10 pb-2">
                         <div className="flex items-center gap-2 font-bold text-xs">
-                          <Award className="w-4 h-4 text-amber-600" />
-                          <span>🎯 雙人猜心考驗揭曉報告</span>
+                          <Award className="w-4 h-4" />
+                          <span>揭曉結果</span>
                         </div>
-                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-bold flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                          已存雲端
-                        </span>
                       </div>
                       <div className="text-xs sm:text-sm font-black whitespace-pre-line leading-relaxed pt-1">
                         {m.text}
@@ -1140,7 +1076,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
               type="text"
               value={chatMessageText}
               onChange={(e) => setChatMessageText(e.target.value)}
-              placeholder={`以 ${displayName} 在此發送對話 (即時同步至雲端)...`}
+              placeholder={`以 ${displayName} 發送訊息…`}
               className="flex-1 px-4 py-3 text-xs rounded-2xl milk-tea-input font-medium"
             />
             <button
@@ -1148,7 +1084,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
               className="milk-tea-btn-primary px-5 py-3 rounded-2xl text-xs font-bold inline-flex items-center gap-1.5 shadow-xs shrink-0"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>發送對話</span>
+              <span>發送</span>
             </button>
           </form>
         </div>

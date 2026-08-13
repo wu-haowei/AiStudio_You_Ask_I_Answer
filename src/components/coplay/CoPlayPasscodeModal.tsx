@@ -1,5 +1,5 @@
 import React from 'react';
-import { UserCheck, Sparkles, RefreshCw } from 'lucide-react';
+import { UserCheck, Sparkles } from 'lucide-react';
 
 interface CoPlayPasscodeModalProps {
   loginCodeInput: string;
@@ -21,10 +21,8 @@ export const CoPlayPasscodeModal: React.FC<CoPlayPasscodeModalProps> = ({
           <UserCheck className="w-8 h-8" />
         </div>
         <div className="space-y-2">
-          <h2 className="text-lg font-bold text-[#4A3F35]">請選擇你的雙人連線代表帳號</h2>
-          <p className="text-xs text-[#7A6C5E] leading-relaxed">
-            選擇預設身分或自訂帳號，即可與另一半或朋友連線進行「你問我答」真心話對決！
-          </p>
+          <h2 className="text-lg font-bold text-[#4A3F35]">選擇你的帳號</h2>
+          <p className="text-xs text-[#7A6C5E] leading-relaxed">選擇預設帳號或輸入自訂暗號即可連線。</p>
         </div>
 
         {/* Quick Identity Buttons */}
@@ -34,7 +32,7 @@ export const CoPlayPasscodeModal: React.FC<CoPlayPasscodeModalProps> = ({
             onClick={() => onLogin('1105', true)}
             className="p-4 rounded-2xl bg-white border-2 border-[#D9C5B2] hover:border-[#A68B6D] text-[#4A3F35] text-left transition-all group shadow-xs cursor-pointer"
           >
-            <div className="text-xs text-[#7A6C5E] font-medium">預設帳號 1P</div>
+            <div className="text-xs text-[#7A6C5E] font-medium">預設帳號</div>
             <div className="text-base font-bold text-[#4A3F35] flex items-center justify-between">
               <span>1105</span>
               <Sparkles className="w-4 h-4 text-[#A68B6D] group-hover:scale-110 transition-transform" />
@@ -46,7 +44,7 @@ export const CoPlayPasscodeModal: React.FC<CoPlayPasscodeModalProps> = ({
             onClick={() => onLogin('1115', true)}
             className="p-4 rounded-2xl bg-white border-2 border-[#D9C5B2] hover:border-[#A68B6D] text-[#4A3F35] text-left transition-all group shadow-xs cursor-pointer"
           >
-            <div className="text-xs text-[#7A6C5E] font-medium">預設帳號 2P</div>
+            <div className="text-xs text-[#7A6C5E] font-medium">預設帳號</div>
             <div className="text-base font-bold text-[#4A3F35] flex items-center justify-between">
               <span>1115</span>
               <Sparkles className="w-4 h-4 text-[#A68B6D] group-hover:scale-110 transition-transform" />
@@ -64,13 +62,13 @@ export const CoPlayPasscodeModal: React.FC<CoPlayPasscodeModalProps> = ({
           }}
           className="space-y-3 border-t border-[#D9C5B2] pt-4 text-left"
         >
-          <label className="block text-xs font-bold text-[#A68B6D]">自訂其他帳號或暗號：</label>
+          <label className="block text-xs font-bold text-[#A68B6D]">自訂帳號</label>
           <div className="flex gap-2">
             <input
               type="text"
               value={loginCodeInput}
               onChange={(e) => setLoginCodeInput(e.target.value)}
-              placeholder="例如：帳號 2、Alex、小明..."
+              placeholder="輸入帳號或暗號"
               className="flex-1 px-4 py-2.5 rounded-xl border border-[#D9C5B2] bg-white text-xs font-bold text-[#4A3F35] focus:outline-none focus:ring-2 focus:ring-[#A68B6D]"
             />
             <button
@@ -78,7 +76,7 @@ export const CoPlayPasscodeModal: React.FC<CoPlayPasscodeModalProps> = ({
               disabled={isAuthLoading || !loginCodeInput.trim()}
               className="milk-tea-btn-primary px-5 py-2.5 rounded-xl text-xs font-bold shadow-md disabled:opacity-50 cursor-pointer shrink-0"
             >
-              {isAuthLoading ? '連線中...' : '登入連線'}
+              {isAuthLoading ? '連線中…' : '登入'}
             </button>
           </div>
         </form>

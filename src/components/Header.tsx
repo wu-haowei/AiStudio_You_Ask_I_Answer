@@ -67,9 +67,7 @@ export const Header: React.FC<HeaderProps> = ({
                   你問我答
                 </span>
               </div>
-              <p className="text-xs text-[#7A6C5E] hidden xs:block">
-                習性喜好、人生規劃、感情、狀況劇與敏感題真心話猜測
-              </p>
+              <p className="text-xs text-[#7A6C5E] hidden xs:block">雙人猜心問答</p>
             </div>
           </div>
 
@@ -83,12 +81,9 @@ export const Header: React.FC<HeaderProps> = ({
                   : 'text-[#7A6C5E] hover:text-[#4A3F35] hover:bg-white/50'
               }`}
             >
-              <Users className="w-4 h-4 text-[#A68B6D]" />
-              <span>你問我答對決</span>
-              <span className="w-2 h-2 rounded-full bg-[#A68B6D] animate-ping"></span>
+              <Users className="w-4 h-4" />
+              <span>你問我答</span>
             </button>
-
-            <div className="h-4 w-px bg-[#D9C5B2] mx-1" />
 
             <button
               onClick={() => setActiveTab('admin_manage')}
@@ -130,15 +125,15 @@ export const Header: React.FC<HeaderProps> = ({
                 className="milk-tea-btn-primary flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium shadow-sm hover:shadow-md"
               >
                 <Plus className="w-4 h-4" />
-                <span>新增自訂題目</span>
+                <span>新增題目</span>
               </button>
             ) : (
               <button
                 onClick={() => setActiveTab('co_play')}
                 className="milk-tea-btn-secondary flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium"
               >
-                <Users className="w-4 h-4 text-[#A68B6D]" />
-                <span>切換至你問我答</span>
+                <Users className="w-4 h-4" />
+                <span>返回對話</span>
               </button>
             )}
 

@@ -4,7 +4,7 @@ import { Upload, X, Sparkles, Check } from 'lucide-react';
 interface AdminJsonImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImportData: (jsonStr: string) => void;
+  onImportData: (jsonStr: string) => void | Promise<void>;
   showToast: (title: string, description?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
 }
 
@@ -38,7 +38,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
         <div className="px-6 py-5 bg-[#F5EFE6] border-b border-[#E8DFD3] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Upload className="w-5 h-5 text-[#8C6D53]" />
-            <h3 className="text-base font-bold text-[#3A2E2B]">匯入題目 JSON 格式</h3>
+            <h3 className="text-base font-bold text-[#3A2E2B]">匯入題目</h3>
           </div>
           <button
             onClick={onClose}
@@ -53,13 +53,13 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-[#3A2E2B] flex items-center gap-1.5">
                 <Sparkles className="w-4 h-4 text-[#8C6D53]" />
-                範本 JSON 格式 (包含 6 大主題分類)
+                JSON 範本
               </span>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
                     navigator.clipboard.writeText(sampleJsonTemplate);
-                    showToast('已複製範本 JSON', '', 'success');
+                    showToast('已複製範本', '', 'success');
                   }}
                   className="px-2.5 py-1 text-xs rounded-lg bg-white border border-[#D0BFAC] text-[#4A3F35] font-semibold hover:bg-[#FAF7F2] cursor-pointer"
                 >
@@ -74,11 +74,11 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                     a.download = 'qa_template.json';
                     a.click();
                     URL.revokeObjectURL(url);
-                    showToast('已下載 qa_template.json', '', 'info');
+                    showToast('已下載範本檔', '', 'info');
                   }}
                   className="px-2.5 py-1 text-xs rounded-lg bg-[#8C6D53] text-white font-semibold hover:bg-[#785C44] cursor-pointer"
                 >
-                  下載範本檔
+                  下載範本
                 </button>
               </div>
             </div>
@@ -89,9 +89,25 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
           </div>
 
           <div className="space-y-2">
-            <label className="block text-xs font-bold text-[#3A2E2B]">
-              貼上 JSON 題目文字：
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-bold text-[#3A2E2B]">貼上 JSON 內容</label>
+              <label className="px-2.5 py-1 text-xs rounded-lg bg-white border border-[#D0BFAC] text-[#4A3F35] font-semibold hover:bg-[#FAF7F2] cursor-pointer">
+                選擇檔案
+                <input
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (event) => setPastedJsonText((event.target?.result as string) || '');
+                    reader.onerror = () => showToast('讀取檔案失敗', undefined, 'error');
+                    reader.readAsText(file);
+                  }}
+                />
+              </label>
+            </div>
             <textarea
               rows={6}
               value={pastedJsonText}
@@ -111,24 +127,23 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 if (!pastedJsonText.trim()) {
-                  showToast('請先貼上 JSON 數據', '', 'error');
+                  showToast('請先貼上 JSON 內容', '', 'warning');
                   return;
                 }
                 try {
-                  onImportData(pastedJsonText.trim());
+                  await onImportData(pastedJsonText.trim());
                   onClose();
                   setPastedJsonText('');
-                  showToast('成功匯入題目', '內容已即時更新', 'success');
                 } catch (err: any) {
-                  showToast('JSON 格式錯誤', '請檢查 JSON 格式是否完整', 'error');
+                  showToast('匯入失敗', err?.message || '請檢查 JSON 格式是否完整', 'error');
                 }
               }}
               className="milk-tea-btn-primary px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
             >
               <Check className="w-4 h-4" />
-              <span>確認解析並匯入</span>
+              <span>匯入</span>
             </button>
           </div>
         </div>

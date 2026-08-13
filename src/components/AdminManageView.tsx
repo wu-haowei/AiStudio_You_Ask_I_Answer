@@ -123,7 +123,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   const handleSaveForm = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formQuestion.trim() || !formAnswer.trim()) {
-      showToast('請填寫完整內容', '問題與回答為必填欄位', 'error');
+      showToast('請填寫題目與說明', undefined, 'warning');
       return;
     }
 
@@ -151,7 +151,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         explanation: formExplanation.trim() || undefined,
         updatedAt: new Date().toISOString(),
       });
-      showToast('更新成功', 'Q&A 內容已即時儲存！', 'success');
+      showToast('已更新', undefined, 'success');
     } else {
       onAddFAQ({
         question: formQuestion.trim(),
@@ -164,7 +164,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         correctOptionIndex: optionsArray.length > 0 ? formCorrectIndex : undefined,
         explanation: formExplanation.trim() || undefined,
       });
-      showToast('新增成功', '新題目已成功新增！', 'success');
+      showToast('已新增題目', undefined, 'success');
     }
 
     setIsEditModalOpen(false);
@@ -234,35 +234,19 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const jsonStr = event.target?.result as string;
-        onImportData(jsonStr);
-        showToast('匯入備份成功', '已順利覆蓋載入 Q&A 備份檔！', 'success');
-      } catch (err) {
-        showToast('檔案格式錯誤', '請確認選擇有效的 JSON 檔案', 'error');
-      }
-    };
-    reader.readAsText(file);
-  };
-
   return (
     <div className="space-y-6 pb-12">
       {/* Admin Control Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-3xl bg-white border border-[#E8DFD3] shadow-xs">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-[#3A2E2B] flex items-center gap-2">
-            <span>後台管理與題目匯入</span>
+            <span>後台管理</span>
             <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#F3E8DC] text-[#7A5230] font-semibold">
               {isLoading ? '雲端載入中…' : `共 ${faqs.length} 題`}
             </span>
           </h1>
           <p className="text-xs sm:text-sm text-[#7A6C65] mt-1">
-            題庫即時同步至 Firebase 雲端，可編輯題目與批次匯入 JSON 題目檔。
+            題庫即時同步至雲端，所有裝置共用。
           </p>
         </div>
 
@@ -272,8 +256,8 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             onClick={() => setIsJsonModalOpen(true)}
             className="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-[#E6D8C8] text-[#4A3F35] hover:bg-[#DBC9B5] transition-all inline-flex items-center gap-1.5 border border-[#D0BFAC]"
           >
-            <Upload className="w-4 h-4 text-[#8C6D53]" />
-            <span>匯入題目 (JSON 格式)</span>
+            <Upload className="w-4 h-4" />
+            <span>匯入題目</span>
           </button>
 
           <button
@@ -288,26 +272,19 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
           <div className="flex items-center gap-1 border-l border-[#E8DFD3] pl-2">
             <button
               onClick={onExportData}
-              title="匯出資料 JSON 檔"
+              title="匯出題庫"
               className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors"
             >
               <Download className="w-4 h-4" />
             </button>
-            <label
-              title="匯入 JSON 備份檔"
-              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] cursor-pointer transition-colors"
-            >
-              <Upload className="w-4 h-4" />
-              <input type="file" accept=".json" onChange={handleFileUpload} className="hidden" />
-            </label>
             <button
               onClick={() => {
                 if (confirm('確定要將雲端題庫重置為預設題目庫嗎？此動作會覆蓋所有裝置上的題庫內容。')) {
                   onResetData();
-                  showToast('已重置為預設資料', '', 'info');
+
                 }
               }}
-              title="重置為預設預載資料"
+              title="還原預設題庫"
               className="p-2 rounded-xl text-rose-600 hover:bg-rose-50 transition-colors"
             >
               <RotateCcw className="w-4 h-4" />
@@ -336,7 +313,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜尋題目、內容或標籤..."
+            placeholder="搜尋題目或標籤"
             className="w-full pl-10 pr-4 py-2.5 text-sm rounded-xl milk-tea-input"
           />
         </div>
@@ -359,7 +336,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
       <div className="space-y-3">
         {filteredFaqs.length === 0 ? (
           <div className="text-center py-12 bg-white rounded-3xl border border-[#E8DFD3] text-[#7A6C65]">
-            無符合條件的題目數據，點擊右上角新增或匯入 JSON。
+            沒有符合條件的題目。
           </div>
         ) : (
           filteredFaqs.map((faq) => (
@@ -381,7 +358,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                   )}
                   {faq.isHidden && (
                     <span className="text-[10px] font-bold text-gray-600 bg-gray-200 px-2 py-0.5 rounded-md">
-                      隱藏不公開
+                      已隱藏
                     </span>
                   )}
                   {faq.options && faq.options.length > 0 && (
@@ -406,7 +383,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                       ? 'bg-amber-100 text-amber-800'
                       : 'text-[#7A6C65] hover:bg-[#F4ECE1]'
                   }`}
-                  title={faq.isPinned ? '取消置頂' : '設定置頂'}
+                  title={faq.isPinned ? '取消置頂' : '置頂'}
                 >
                   <Pin className="w-4 h-4" />
                 </button>
@@ -420,7 +397,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                       ? 'bg-gray-200 text-gray-700'
                       : 'text-[#7A6C65] hover:bg-[#F4ECE1]'
                   }`}
-                  title={faq.isHidden ? '設為公開顯示' : '暫存隱藏'}
+                  title={faq.isHidden ? '顯示' : '隱藏'}
                 >
                   {faq.isHidden ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -497,7 +474,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                   rows={3}
                   value={formAnswer}
                   onChange={(e) => setFormAnswer(e.target.value)}
-                  placeholder="請輸入此題目的背景或考驗重點說明..."
+                  placeholder="題目說明或背景"
                   className="w-full px-4 py-2.5 text-sm rounded-xl milk-tea-input resize-none"
                 />
               </div>
@@ -597,7 +574,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 onClick={() => {
                   onDeleteFAQ(deletingId);
                   setDeletingId(null);
-                  showToast('已刪除題目', '', 'info');
+                  showToast('已刪除題目', undefined, 'info');
                 }}
                 className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 shadow-xs"
               >

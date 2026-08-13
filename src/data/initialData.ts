@@ -252,3 +252,9 @@ export const INITIAL_USER_QUESTIONS: UserQuestion[] = [
     status: 'pending',
   },
 ];
+
+/**
+ * Ids of the questions seeded on a fresh database. They are placeholder content,
+ * so the first successful JSON import clears whichever of them are still present.
+ */
+export const SEED_FAQ_IDS = INITIAL_FAQS.map((f) => f.id);

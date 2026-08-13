@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { ActiveTab, Category, FAQItem, ToastMessage, UserQuestion } from './types';
 import { checkAndMigrateStorageVersion, CURRENT_APP_VERSION } from './utils/storage';
-import { INITIAL_CATEGORIES, INITIAL_FAQS, INITIAL_USER_QUESTIONS } from './data/initialData';
+import {
+  INITIAL_CATEGORIES,
+  INITIAL_FAQS,
+  INITIAL_USER_QUESTIONS,
+  SEED_FAQ_IDS,
+} from './data/initialData';
 import {
   COLLECTIONS,
   deleteItem,
@@ -193,6 +198,24 @@ export default function App() {
       }
 
       await saveItems(COLLECTIONS.FAQS, toWrite);
+
+      // The seeded sample questions are placeholders — once real content is
+      // imported, drop whichever of them are still in the database.
+      const importedIds = new Set(toWrite.map((f) => f.id));
+      const leftoverSeeds = faqs.filter(
+        (f) => SEED_FAQ_IDS.includes(f.id) && !importedIds.has(f.id)
+      );
+
+      if (leftoverSeeds.length > 0) {
+        await Promise.all(leftoverSeeds.map((f) => deleteItem(COLLECTIONS.FAQS, f.id)));
+        showToast(
+          '已匯入題目',
+          `新增 ${toWrite.length} 題，並移除 ${leftoverSeeds.length} 題預設範例。`,
+          'success'
+        );
+      } else {
+        showToast('已匯入題目', `共新增或更新 ${toWrite.length} 題。`, 'success');
+      }
     } catch (err: any) {
       console.error('Import parse error:', err);
       throw new Error(err.message || '解析 JSON 題目檔失敗');

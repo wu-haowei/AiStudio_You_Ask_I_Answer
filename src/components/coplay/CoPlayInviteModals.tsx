@@ -92,8 +92,8 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   <Gamepad2 className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-[#4A3F35]">🎮 你問我答考驗邀請</h3>
-                  <p className="text-xs text-[#7A6C5E]">發起人：{getNameByPasscode(inviteStateSender)}</p>
+                  <h3 className="text-base font-bold text-[#4A3F35]">考驗邀請</h3>
+                  <p className="text-xs text-[#7A6C5E]">來自 {getNameByPasscode(inviteStateSender)}</p>
                 </div>
               </div>
               <button
@@ -107,7 +107,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
             </div>
 
             <p className="text-xs sm:text-sm font-bold text-[#4A3F35] leading-relaxed bg-white p-4 rounded-2xl border border-[#D9C5B2]">
-              【{getNameByPasscode(inviteStateSender)}】向你發起了「你問我答」考驗！請問要接受考驗嗎？
+              {getNameByPasscode(inviteStateSender)} 向你發起考驗，要接受嗎？
             </p>
 
             <div className="flex items-center gap-3 pt-2">
@@ -116,7 +116,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                 onClick={() => onRespondInvite(false)}
                 className="flex-1 py-3 rounded-2xl text-xs font-bold text-[#7A6C5E] bg-[#E8D8C4]/60 hover:bg-[#D9C5B2] transition-colors cursor-pointer"
               >
-                下次再玩 🙅
+                婉拒
               </button>
               <button
                 type="button"
@@ -124,7 +124,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                 className="flex-1 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
               >
                 <ThumbsUp className="w-4 h-4" />
-                <span>接受挑戰 👍</span>
+                <span>接受挑戰</span>
               </button>
             </div>
           </div>
@@ -141,27 +141,18 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   <Clock className="w-5 h-5 animate-spin" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-[#4A3F35]">⏳ 等待對方回應中...</h3>
-                  <p className="text-xs text-[#7A6C5E]">邀請對象：【{partnerDisplayName}】</p>
+                  <h3 className="text-base font-bold text-[#4A3F35]">等待回應…</h3>
+                  <p className="text-xs text-[#7A6C5E]">已邀請 {partnerDisplayName}</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={onCancelInvite}
                 className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
-                title="取消發起並關閉"
+                title="取消邀請"
               >
                 <X className="w-5 h-5" />
               </button>
-            </div>
-
-            <div className="bg-white p-4 rounded-2xl border border-[#D9C5B2] space-y-2 text-center">
-              <p className="text-xs sm:text-sm font-bold text-[#4A3F35]">
-                已向【{partnerDisplayName}】發出「你問我答」考驗邀請！
-              </p>
-              <p className="text-xs text-[#7A6C5E]">
-                請等待對方點擊接受，您也可以隨時點擊下方按鈕取消發起。
-              </p>
             </div>
 
             <div className="flex items-center justify-end pt-2">
@@ -171,7 +162,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                 className="w-full py-3 rounded-2xl text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
               >
                 <XCircle className="w-4 h-4" />
-                <span>取消發起邀請</span>
+                <span>取消邀請</span>
               </button>
             </div>
           </div>
@@ -188,15 +179,15 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   <Target className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm sm:text-base font-bold text-[#4A3F35]">🎯 選擇/設定猜心題目 (問對方的真心話)</h3>
-                  <p className="text-[11px] text-[#7A6C5E]">【{partnerDisplayName}】已準備好！設定題目後由你猜測對方的選擇</p>
+                  <h3 className="text-sm sm:text-base font-bold text-[#4A3F35]">出題</h3>
+                  <p className="text-[11px] text-[#7A6C5E]">設定題目後由你猜 {partnerDisplayName} 的選擇</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={onCloseQuestionModal}
                 className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
-                title="暫時關閉視窗 (可於對話框點擊按鈕重新開啟)"
+                title="關閉視窗"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -207,8 +198,8 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
               <div className="space-y-1.5 bg-white/90 p-3.5 rounded-2xl border border-[#D9C5B2] shadow-2xs">
                 <div className="flex items-center justify-between gap-2">
                   <label className="text-xs font-bold text-[#4A3F35] flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-[#A68B6D]" />
-                    <span>步驟 1：選擇題目種類</span>
+                    <Sparkles className="w-4 h-4" />
+                    <span>題目種類</span>
                   </label>
                   <select
                     value={questionCategory}
@@ -220,7 +211,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                     <option value="感情相關">感情相關</option>
                     <option value="狀況劇">狀況劇</option>
                     <option value="敏感題">敏感題</option>
-                    <option value="CUSTOM">✏️ 自訂種類 (自行輸入題目與選項)</option>
+                    <option value="CUSTOM">自訂種類</option>
                   </select>
                 </div>
 
@@ -231,7 +222,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                       required
                       value={customCategoryInput}
                       onChange={(e) => setCustomCategoryInput(e.target.value)}
-                      placeholder="請輸入自訂種類名稱 (例如：休閒嗜好、理財觀念...)"
+                      placeholder="輸入種類名稱"
                       className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input font-bold"
                     />
                   </div>
@@ -244,8 +235,8 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   <div className="bg-white p-4 rounded-2xl border border-[#D9C5B2] space-y-3 shadow-2xs">
                     <div className="flex items-center justify-between border-b border-dashed border-[#D9C5B2] pb-2">
                       <span className="text-xs font-bold text-[#A68B6D] flex items-center gap-1">
-                        <Dices className="w-4 h-4 text-[#A68B6D]" />
-                        已自動從「{questionCategory}」題庫為您隨機抽題
+                        <Dices className="w-4 h-4" />
+                        來自「{questionCategory}」題庫
                       </span>
                       <button
                         type="button"
@@ -253,19 +244,19 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                         className="px-2.5 py-1.5 rounded-xl bg-[#A68B6D] text-white text-[11px] font-bold hover:bg-[#8E7256] transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
                       >
                         <Shuffle className="w-3.5 h-3.5" />
-                        <span>🎲 換一題 (隨機)</span>
+                        <span>換一題</span>
                       </button>
                     </div>
 
                     <div>
-                      <span className="text-[11px] font-bold text-[#7A6C5E] block mb-1">題目內容：</span>
+                      <span className="text-[11px] font-bold text-[#7A6C5E] block mb-1">題目</span>
                       <p className="text-xs sm:text-sm font-bold text-[#4A3F35] leading-relaxed bg-[#FAF7F2] p-3 rounded-xl border border-[#E8D8C4]">
-                        {questionText || '點擊上方按鈕隨機抽題...'}
+                        {questionText || '點右上角換一題'}
                       </p>
                     </div>
 
                     <div>
-                      <span className="text-[11px] font-bold text-[#7A6C5E] block mb-1">作答選項預覽：</span>
+                      <span className="text-[11px] font-bold text-[#7A6C5E] block mb-1">選項</span>
                       <div className="grid grid-cols-2 gap-2 text-xs">
                         <div className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#E8D8C4] text-[#4A3F35] font-medium truncate">
                           <span className="font-bold text-[#A68B6D]">A.</span> {optA}
@@ -289,7 +280,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                         className="text-[#A68B6D] hover:underline font-bold flex items-center gap-1 cursor-pointer"
                       >
                         <Edit3 className="w-3.5 h-3.5" />
-                        <span>{isEditingPreset ? '隱藏手動修改' : '想要微調這題文字/選項內容？'}</span>
+                        <span>{isEditingPreset ? '收起編輯' : '編輯題目與選項'}</span>
                       </button>
                     </div>
                   </div>
@@ -297,7 +288,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   {isEditingPreset && (
                     <div className="space-y-3 bg-amber-50/70 p-3.5 rounded-2xl border border-amber-200/80 animate-fade-in">
                       <div>
-                        <label className="text-xs font-bold text-[#4A3F35] mb-1 block">微調題目內容：</label>
+                        <label className="text-xs font-bold text-[#4A3F35] mb-1 block">題目</label>
                         <input
                           type="text"
                           required
@@ -307,7 +298,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                         />
                       </div>
                       <div>
-                        <label className="text-xs font-bold text-[#4A3F35] mb-1 block">微調選項內容：</label>
+                        <label className="text-xs font-bold text-[#4A3F35] mb-1 block">選項</label>
                         <div className="grid grid-cols-2 gap-2">
                           <input
                             type="text"
@@ -343,7 +334,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   )}
 
                   <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-[#7A6C5E] block">或從題庫中點選指定題目：</label>
+                    <label className="text-[11px] font-bold text-[#7A6C5E] block">從題庫選擇</label>
                     <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
                       {faqs
                         .filter((f) => !f.category || f.category === questionCategory)
@@ -354,7 +345,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                             onClick={() => handleSelectPresetFAQ(f)}
                             className="text-[11px] px-2.5 py-1 rounded-xl bg-white border border-[#D9C5B2] text-[#4A3F35] font-medium hover:border-[#A68B6D] hover:bg-[#E8D8C4]/40 transition-colors text-left truncate max-w-full cursor-pointer"
                           >
-                            💡 {f.question}
+                            {f.question}
                           </button>
                         ))}
                     </div>
@@ -364,20 +355,20 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                 <div className="space-y-3 bg-white p-4 rounded-2xl border border-[#D9C5B2] shadow-2xs animate-fade-in">
                   <div>
                     <label className="text-xs font-bold text-[#4A3F35] mb-1 block">
-                      請輸入自訂題目內容 (問對方的真心話)：
+                      題目
                     </label>
                     <input
                       type="text"
                       required
                       value={questionText}
                       onChange={(e) => setQuestionText(e.target.value)}
-                      placeholder="例如：你覺得我們第一次見面最深刻的事情是什麼？"
+                      placeholder="輸入要問對方的題目"
                       className="w-full px-3.5 py-2.5 text-xs rounded-xl milk-tea-input font-bold"
                     />
                   </div>
 
                   <div>
-                    <label className="text-xs font-bold text-[#4A3F35] mb-1 block">請輸入 4 個作答選項：</label>
+                    <label className="text-xs font-bold text-[#4A3F35] mb-1 block">四個選項</label>
                     <div className="grid grid-cols-2 gap-2">
                       <input
                         type="text"
@@ -422,14 +413,14 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   onClick={onCloseQuestionModal}
                   className="px-4 py-3 rounded-2xl text-xs font-bold text-[#7A6C5E] bg-[#E8D8C4]/60 hover:bg-[#D9C5B2] transition-colors cursor-pointer"
                 >
-                  暫時關閉
+                  關閉
                 </button>
                 <button
                   type="submit"
                   className="flex-1 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
                 >
                   <Sparkles className="w-4 h-4" />
-                  <span>發布考驗 (雙方於彈窗作答，答案揭曉於對話框)</span>
+                  <span>發布題目</span>
                 </button>
               </div>
             </form>

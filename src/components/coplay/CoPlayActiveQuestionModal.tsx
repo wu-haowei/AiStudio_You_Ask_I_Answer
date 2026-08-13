@@ -47,24 +47,21 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
         <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-3">
           <div className="flex items-center gap-2.5">
             <div className="w-10 h-10 rounded-2xl bg-[#A68B6D] text-white flex items-center justify-center font-bold shadow-xs">
-              <Target className="w-5 h-5 text-amber-100" />
+              <Target className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-[#4A3F35]">🎯 猜心考驗作答視窗</h3>
+              <h3 className="text-base font-bold text-[#4A3F35]">作答</h3>
               <p className="text-xs text-[#7A6C5E]">
-                {isTarget ? '👉 請選擇你的真實心聲' : `👉 請猜猜 ${partnerDisplayName} 的選擇`}
+                {isTarget ? '請選擇你的真實答案' : `猜猜 ${partnerDisplayName} 的選擇`}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full font-bold">
-              考驗進行中
-            </span>
             <button
               type="button"
               onClick={onDismissModal}
               className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
-              title="暫時關閉視窗 (可於對話框點擊按鈕重新開啟)"
+              title="關閉視窗"
             >
               <X className="w-5 h-5" />
             </button>
@@ -74,8 +71,8 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
         {/* Question Card */}
         <div className="bg-white p-4 rounded-2xl border border-[#D9C5B2] space-y-1.5 shadow-2xs">
           <div className="text-xs font-bold text-[#A68B6D] flex items-center gap-1">
-            <Sparkles className="w-3.5 h-3.5 text-[#A68B6D]" />
-            [{activeQ.category}] {isTarget ? '這是問你的真心話：' : `猜猜對方的選擇：`}
+            <Sparkles className="w-3.5 h-3.5" />
+            [{activeQ.category}]
           </div>
           <div className="text-xs sm:text-sm font-bold text-[#4A3F35] leading-relaxed">
             {activeQ.question}
@@ -88,7 +85,7 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
             {!hasTargetAnswered ? (
               <div className="space-y-3">
                 <p className="text-xs font-bold text-[#5C4B3A]">
-                  👉 請選擇你的「真心話 (個人真實選擇)」：
+                  選擇你的真實答案
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   {activeQ.options.map((opt, idx) => (
@@ -124,13 +121,13 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                 {selectedOptIndex !== null && (
                   <div className="space-y-1 pt-1 animate-fade-in">
                     <label className="text-[11px] font-bold text-[#5C4B3A] flex items-center gap-1">
-                      <span>💬 {selectedOptIndex === 4 ? '請輸入「其他」自訂選項與詳細說明：' : '選擇此項目的詳細理由 / 說明 (選填)：'}</span>
+                      <span>{selectedOptIndex === 4 ? '自訂答案' : '補充說明（選填）'}</span>
                     </label>
                     <input
                       type="text"
                       value={answerExplanation}
                       onChange={(e) => setAnswerExplanation(e.target.value)}
-                      placeholder={selectedOptIndex === 4 ? "請輸入自訂答案與說明..." : "可填寫選擇此項目的原因..."}
+                      placeholder={selectedOptIndex === 4 ? '輸入你的答案' : '可填寫選擇原因'}
                       className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input font-bold"
                     />
                   </div>
@@ -143,17 +140,17 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                   className="w-full mt-2 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
-                  <span>確認送出真心話</span>
+                  <span>送出真心話</span>
                 </button>
               </div>
             ) : (
               <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-2">
                 <div className="text-xs font-bold text-emerald-900 flex items-center justify-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  你已完成真心話選擇！
+                  已送出真心話
                 </div>
                 <p className="text-[11px] text-emerald-700 font-medium">
-                  等待對方完成猜測，揭曉結果將自動發布至對話框...
+                  等待對方猜測，結果會顯示在對話框
                 </p>
                 <div className="pt-1 flex items-center justify-center gap-2">
                   <button
@@ -161,14 +158,14 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                     onClick={onDismissModal}
                     className="px-3 py-1.5 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-xs font-bold transition-colors cursor-pointer"
                   >
-                    縮小視窗
+                    關閉
                   </button>
                   <button
                     type="button"
                     onClick={onCancelActiveQuestion}
                     className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-colors cursor-pointer"
                   >
-                    取消本題
+                    取消這題
                   </button>
                 </div>
               </div>
@@ -182,7 +179,7 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
             {!hasInitiatorGuessed ? (
               <div className="space-y-3">
                 <p className="text-xs font-bold text-[#8C6D53]">
-                  👉 請猜猜【{partnerDisplayName}】會選擇哪一個選項？
+                  猜猜 {partnerDisplayName} 會選哪一個？
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   {activeQ.options.map((opt, idx) => (
@@ -218,13 +215,13 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                 {selectedOptIndex !== null && (
                   <div className="space-y-1 pt-1 animate-fade-in">
                     <label className="text-[11px] font-bold text-[#8C6D53] flex items-center gap-1">
-                      <span>💬 {selectedOptIndex === 4 ? '請輸入你猜測對方選「其他」的詳細說明：' : '猜測原因 / 補充說明 (選填)：'}</span>
+                      <span>{selectedOptIndex === 4 ? '自訂猜測' : '補充說明（選填）'}</span>
                     </label>
                     <input
                       type="text"
                       value={answerExplanation}
                       onChange={(e) => setAnswerExplanation(e.target.value)}
-                      placeholder={selectedOptIndex === 4 ? "請輸入自訂猜測與說明..." : "可填寫猜測的原因..."}
+                      placeholder={selectedOptIndex === 4 ? '輸入你的猜測' : '可填寫猜測原因'}
                       className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input font-bold"
                     />
                   </div>
@@ -237,17 +234,17 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                   className="w-full mt-2 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
-                  <span>確認送出猜測</span>
+                  <span>送出猜測</span>
                 </button>
               </div>
             ) : (
               <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-2">
                 <div className="text-xs font-bold text-emerald-900 flex items-center justify-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  你已完成猜測選擇！
+                  已送出猜測
                 </div>
                 <p className="text-[11px] text-emerald-700 font-medium">
-                  等待對方送出真心話，揭曉結果將自動發布至對話框...
+                  等待對方作答，結果會顯示在對話框
                 </p>
                 <div className="pt-1 flex items-center justify-center gap-2">
                   <button
@@ -255,14 +252,14 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                     onClick={onDismissModal}
                     className="px-3 py-1.5 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-xs font-bold transition-colors cursor-pointer"
                   >
-                    縮小視窗
+                    關閉
                   </button>
                   <button
                     type="button"
                     onClick={onCancelActiveQuestion}
                     className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-colors cursor-pointer"
                   >
-                    取消本題
+                    取消這題
                   </button>
                 </div>
               </div>
