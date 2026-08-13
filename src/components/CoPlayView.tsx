@@ -38,18 +38,32 @@ const PASSCODE_STORAGE_KEY = 'milktea_coplay_passcode';
 const SESSION_PASSCODE_KEY = 'milktea_coplay_session_passcode';
 const TAB_SESSION_ID_KEY = 'milktea_coplay_tab_id';
 
-// Helper for safe JSON API response parsing (detects GitHub Pages HTML fallback)
+// Helper for safe JSON API response parsing (detects GitHub Pages / static hosting)
+let isStaticHostingDetected = typeof window !== 'undefined' && (
+  window.location.hostname.includes('github.io') ||
+  window.location.pathname.includes('/AiStudio_You_Ask_I_Answer')
+);
+
 const fetchRoomApi = async (url: string, options?: RequestInit) => {
+  if (isStaticHostingDetected) {
+    return { success: false, isStaticFallback: true };
+  }
+
   try {
     const res = await fetch(url, options);
     const contentType = res.headers.get('content-type') || '';
     if (contentType.includes('text/html') || (!res.ok && contentType.includes('html'))) {
+      isStaticHostingDetected = true;
       return { success: false, isStaticFallback: true };
     }
     const data = await res.json().catch(() => null);
-    if (!data) return { success: false, isStaticFallback: true };
+    if (!data) {
+      isStaticHostingDetected = true;
+      return { success: false, isStaticFallback: true };
+    }
     return { ...data, isStaticFallback: false };
   } catch (err) {
+    isStaticHostingDetected = true;
     return { success: false, isStaticFallback: true };
   }
 };
