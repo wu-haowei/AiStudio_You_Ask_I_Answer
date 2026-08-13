@@ -1,84 +1,65 @@
 import React from 'react';
-import { UserCheck, Sparkles } from 'lucide-react';
+import { UserRound } from 'lucide-react';
 
 interface CoPlayPasscodeModalProps {
   loginCodeInput: string;
-  setLoginCodeInput: (val: string) => void;
+  setLoginCodeInput: (v: string) => void;
   isAuthLoading: boolean;
-  onLogin: (code: string, isFromQuickBtn?: boolean) => void;
+  onLogin: (code: string) => void;
 }
 
+/** Entry screen — any non-empty name gets you into the room. */
 export const CoPlayPasscodeModal: React.FC<CoPlayPasscodeModalProps> = ({
   loginCodeInput,
   setLoginCodeInput,
   isAuthLoading,
   onLogin,
 }) => {
+  const canSubmit = !!loginCodeInput.trim() && !isAuthLoading;
+
   return (
     <div className="flex-1 min-h-0 flex items-center justify-center p-4">
-      <div className="bg-[#FAF7F2] border-2 border-[#D9C5B2] rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-xl text-center space-y-6">
-        <div className="w-16 h-16 bg-[#A68B6D] text-white rounded-2xl mx-auto flex items-center justify-center font-bold text-xl shadow-md">
-          <UserCheck className="w-8 h-8" />
-        </div>
-        <div className="space-y-2">
-          <h2 className="text-lg font-bold text-[#4A3F35]">選擇你的帳號</h2>
-          <p className="text-xs text-[#7A6C5E] leading-relaxed">選擇預設帳號或輸入自訂暗號即可連線。</p>
-        </div>
-
-        {/* Quick Identity Buttons */}
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={() => onLogin('1105', true)}
-            className="p-4 rounded-2xl bg-white border-2 border-[#D9C5B2] hover:border-[#A68B6D] text-[#4A3F35] text-left transition-all group shadow-xs cursor-pointer"
-          >
-            <div className="text-xs text-[#7A6C5E] font-medium">預設帳號</div>
-            <div className="text-base font-bold text-[#4A3F35] flex items-center justify-between">
-              <span>1105</span>
-              <Sparkles className="w-4 h-4 text-[#A68B6D] group-hover:scale-110 transition-transform" />
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onLogin('1115', true)}
-            className="p-4 rounded-2xl bg-white border-2 border-[#D9C5B2] hover:border-[#A68B6D] text-[#4A3F35] text-left transition-all group shadow-xs cursor-pointer"
-          >
-            <div className="text-xs text-[#7A6C5E] font-medium">預設帳號</div>
-            <div className="text-base font-bold text-[#4A3F35] flex items-center justify-between">
-              <span>1115</span>
-              <Sparkles className="w-4 h-4 text-[#A68B6D] group-hover:scale-110 transition-transform" />
-            </div>
-          </button>
+      <div className="bg-[#FAF7F2] border border-[#D9C5B2] rounded-3xl p-6 sm:p-8 max-w-sm w-full shadow-lg space-y-6">
+        <div className="text-center space-y-3">
+          <div className="w-14 h-14 bg-[#A68B6D] text-white rounded-2xl mx-auto flex items-center justify-center">
+            <UserRound className="w-7 h-7" />
+          </div>
+          <div className="space-y-1">
+            <h2 className="text-lg font-bold text-[#4A3F35]">你問我答</h2>
+            <p className="text-xs text-[#7A6C5E]">輸入姓名即可進入</p>
+          </div>
         </div>
 
-        {/* Custom Passcode Login Form */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (loginCodeInput.trim()) {
-              onLogin(loginCodeInput, false);
-            }
+            if (canSubmit) onLogin(loginCodeInput);
           }}
-          className="space-y-3 border-t border-[#D9C5B2] pt-4 text-left"
+          className="space-y-3"
         >
-          <label className="block text-xs font-bold text-[#A68B6D]">自訂帳號</label>
-          <div className="flex gap-2">
+          <div className="space-y-1.5">
+            <label htmlFor="player-name" className="block text-xs font-bold text-[#7A6C5E]">
+              姓名
+            </label>
             <input
+              id="player-name"
               type="text"
               value={loginCodeInput}
               onChange={(e) => setLoginCodeInput(e.target.value)}
-              placeholder="輸入帳號或暗號"
-              className="flex-1 px-4 py-2.5 rounded-xl border border-[#D9C5B2] bg-white text-xs font-bold text-[#4A3F35] focus:outline-none focus:ring-2 focus:ring-[#A68B6D]"
+              placeholder="輸入你的姓名"
+              autoComplete="name"
+              maxLength={20}
+              className="w-full px-4 py-3 rounded-2xl border border-[#D9C5B2] bg-white text-sm font-semibold text-[#4A3F35] focus:outline-none focus:ring-2 focus:ring-[#A68B6D]"
             />
-            <button
-              type="submit"
-              disabled={isAuthLoading || !loginCodeInput.trim()}
-              className="milk-tea-btn-primary px-5 py-2.5 rounded-xl text-xs font-bold shadow-md disabled:opacity-50 cursor-pointer shrink-0"
-            >
-              {isAuthLoading ? '連線中…' : '登入'}
-            </button>
           </div>
+
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="milk-tea-btn-primary w-full py-3 rounded-2xl text-sm font-bold shadow-sm disabled:opacity-50 cursor-pointer"
+          >
+            {isAuthLoading ? '連線中…' : '進入'}
+          </button>
         </form>
       </div>
     </div>

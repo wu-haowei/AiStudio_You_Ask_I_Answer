@@ -11,7 +11,6 @@ import {
   Download,
   Upload,
   RotateCcw,
-  Bot,
   Wand2,
   X,
   Check,
@@ -62,13 +61,6 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   const [formOptionsStr, setFormOptionsStr] = useState('');
   const [formCorrectIndex, setFormCorrectIndex] = useState(0);
   const [formExplanation, setFormExplanation] = useState('');
-
-  // AI Generator Modal
-  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
-  const [aiTopic, setAiTopic] = useState('');
-  const [aiCategory, setAiCategory] = useState(categories[0]?.name || '習性與喜好');
-  const [aiCount, setAiCount] = useState(3);
-  const [isGenerating, setIsGenerating] = useState(false);
 
   // AI Answer Polish
   const [isPolishing, setIsPolishing] = useState(false);
@@ -172,7 +164,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
 
   const handlePolishAnswer = async () => {
     if (!formQuestion.trim() || !formAnswer.trim()) {
-      showToast('請先填寫問題與解答草稿', 'AI 需要參考原始草稿進行優化', 'error');
+      showToast('請先填寫題目與說明', undefined, 'warning');
       return;
     }
 
@@ -186,51 +178,14 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
       const data = await res.json();
       if (data.success && data.polishedAnswer) {
         setFormAnswer(data.polishedAnswer);
-        showToast('AI 答案優化完成', '已修飾語氣與條理排版', 'success');
+        showToast('已完成潤飾', undefined, 'success');
       } else {
         throw new Error(data.error || '潤飾失敗');
       }
     } catch (err: any) {
-      showToast('AI 潤飾暫無法使用', err.message || '請確認 API 金鑰', 'error');
+      showToast('AI 潤飾失敗', err.message || '請確認 API 金鑰', 'error');
     } finally {
       setIsPolishing(false);
-    }
-  };
-
-  const handleGenerateQA = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!aiTopic.trim()) return;
-
-    setIsGenerating(true);
-    try {
-      const res = await fetch('/api/generate-qa', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: aiTopic, category: aiCategory, count: aiCount }),
-      });
-      const data = await res.json();
-      if (data.success && Array.isArray(data.items)) {
-        data.items.forEach((item: any) => {
-          onAddFAQ({
-            question: item.question,
-            answer: item.answer,
-            category: item.category || aiCategory,
-            tags: item.tags || ['AI生成'],
-            options: item.options,
-            correctOptionIndex: item.correctOptionIndex,
-            explanation: item.explanation,
-          });
-        });
-        showToast('AI 批次生成完成！', `已成功新增 ${data.items.length} 則常見問題！`, 'success');
-        setIsAiModalOpen(false);
-        setAiTopic('');
-      } else {
-        throw new Error(data.error || '生成失敗');
-      }
-    } catch (err: any) {
-      showToast('AI 生成失敗', err.message || '請稍後再試', 'error');
-    } finally {
-      setIsGenerating(false);
     }
   };
 
@@ -466,7 +421,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                     className="text-xs text-[#8C6D53] hover:underline flex items-center gap-1 font-semibold"
                   >
                     <Wand2 className="w-3.5 h-3.5" />
-                    <span>{isPolishing ? 'AI 潤飾中...' : '使用 AI 潤飾語氣'}</span>
+                    <span>{isPolishing ? '潤飾中…' : 'AI 潤飾'}</span>
                   </button>
                 </div>
                 <textarea

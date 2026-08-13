@@ -43,7 +43,7 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in overflow-y-auto">
-      <div className="bg-[#FAF7F2] border-2 border-[#D9C5B2] rounded-3xl p-5 sm:p-6 max-w-lg w-full shadow-2xl space-y-4 my-auto">
+      <div className="bg-[#FAF7F2] border border-[#D9C5B2] rounded-3xl p-4 sm:p-6 max-w-lg w-full shadow-2xl space-y-4 my-auto max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-3">
           <div className="flex items-center gap-2.5">
             <div className="w-10 h-10 rounded-2xl bg-[#A68B6D] text-white flex items-center justify-center font-bold shadow-xs">

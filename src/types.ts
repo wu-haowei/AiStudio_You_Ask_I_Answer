@@ -46,16 +46,20 @@ export interface ToastMessage {
 
 export interface GameInvitation {
   id: string;
-  sender: string;       // e.g. '1105'
-  target: string;       // e.g. '1115'
+  /** Player name of whoever sent the challenge. */
+  sender: string;
+  /** Player name of whoever was challenged. */
+  target: string;
   status: 'pending' | 'accepted' | 'declined';
   createdAt: string;
 }
 
 export interface RoomQuestion {
   id: string;
-  initiator: string;    // e.g. '1105' (the guesser)
-  target: string;       // e.g. '1115' (the person whose true answer is asked)
+  /** The guesser. */
+  initiator: string;
+  /** The person whose true answer is being guessed. */
+  target: string;
   question: string;
   category: string;
   options: string[];
@@ -85,10 +89,22 @@ export interface RoomPlayer {
   lastGuessOption?: number;
 }
 
+/**
+ * Snapshot of the message being replied to. Denormalized on purpose: only the
+ * most recent messages are loaded, so the quoted text must travel with the
+ * reply to stay readable once the original scrolls out of the window.
+ */
+export interface MessageReplyRef {
+  id: string;
+  author: string;
+  text: string;
+}
+
 export interface RoomMessage {
   id: string;
   author: string;
   text: string;
+  replyTo?: MessageReplyRef;
   /** Display-only label, e.g. "14:32". */
   timestamp: string;
   /** ISO timestamp — the ordering key for the Firestore messages subcollection. */

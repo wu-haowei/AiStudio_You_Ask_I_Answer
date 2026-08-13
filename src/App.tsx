@@ -18,20 +18,20 @@ import {
   subscribeToFAQs,
   subscribeToUserQuestions,
 } from './lib/firebase';
+import { useIdentity } from './lib/identity';
 import { Header } from './components/Header';
 import { CoPlayView } from './components/CoPlayView';
-import { AskQuestionModal } from './components/AskQuestionModal';
 import { AdminManageView } from './components/AdminManageView';
 import { ToastContainer } from './components/Toast';
 
 export default function App() {
+  const { isSignedIn } = useIdentity();
   const [activeTab, setActiveTab] = useState<ActiveTab>('co_play');
   const [faqs, setFaqs] = useState<FAQItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [userQuestions, setUserQuestions] = useState<UserQuestion[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isAskModalOpen, setIsAskModalOpen] = useState(false);
   const [isLoadingContent, setIsLoadingContent] = useState(true);
+  const [roomStatus, setRoomStatus] = useState({ onlineCount: 0, isRoundActive: false });
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const showToast = (
@@ -113,25 +113,6 @@ export default function App() {
 
   const handleDeleteFAQ = (id: string) => {
     deleteItem(COLLECTIONS.FAQS, id);
-  };
-
-  const handleSubmitUserQuestion = (data: {
-    authorName: string;
-    authorEmail: string;
-    questionText: string;
-    category: string;
-  }) => {
-    const newQuestion: UserQuestion = {
-      id: `uq-${Date.now()}`,
-      authorName: data.authorName,
-      authorEmail: data.authorEmail,
-      questionText: data.questionText,
-      category: data.category,
-      createdAt: new Date().toISOString(),
-      status: 'pending',
-    };
-    saveItem(COLLECTIONS.USER_QUESTIONS, newQuestion);
-    showToast('自訂題目新增成功！', '已同步至雲端雙人猜心題庫。', 'success');
   };
 
   // Export / Import / Reset
@@ -231,29 +212,29 @@ export default function App() {
     showToast('已還原預設題庫', '雲端題庫已重設為出廠內容。', 'success');
   };
 
-  const pendingQuestionsCount = userQuestions.filter((q) => q.status === 'pending').length;
+  // Keep an unauthenticated visitor out of the admin tab
+  const currentTab: ActiveTab = isSignedIn ? activeTab : 'co_play';
 
   return (
     <div className="h-screen h-dvh bg-[#F5E6D3] flex flex-col font-sans text-[#4A3F35] selection:bg-[#E8D8C4] overflow-hidden">
-      {/* Top Navigation Header */}
       <Header
-        activeTab={activeTab}
+        activeTab={currentTab}
         setActiveTab={setActiveTab}
-        pendingQuestionsCount={pendingQuestionsCount}
-        onOpenAskModal={() => setIsAskModalOpen(true)}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
+        onlineCount={roomStatus.onlineCount}
+        isRoundActive={roomStatus.isRoundActive}
+        showToast={showToast}
       />
 
-      {/* Main Content Area */}
-      <main className={`flex-1 min-h-0 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-2 sm:py-3 flex flex-col ${
-        activeTab === 'admin_manage' ? 'overflow-y-auto' : 'overflow-hidden'
-      }`}>
-        {activeTab === 'co_play' && (
-          <CoPlayView faqs={faqs} showToast={showToast} />
+      <main
+        className={`flex-1 min-h-0 max-w-7xl w-full mx-auto px-2 sm:px-6 lg:px-8 py-2 sm:py-3 flex flex-col ${
+          currentTab === 'admin_manage' ? 'overflow-y-auto' : 'overflow-hidden'
+        }`}
+      >
+        {currentTab === 'co_play' && (
+          <CoPlayView faqs={faqs} showToast={showToast} onStatusChange={setRoomStatus} />
         )}
 
-        {activeTab === 'admin_manage' && (
+        {currentTab === 'admin_manage' && (
           <AdminManageView
             faqs={faqs}
             categories={categories}
@@ -269,30 +250,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Modern Footer */}
-      <footer className="shrink-0 border-t border-[#D9C5B2] bg-[#FAF7F2] py-2 sm:py-2.5 text-center text-xs text-[#7A6C5E]">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <p>© 2026 你問我答 ‧ Natural Tones 溫暖奶茶風</p>
-          <div className="flex flex-wrap items-center justify-center gap-4 text-[11px]">
-            <button onClick={() => setActiveTab('co_play')} className="hover:text-[#4A3F35] underline font-semibold">
-              你問我答
-            </button>
-            <button onClick={() => setActiveTab('admin_manage')} className="hover:text-[#4A3F35] underline font-semibold">
-              後台管理
-            </button>
-          </div>
-        </div>
-      </footer>
-
-      {/* Custom Question Modal */}
-      <AskQuestionModal
-        isOpen={isAskModalOpen}
-        onClose={() => setIsAskModalOpen(false)}
-        categories={categories}
-        onSubmitQuestion={handleSubmitUserQuestion}
-      />
-
-      {/* Floating Toast Notification */}
       <ToastContainer toasts={toasts} onDismiss={handleDismissToast} />
     </div>
   );

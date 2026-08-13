@@ -4,15 +4,15 @@ import {
   Sparkles,
   MessageSquare,
   PlusCircle,
-  UserCheck,
   RefreshCw,
   Clock,
   Target,
   ArrowDown,
   Award,
-  Edit3,
+  Reply,
+  X,
 } from 'lucide-react';
-import { CoPlayRoom, FAQItem, RoomMessage, RoomQuestion } from '../types';
+import { CoPlayRoom, FAQItem, MessageReplyRef, RoomMessage, RoomQuestion } from '../types';
 import {
   appendMessage,
   ensureRoom,
@@ -25,6 +25,7 @@ import {
   touchPlayer,
   upsertPlayer,
 } from '../lib/firebase';
+import { useIdentity } from '../lib/identity';
 import { CoPlayPasscodeModal } from './coplay/CoPlayPasscodeModal';
 import { CoPlayInviteModals } from './coplay/CoPlayInviteModals';
 import { CoPlayActiveQuestionModal } from './coplay/CoPlayActiveQuestionModal';
@@ -32,14 +33,14 @@ import { CoPlayActiveQuestionModal } from './coplay/CoPlayActiveQuestionModal';
 interface CoPlayViewProps {
   faqs: FAQItem[];
   showToast: (title: string, description?: string, type?: 'success' | 'info' | 'warning' | 'error') => void;
+  /** Reports presence and round state up to the header. */
+  onStatusChange?: (status: { onlineCount: number; isRoundActive: boolean }) => void;
 }
 
-const PASSCODE_STORAGE_KEY = 'milktea_coplay_passcode';
-const SESSION_PASSCODE_KEY = 'milktea_coplay_session_passcode';
 const TAB_SESSION_ID_KEY = 'milktea_coplay_tab_id';
 
 /** The single shared Firestore room for this two-player app. */
-const ROOM_CODE = 'DUAL-1105-1115';
+const ROOM_CODE = 'MAIN-ROOM';
 
 /** Author label used for reveal report cards in the message stream. */
 const REVEAL_AUTHOR = '揭曉結果';
@@ -59,14 +60,12 @@ const buildMessage = (
   };
 };
 
-export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
-  // Helper to load saved display name for a passcode
-  const getSavedNameForPasscode = (code: string) => {
-    if (!code) return '';
-    return localStorage.getItem(`milktea_username_${code}`) || `人員 ${code}`;
-  };
+export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatusChange }) => {
+  // The signed-in name is the player's identity throughout the room.
+  const { name: passcode, signIn } = useIdentity();
+  const displayName = passcode;
 
-  // Tab Unique Session ID to distinguish tabs/devices
+  // Tab-unique session id so two windows on one device are separate players
   const [tabSessionId] = useState<string>(() => {
     let id = sessionStorage.getItem(TAB_SESSION_ID_KEY);
     if (!id) {
@@ -76,23 +75,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     return id;
   });
 
-  // Passcode Auth State - Check sessionStorage first for per-tab identity
-  const [passcode, setPasscode] = useState<string>(
-    () => sessionStorage.getItem(SESSION_PASSCODE_KEY) || localStorage.getItem(PASSCODE_STORAGE_KEY) || '1105'
-  );
   const [isAuthLoading, setIsAuthLoading] = useState(false);
-
-  // User Name State for current passcode
-  const [displayName, setDisplayName] = useState<string>(() =>
-    getSavedNameForPasscode(passcode)
-  );
-
-  // Renaming inline state
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [nameInput, setNameInput] = useState('');
-
-  // Login passcode input for logged-out view
-  const [loginCodeInput, setLoginCodeInput] = useState('1105');
+  const [loginCodeInput, setLoginCodeInput] = useState('');
 
   // Room State (room document + messages subcollection are tracked separately)
   const [currentRoom, setCurrentRoom] = useState<CoPlayRoom | null>(null);
@@ -102,6 +86,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
 
   // Dialogue & Chat Input State
   const [chatMessageText, setChatMessageText] = useState('');
+  /** The message the composer is currently replying to, if any. */
+  const [replyTarget, setReplyTarget] = useState<MessageReplyRef | null>(null);
+  /** Message briefly highlighted after jumping to it from a quote. */
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // Game Creator Modal Form
   const [isQuestionModalOpen, setIsQuestionModalOpen] = useState(false);
@@ -144,20 +134,34 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     setHasNewMessages(false);
   };
 
-  // Sync displayName when passcode changes
-  useEffect(() => {
-    if (passcode) {
-      const saved = getSavedNameForPasscode(passcode);
-      setDisplayName(saved);
-    }
-  }, [passcode]);
+  /** Starts a reply and focuses the composer. */
+  const handleStartReply = (m: RoomMessage) => {
+    setReplyTarget({ id: m.id, author: m.author, text: m.text });
+    chatInputRef.current?.focus();
+  };
 
-  // Auto load room directly on mount if passcode exists
-  useEffect(() => {
-    if (passcode) {
-      handleLoginWithPasscode(passcode, true);
+  /** Jumps to a quoted message and flashes it, when it is still loaded. */
+  const handleJumpToMessage = (id: string) => {
+    const node = messageRefs.current[id];
+    if (!node) {
+      showToast('找不到原訊息', '可能已不在載入範圍內', 'info');
+      return;
     }
-  }, []);
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightedId(id);
+    window.setTimeout(() => setHighlightedId((cur) => (cur === id ? null : cur)), 1600);
+  };
+
+  // Enter (or re-enter) the room whenever the signed-in name changes
+  useEffect(() => {
+    if (!passcode) {
+      setCurrentRoom(null);
+      setMessages([]);
+      setMyPlayerId('');
+      return;
+    }
+    enterRoom(passcode);
+  }, [passcode]);
 
   // Issue 1: Handle new messages notification pill instead of forcing auto-scroll
   useEffect(() => {
@@ -267,104 +271,68 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     };
   }, [currentRoom?.code, myPlayerId, passcode]);
 
-  // Handle Saving Renamed Name
-  const handleSaveName = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    const clean = nameInput.trim();
-    if (!clean) {
-      showToast('請輸入名稱', undefined, 'warning');
-      return;
-    }
-    setDisplayName(clean);
-    localStorage.setItem(`milktea_username_${passcode}`, clean);
-    setIsEditingName(false);
-    showToast('名稱已更新', `${clean}`, 'success');
-  };
-
-  // Handle Logout
-  const handleLogout = () => {
-    setPasscode('');
-    sessionStorage.removeItem(SESSION_PASSCODE_KEY);
-    localStorage.removeItem(PASSCODE_STORAGE_KEY);
-    setCurrentRoom(null);
-    setMessages([]);
-    showToast('已登出', undefined, 'info');
-  };
-
-  // Login / Switch Identity
-  const handleLoginWithPasscode = async (codeToUse: string, silent = false) => {
-    const cleanCode = codeToUse.trim();
-    if (!cleanCode) {
-      if (!silent) showToast('請輸入暗號', undefined, 'warning');
-      return;
-    }
+  /** Registers this tab as a player in the shared room. */
+  const enterRoom = async (rawName: string) => {
+    const cleanName = rawName.trim();
+    if (!cleanName) return;
 
     setIsAuthLoading(true);
     try {
       // Drop tab sessions that stopped sending heartbeats long ago
       await prunePlayers(ROOM_CODE);
 
-      const room = await ensureRoom(ROOM_CODE, cleanCode);
-      const thisPlayerId = `p-${cleanCode}-${tabSessionId}`;
-
-      // Multi-tab co-play auto detection: if 1105 is already live elsewhere, become 1115.
-      const isSessionExplicit = !!sessionStorage.getItem(SESSION_PASSCODE_KEY);
-      if (!isSessionExplicit && cleanCode === '1105') {
-        const otherActive1105 = room.players.find(
-          (p) =>
-            p.name === '1105' &&
-            p.id !== thisPlayerId &&
-            p.lastActive &&
-            Date.now() - new Date(p.lastActive).getTime() < 30000
-        );
-        if (otherActive1105) {
-          showToast('已自動切換為 1115', '1105 已在其他視窗連線中', 'info');
-          setIsAuthLoading(false);
-          return handleLoginWithPasscode('1115', silent);
-        }
-      }
-
+      const room = await ensureRoom(ROOM_CODE, cleanName);
+      const thisPlayerId = `p-${tabSessionId}`;
       const existing = room.players.find((p) => p.id === thisPlayerId);
+
       await upsertPlayer(ROOM_CODE, {
         id: thisPlayerId,
-        name: cleanCode,
+        name: cleanName,
         score: existing?.score ?? 0,
-        isHost: existing?.isHost ?? cleanCode === '1105',
+        isHost: existing?.isHost ?? room.players.length === 0,
         lastActive: new Date().toISOString(),
       });
 
-      setPasscode(cleanCode);
-      sessionStorage.setItem(SESSION_PASSCODE_KEY, cleanCode);
-      localStorage.setItem(PASSCODE_STORAGE_KEY, cleanCode);
       setCurrentRoom(room);
       setMyPlayerId(thisPlayerId);
-
-      const loadedName = getSavedNameForPasscode(cleanCode);
-      setDisplayName(loadedName);
-
-      if (!silent) {
-        showToast('已連線', `${loadedName} (${cleanCode})`, 'success');
-      }
     } catch (err: any) {
       console.error('Failed to enter room:', err);
-      if (!silent) showToast('連線失敗', err?.message || '請檢查網路連線', 'error');
+      showToast('連線失敗', err?.message || '請檢查網路連線', 'error');
     } finally {
       setIsAuthLoading(false);
     }
   };
 
-  // Helper name resolvers
-  const getNameByPasscode = (code: string) => {
-    if (!code) return '';
-    if (code === passcode && displayName) return displayName;
-    return getSavedNameForPasscode(code);
+  /** Entry screen submit — any non-empty name is accepted. */
+  const handleLogin = (rawName: string) => {
+    const clean = rawName.trim();
+    if (!clean) {
+      showToast('請輸入姓名', undefined, 'warning');
+      return;
+    }
+    signIn(clean);
   };
 
-  const partnerPlayer = currentRoom?.players.find((p) => p.name !== passcode && p.id !== myPlayerId);
-  const partnerPasscode = partnerPlayer ? partnerPlayer.name : (passcode === '1105' ? '1115' : '1105');
-  const partnerDisplayName = partnerPlayer
-    ? (getNameByPasscode(partnerPlayer.name) || partnerPlayer.name)
-    : (getSavedNameForPasscode(partnerPasscode) || partnerPasscode);
+  // Names are the identity, so no lookup table is needed
+  const getNameByPasscode = (code: string) => code || '';
+
+  /**
+   * The opponent is the other player in the room. Prefer someone whose heartbeat
+   * is still live; otherwise fall back to the most recently seen player so an
+   * in-progress round survives a brief disconnect.
+   */
+  const otherPlayers = (currentRoom?.players || [])
+    .filter((p) => p.id !== myPlayerId && p.name)
+    .sort((a, b) => (b.lastActive || '').localeCompare(a.lastActive || ''));
+
+  const partnerPlayer =
+    otherPlayers.find(
+      (p) => p.lastActive && Date.now() - new Date(p.lastActive).getTime() < 30000
+    ) || otherPlayers[0];
+
+  const partnerPasscode = partnerPlayer?.name || '';
+  const partnerDisplayName = partnerPasscode || '對方';
+  const hasPartner = !!partnerPasscode;
 
   // Send Chat Message
   const handleSendChatMessage = async (e: React.FormEvent) => {
@@ -372,7 +340,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     if (!currentRoom || !chatMessageText.trim()) return;
 
     const text = chatMessageText.trim();
+    const quoted = replyTarget;
     setChatMessageText('');
+    setReplyTarget(null);
 
     try {
       await appendMessage(
@@ -382,11 +352,13 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
           author: displayName || passcode,
           text,
           type: 'chat',
+          ...(quoted ? { replyTo: quoted } : {}),
         })
       );
       scrollToBottom();
     } catch (err: any) {
       setChatMessageText(text);
+      setReplyTarget(quoted);
       showToast('發送失敗', err?.message || '請稍後再試', 'error');
     }
   };
@@ -717,15 +689,31 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       (p) => p.lastActive && Date.now() - new Date(p.lastActive).getTime() < 30000
     ).length || 0;
 
-  // Identity conflict detection: another active client has the exact same passcode
-  const activeConflictPlayer = currentRoom?.players.find(
-    (p) =>
-      p.name === passcode &&
-      p.id !== myPlayerId &&
-      p.lastActive &&
-      Date.now() - new Date(p.lastActive).getTime() < 30000
-  );
-  const isDuplicateActiveAccount = !!activeConflictPlayer;
+  const isRoundActive = !!activeQ || !!inviteState;
+
+  const showQuestionModal =
+    (isAcceptedWaitingInitiator || (isQuestionModalOpen && inviteState?.status === 'accepted')) &&
+    !isQuestionModalDismissed;
+
+  // Report presence + round state to the header
+  useEffect(() => {
+    onStatusChange?.({ onlineCount: onlinePlayerCount, isRoundActive });
+  }, [onlinePlayerCount, isRoundActive, onStatusChange]);
+
+  // A custom question is one-off — clear last round's text when the form reopens
+  const wasQuestionModalOpenRef = useRef(false);
+  useEffect(() => {
+    if (showQuestionModal && !wasQuestionModalOpenRef.current && questionCategory === 'CUSTOM') {
+      setCustomCategoryInput('');
+      setQuestionText('');
+      setOptA('');
+      setOptB('');
+      setOptC('');
+      setOptD('');
+    }
+    wasQuestionModalOpenRef.current = showQuestionModal;
+  }, [showQuestionModal, questionCategory]);
+
 
   if (!passcode) {
     return (
@@ -733,100 +721,13 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         loginCodeInput={loginCodeInput}
         setLoginCodeInput={setLoginCodeInput}
         isAuthLoading={isAuthLoading}
-        onLogin={handleLoginWithPasscode}
+        onLogin={handleLogin}
       />
     );
   }
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col space-y-2 sm:space-y-3 h-full animate-fade-in overflow-hidden">
-      {/* Duplicate identity hint */}
-      {isDuplicateActiveAccount && (
-        <div className="shrink-0 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center justify-between gap-3">
-          <span className="truncate">另一台裝置也在使用【{passcode}】，請切換帳號才能正常對決</span>
-          <button
-            type="button"
-            onClick={() => handleLoginWithPasscode(passcode === '1105' ? '1115' : '1105', false)}
-            className="shrink-0 px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold transition-colors cursor-pointer"
-          >
-            切換為 {passcode === '1105' ? '1115' : '1105'}
-          </button>
-        </div>
-      )}
-
-      {/* Top Bar: Identity & Actions */}
-      <div className="shrink-0 p-3 sm:p-4 rounded-2xl bg-[#FAF7F2] border border-[#D9C5B2] flex flex-wrap items-center justify-between gap-3 shadow-2xs">
-        <div className="flex flex-wrap items-center gap-3">
-          <div>
-            {isEditingName ? (
-              <form onSubmit={handleSaveName} className="flex items-center gap-1.5">
-                <input
-                  type="text"
-                  value={nameInput}
-                  onChange={(e) => setNameInput(e.target.value)}
-                  placeholder="輸入名稱..."
-                  className="px-2.5 py-1 text-xs border border-[#A68B6D] rounded-lg bg-white text-[#4A3F35] font-bold focus:outline-none focus:ring-2 focus:ring-[#A68B6D]"
-                  autoFocus
-                  maxLength={12}
-                />
-                <button
-                  type="submit"
-                  className="px-2.5 py-1 text-xs bg-[#A68B6D] text-white rounded-lg font-bold hover:bg-[#8E7256] transition-colors cursor-pointer"
-                >
-                  儲存
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsEditingName(false)}
-                  className="px-2 py-1 text-xs bg-[#E8D8C4] text-[#4A3F35] rounded-lg font-bold hover:bg-[#D9C5B2] transition-colors cursor-pointer"
-                >
-                  取消
-                </button>
-              </form>
-            ) : (
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="flex items-center gap-1.5 bg-white/80 px-2.5 py-1 rounded-xl border border-[#D9C5B2]">
-                  <span className="text-xs sm:text-sm font-bold text-[#4A3F35]">
-                    {displayName} <span className="text-[10px] text-[#A68B6D]">({passcode})</span>
-                  </span>
-                </div>
-
-                {/* Online Indicator */}
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-bold shadow-2xs">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span>線上 ({onlinePlayerCount || 1} 人)</span>
-                </div>
-
-                {/* Edit Name Button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNameInput(displayName);
-                    setIsEditingName(true);
-                  }}
-                  className="px-2.5 py-1 rounded-xl bg-[#E8D8C4] text-[#4A3F35] text-xs font-bold hover:bg-[#D9C5B2] transition-colors flex items-center gap-1 cursor-pointer"
-                  title="修改名稱"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                  <span>改名</span>
-                </button>
-
-                {/* Switch Account Button */}
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="px-2.5 py-1 rounded-xl bg-[#E8D8C4] text-[#4A3F35] text-xs font-bold hover:bg-[#D9C5B2] transition-colors flex items-center gap-1 cursor-pointer"
-                  title="切換其他帳號"
-                >
-                  <UserCheck className="w-3.5 h-3.5" />
-                  <span>切換帳號</span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
+    <div className="flex-1 min-h-0 flex flex-col h-full animate-fade-in overflow-hidden">
       {/* Invite and Question Selection Modals */}
       <CoPlayInviteModals
         isPendingInviteForMe={isPendingInviteForMe}
@@ -836,7 +737,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         isPendingInviteSender={isPendingInviteSender}
         partnerDisplayName={partnerDisplayName}
         onCancelInvite={handleCancelInvite}
-        showQuestionModal={(isAcceptedWaitingInitiator || (isQuestionModalOpen && inviteState?.status === 'accepted')) && !isQuestionModalDismissed}
+        showQuestionModal={showQuestionModal}
         onCloseQuestionModal={() => {
           setIsQuestionModalDismissed(true);
           setIsQuestionModalOpen(false);
@@ -951,11 +852,11 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       />
 
       {/* Main Dialogue Box */}
-      <div className="milk-tea-card rounded-3xl p-3 sm:p-5 border border-[#D9C5B2] shadow-xs flex-1 min-h-0 flex flex-col justify-between overflow-hidden relative">
+      <div className="milk-tea-card rounded-2xl sm:rounded-3xl p-2.5 sm:p-5 border border-[#D9C5B2] shadow-xs flex-1 min-h-0 flex flex-col justify-between overflow-hidden relative">
         {/* Dialogue Header */}
         <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-2.5 mb-2.5 shrink-0">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-[#E8D8C4] text-[#5C4B3A] flex items-center justify-center font-bold">
+            <div className="hidden sm:flex w-8 h-8 rounded-xl bg-[#E8D8C4] text-[#5C4B3A] items-center justify-center font-bold">
               <MessageSquare className="w-4 h-4 text-[#A68B6D]" />
             </div>
             <div>
@@ -969,7 +870,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
           <button
             type="button"
             onClick={handleSendGameInvite}
-            className="px-3 py-1.5 rounded-xl bg-[#E8D8C4] hover:bg-[#D9C5B2] text-[#4A3F35] text-xs font-bold flex items-center gap-1 transition-colors"
+            disabled={!hasPartner}
+            title={hasPartner ? undefined : '等待對方進入房間'}
+            className="px-3 py-2 rounded-xl bg-[#E8D8C4] hover:bg-[#D9C5B2] disabled:opacity-40 disabled:cursor-not-allowed text-[#4A3F35] text-xs font-bold flex items-center gap-1 transition-colors shrink-0"
           >
             <PlusCircle className="w-3.5 h-3.5" />
             <span>發起考驗</span>
@@ -995,11 +898,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
           {!currentRoom || isLoadingHistory ? (
             <div className="flex items-center justify-center h-full text-xs text-[#7A6C5E] gap-2">
               <RefreshCw className="w-4 h-4 animate-spin text-[#A68B6D]" />
-              <span>正在從雲端載入歷史對話...</span>
+              <span>載入對話中…</span>
             </div>
           ) : messages.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-xs text-[#7A6C5E]">
+            <div className="flex flex-col items-center justify-center h-full gap-1 text-xs text-[#7A6C5E]">
               <span>還沒有任何對話</span>
+              {!hasPartner && <span className="text-[11px]">等待對方輸入姓名進入</span>}
             </div>
           ) : (
             messages.map((m, idx) => {
@@ -1016,7 +920,15 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
               if (isResultReport) {
                 const isCorrect = m.text.includes('猜對了');
                 return (
-                  <div key={messageKey} className="flex flex-col items-center my-3 animate-fade-in w-full">
+                  <div
+                    key={messageKey}
+                    ref={(node) => {
+                      messageRefs.current[m.id] = node;
+                    }}
+                    className={`flex flex-col items-center my-3 animate-fade-in w-full rounded-3xl transition-colors ${
+                      highlightedId === m.id ? 'ring-2 ring-[#A68B6D]' : ''
+                    }`}
+                  >
                     <div className={`w-full max-w-xl p-4 sm:p-5 rounded-3xl border-2 ${
                       isCorrect
                         ? 'bg-emerald-50/90 border-emerald-300 text-emerald-900'
@@ -1027,6 +939,14 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
                           <Award className="w-4 h-4" />
                           <span>揭曉結果</span>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => handleStartReply(m)}
+                          aria-label="回覆這則結果"
+                          className="p-1.5 rounded-lg hover:bg-black/5 transition-colors cursor-pointer"
+                        >
+                          <Reply className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                       <div className="text-xs sm:text-sm font-black whitespace-pre-line leading-relaxed pt-1">
                         {m.text}
@@ -1040,9 +960,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
               return (
                 <div
                   key={messageKey}
-                  className={`flex flex-col ${
+                  ref={(node) => {
+                    messageRefs.current[m.id] = node;
+                  }}
+                  className={`group flex flex-col rounded-2xl transition-colors ${
                     isSystem ? 'items-center' : isMe ? 'items-end' : 'items-start'
-                  }`}
+                  } ${highlightedId === m.id ? 'ring-2 ring-[#A68B6D]' : ''}`}
                 >
                   <div className="flex items-center gap-1.5 mb-1 text-[10px] text-[#7A6C5E]">
                     <span className="font-bold text-[#4A3F35]">
@@ -1052,15 +975,48 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
                   </div>
 
                   <div
-                    className={`max-w-[85%] sm:max-w-[75%] p-3.5 rounded-2xl text-xs leading-relaxed whitespace-pre-line shadow-2xs ${
-                      isSystem
-                        ? 'bg-[#E8D8C4]/40 text-[#5C4B3A] border border-[#D9C5B2] text-center w-full'
-                        : isMe
-                        ? 'bg-[#A68B6D] text-white rounded-br-none font-medium'
-                        : 'bg-white text-[#4A3F35] border border-[#D9C5B2] rounded-bl-none'
+                    className={`flex items-center gap-1 max-w-[88%] sm:max-w-[75%] ${
+                      isSystem ? 'w-full' : isMe ? 'flex-row-reverse' : ''
                     }`}
                   >
-                    {m.text}
+                    <div
+                      className={`min-w-0 px-3.5 py-2.5 rounded-2xl text-[13px] sm:text-xs leading-relaxed shadow-2xs ${
+                        isSystem
+                          ? 'bg-[#E8D8C4]/40 text-[#5C4B3A] border border-[#D9C5B2] text-center w-full'
+                          : isMe
+                          ? 'bg-[#A68B6D] text-white rounded-br-none font-medium'
+                          : 'bg-white text-[#4A3F35] border border-[#D9C5B2] rounded-bl-none'
+                      }`}
+                    >
+                      {m.replyTo && (
+                        <button
+                          type="button"
+                          onClick={() => handleJumpToMessage(m.replyTo!.id)}
+                          className={`w-full text-left mb-1.5 pl-2 pr-1 py-1 rounded-lg border-l-2 cursor-pointer transition-opacity hover:opacity-80 ${
+                            isMe
+                              ? 'border-white/70 bg-white/15 text-white/90'
+                              : 'border-[#A68B6D] bg-[#F5EFE6] text-[#7A6C5E]'
+                          }`}
+                        >
+                          <span className="block text-[10px] font-bold truncate">
+                            {m.replyTo.author}
+                          </span>
+                          <span className="block text-[11px] truncate">{m.replyTo.text}</span>
+                        </button>
+                      )}
+                      <span className="whitespace-pre-line">{m.text}</span>
+                    </div>
+
+                    {!isSystem && (
+                      <button
+                        type="button"
+                        onClick={() => handleStartReply(m)}
+                        aria-label="回覆這則訊息"
+                        className="shrink-0 p-1.5 rounded-lg text-[#A68B6D] hover:bg-[#E8D8C4]/60 transition-all cursor-pointer opacity-60 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+                      >
+                        <Reply className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -1070,21 +1026,49 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         </div>
 
         {/* Bottom Input Area inside Dialogue Box */}
-        <div className="pt-3 border-t border-[#D9C5B2] shrink-0">
+        <div className="pt-2.5 sm:pt-3 border-t border-[#D9C5B2] shrink-0">
+          {replyTarget && (
+            <div className="mb-2 flex items-center gap-2 px-3 py-2 rounded-xl bg-[#F5EFE6] border-l-2 border-[#A68B6D] animate-fade-in">
+              <Reply className="w-3.5 h-3.5 text-[#A68B6D] shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-bold text-[#4A3F35] truncate">
+                  回覆 {replyTarget.author}
+                </div>
+                <div className="text-[11px] text-[#7A6C5E] truncate">{replyTarget.text}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplyTarget(null)}
+                aria-label="取消回覆"
+                className="shrink-0 p-1 rounded-lg text-[#7A6C5E] hover:bg-[#E8D8C4] transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           <form onSubmit={handleSendChatMessage} className="flex items-center gap-2">
             <input
+              ref={chatInputRef}
               type="text"
               value={chatMessageText}
               onChange={(e) => setChatMessageText(e.target.value)}
-              placeholder={`以 ${displayName} 發送訊息…`}
-              className="flex-1 px-4 py-3 text-xs rounded-2xl milk-tea-input font-medium"
+              placeholder={replyTarget ? `回覆 ${replyTarget.author}…` : '輸入訊息…'}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' && replyTarget) setReplyTarget(null);
+              }}
+              enterKeyHint="send"
+              autoComplete="off"
+              className="flex-1 min-w-0 px-4 py-3 text-base sm:text-xs rounded-2xl milk-tea-input font-medium"
             />
             <button
               type="submit"
-              className="milk-tea-btn-primary px-5 py-3 rounded-2xl text-xs font-bold inline-flex items-center gap-1.5 shadow-xs shrink-0"
+              disabled={!chatMessageText.trim()}
+              aria-label="發送"
+              className="milk-tea-btn-primary px-4 sm:px-5 py-3 rounded-2xl text-xs font-bold inline-flex items-center gap-1.5 shadow-xs shrink-0 disabled:opacity-40"
             >
-              <Send className="w-3.5 h-3.5" />
-              <span>發送</span>
+              <Send className="w-4 h-4" />
+              <span className="hidden sm:inline">發送</span>
             </button>
           </form>
         </div>

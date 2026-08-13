@@ -172,7 +172,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
       {/* Modal Popup 2 - Initiator Selects Category & Question */}
       {showQuestionModal && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in overflow-y-auto">
-          <div className="bg-[#FAF7F2] border-2 border-[#D9C5B2] rounded-3xl p-5 sm:p-6 max-w-xl w-full shadow-2xl space-y-4 my-auto">
+          <div className="bg-[#FAF7F2] border border-[#D9C5B2] rounded-3xl p-4 sm:p-6 max-w-xl w-full shadow-2xl space-y-4 my-auto max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-3">
               <div className="flex items-center gap-2">
                 <div className="w-9 h-9 rounded-xl bg-[#A68B6D] text-white flex items-center justify-center">
@@ -407,17 +407,10 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                 </div>
               )}
 
-              <div className="pt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={onCloseQuestionModal}
-                  className="px-4 py-3 rounded-2xl text-xs font-bold text-[#7A6C5E] bg-[#E8D8C4]/60 hover:bg-[#D9C5B2] transition-colors cursor-pointer"
-                >
-                  關閉
-                </button>
+              <div className="pt-2">
                 <button
                   type="submit"
-                  className="flex-1 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+                  className="w-full milk-tea-btn-primary py-3.5 rounded-2xl text-sm font-bold flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
                 >
                   <Sparkles className="w-4 h-4" />
                   <span>發布題目</span>
