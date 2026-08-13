@@ -55,6 +55,22 @@ const REVEAL_AUTHOR = '揭曉結果';
 /** Presence heartbeat interval; a player counts as online for 30s after lastActive. */
 const HEARTBEAT_MS = 12000;
 
+/**
+ * Invite / decline / cancel notices are no longer recorded — they cluttered the
+ * transcript. Rooms created earlier still contain them, so they are filtered out
+ * of the stream instead of being migrated away.
+ */
+const RETIRED_NOTICE_PATTERNS = [
+  '發起考驗，等待回應',
+  '發起了猜心考驗',
+  '婉拒',
+  '取消了邀請',
+  '取消了猜心考驗發起',
+];
+
+const isRetiredNotice = (m: RoomMessage) =>
+  m.type === 'invite' || RETIRED_NOTICE_PATTERNS.some((pattern) => m.text.includes(pattern));
+
 /** Builds a message with both the display label and the Firestore ordering key. */
 const buildMessage = (
   partial: Omit<RoomMessage, 'timestamp' | 'createdAt'>
@@ -180,6 +196,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     const merged: RoomMessage[] = [];
     for (const m of [...olderMessages, ...messages]) {
       if (m.id && seen.has(m.id)) continue;
+      if (isRetiredNotice(m)) continue;
       if (m.id) seen.add(m.id);
       merged.push(m);
     }
@@ -479,15 +496,6 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
         status: 'pending',
         createdAt: new Date().toISOString(),
       });
-      await appendMessage(
-        currentRoom.code,
-        buildMessage({
-          id: `msg-inv-${Date.now()}`,
-          author: '系統',
-          text: `${getNameByPasscode(passcode)} 向 ${partnerDisplayName} 發起考驗，等待回應…`,
-          type: 'invite',
-        })
-      );
       showToast('已發出邀請', `等待 ${partnerDisplayName} 回應`, 'info');
     } catch (err: any) {
       showToast('邀請失敗', err?.message || '請稍後再試', 'error');
@@ -503,17 +511,18 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
         ...currentRoom.gameInvitation,
         status: accept ? 'accepted' : 'declined',
       });
-      await appendMessage(
-        currentRoom.code,
-        buildMessage({
-          id: `msg-res-${Date.now()}`,
-          author: '系統',
-          text: accept
-            ? `${getNameByPasscode(passcode)} 接受了考驗，等待出題。`
-            : `${getNameByPasscode(passcode)} 婉拒了這次考驗。`,
-          type: 'system',
-        })
-      );
+      // A decline is transient — only the acceptance is worth recording.
+      if (accept) {
+        await appendMessage(
+          currentRoom.code,
+          buildMessage({
+            id: `msg-res-${Date.now()}`,
+            author: '系統',
+            text: `${getNameByPasscode(passcode)} 接受了考驗，等待出題。`,
+            type: 'system',
+          })
+        );
+      }
 
       if (accept) {
         setIsAnswerModalDismissed(false);
@@ -534,15 +543,6 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     if (!currentRoom) return;
     try {
       await setGameInvitation(currentRoom.code, null);
-      await appendMessage(
-        currentRoom.code,
-        buildMessage({
-          id: `msg-cancel-${Date.now()}`,
-          author: '系統',
-          text: `${getNameByPasscode(passcode)} 取消了邀請。`,
-          type: 'system',
-        })
-      );
       showToast('已取消邀請', undefined, 'info');
     } catch (err: any) {
       showToast('取消失敗', err?.message || '請稍後再試', 'error');
