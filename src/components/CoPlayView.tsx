@@ -184,6 +184,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
   const prevInviteIdRef = useRef<string | null>(null);
   const prevQuestionIdRef = useRef<string | null>(null);
 
+  // Keep currentRoomRef in sync to avoid effect dependency re-subscribe loops
+  const currentRoomRef = useRef<CoPlayRoom | null>(currentRoom);
+  useEffect(() => {
+    currentRoomRef.current = currentRoom;
+  }, [currentRoom]);
+
   // Scroll to bottom helper
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -256,38 +262,64 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
     }
   }, [currentRoom, passcode]);
 
-  // Poll room status every 1000ms for fast real-time co-play & Firebase sync
+  // Real-time Firebase Firestore & multi-tab listener (stably initialized per room)
   useEffect(() => {
-    if (!currentRoom?.code || !passcode) return;
+    const roomCode = currentRoom?.code;
+    if (!roomCode || !passcode) return;
 
     // Real-time Firebase Firestore listener for cross-device sync
-    const unsubscribeFirebase = subscribeToFirebaseRoom(currentRoom.code, (updatedRoom) => {
-      if (updatedRoom && updatedRoom.updatedAt !== currentRoom.updatedAt) {
+    const unsubscribeFirebase = subscribeToFirebaseRoom(roomCode, (updatedRoom) => {
+      if (updatedRoom && updatedRoom.updatedAt !== currentRoomRef.current?.updatedAt) {
+        currentRoomRef.current = updatedRoom;
         setCurrentRoom(updatedRoom);
+        const key = LOCAL_STATIC_ROOM_KEY(roomCode);
+        localStorage.setItem(key, JSON.stringify(updatedRoom));
       }
     });
 
-    const interval = setInterval(async () => {
-      try {
-        const data = await fetchRoomApi(`/api/rooms/${currentRoom.code}?playerId=${myPlayerId}`);
-        if (data.success && data.room) {
-          setCurrentRoom(data.room);
-        } else if (data.isStaticFallback) {
-          const localRoom = getLocalStaticRoom(currentRoom.code, faqs);
-          if (localRoom && localRoom.updatedAt !== currentRoom.updatedAt) {
-            setCurrentRoom(localRoom);
+    // Listen for storage events across tabs on same domain
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === LOCAL_STATIC_ROOM_KEY(roomCode) && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (parsed && parsed.updatedAt !== currentRoomRef.current?.updatedAt) {
+            currentRoomRef.current = parsed;
+            setCurrentRoom(parsed);
           }
+        } catch (err) {
+          // ignore
         }
-      } catch (err) {
-        // silent
       }
-    }, 1000);
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    // Fallback polling for static / local environment
+    const interval = setInterval(async () => {
+      if (!isStaticHostingDetected) {
+        try {
+          const data = await fetchRoomApi(`/api/rooms/${roomCode}?playerId=${myPlayerId}`);
+          if (data.success && data.room && data.room.updatedAt !== currentRoomRef.current?.updatedAt) {
+            currentRoomRef.current = data.room;
+            setCurrentRoom(data.room);
+          }
+        } catch (err) {
+          // silent
+        }
+      } else {
+        const localRoom = getLocalStaticRoom(roomCode, faqs);
+        if (localRoom && localRoom.updatedAt !== currentRoomRef.current?.updatedAt) {
+          currentRoomRef.current = localRoom;
+          setCurrentRoom(localRoom);
+        }
+      }
+    }, 2000);
 
     return () => {
       clearInterval(interval);
       unsubscribeFirebase();
+      window.removeEventListener('storage', handleStorageChange);
     };
-  }, [currentRoom?.code, currentRoom?.updatedAt, myPlayerId, passcode]);
+  }, [currentRoom?.code, myPlayerId, passcode]);
 
   // Handle Saving Renamed Name
   const handleSaveName = (e?: React.FormEvent) => {
