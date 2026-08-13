@@ -16,6 +16,7 @@ import {
   checkAndMigrateStorageVersion,
   CURRENT_APP_VERSION,
 } from './utils/storage';
+import { syncQuestionToNotion as syncToNotionApi } from './utils/notionApi';
 import { Header } from './components/Header';
 import { CoPlayView } from './components/CoPlayView';
 import { AskQuestionModal } from './components/AskQuestionModal';
@@ -79,19 +80,15 @@ export default function App() {
     try {
       const config = getStoredNotionConfig();
       if (config.token) {
-        fetch('/api/notion/sync-question', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token: config.token,
-            databaseId: config.questionDatabaseId || HARDCODED_NOTION_QUESTION_DB_ID,
-            question: item.question,
-            answer: item.answer,
-            category: item.category,
-            tags: item.tags,
-            options: item.options,
-          }),
-        }).catch((err) => console.error('Auto sync to Notion question DB failed:', err));
+        syncToNotionApi(
+          config.token,
+          config.questionDatabaseId || HARDCODED_NOTION_QUESTION_DB_ID,
+          item.question,
+          item.answer,
+          item.category || '雙人猜心',
+          item.tags || [],
+          item.options || []
+        ).catch((err) => console.error('Auto sync to Notion question DB failed:', err));
       }
     } catch (e) {
       console.warn('Sync question exception:', e);

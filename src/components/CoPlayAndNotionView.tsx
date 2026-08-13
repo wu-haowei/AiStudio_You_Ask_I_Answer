@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { CoPlayRoom, FAQItem, NotionConfig } from '../types';
 import { getStoredNotionConfig, saveStoredNotionConfig } from '../utils/storage';
-import { testNotionConnection, syncQuestionToNotion } from '../utils/notionApi';
+import { testNotionConnection, syncQuestionToNotion, syncChatToNotion } from '../utils/notionApi';
 
 interface CoPlayAndNotionViewProps {
   faqs: FAQItem[];
@@ -270,17 +270,13 @@ export const CoPlayAndNotionView: React.FC<CoPlayAndNotionViewProps> = ({ faqs, 
 
         // If autoSync enabled, sync chat message to Notion too
         if (notionConfig.token && notionConfig.databaseId) {
-          fetch('/api/notion/sync-chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              token: notionConfig.token,
-              databaseId: notionConfig.databaseId,
-              author: authorName,
-              messageText: chatMessageText.trim(),
-              roomCode: currentRoom.code,
-            }),
-          }).catch((err) => console.error('Auto sync chat error:', err));
+          syncChatToNotion(
+            notionConfig.token,
+            notionConfig.databaseId,
+            authorName,
+            chatMessageText.trim(),
+            currentRoom.code
+          ).catch((err) => console.error('Auto sync chat error:', err));
         }
       }
     } catch (err: any) {
@@ -296,22 +292,22 @@ export const CoPlayAndNotionView: React.FC<CoPlayAndNotionViewProps> = ({ faqs, 
     }
 
     try {
-      const res = await fetch('/api/notion/sync-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token: notionConfig.token,
-          databaseId: notionConfig.databaseId,
-          author,
-          messageText: text,
-          roomCode: currentRoom?.code || '1105-1115',
-        }),
-      });
+      const res = await syncChatToNotion(
+        notionConfig.token,
+        notionConfig.databaseId,
+        author,
+        text,
+        currentRoom?.code || '1105-1115'
+      );
 
-      if (res.ok) {
-        showToast('對話紀錄已成功存入 Notion！', '', 'success');
+      if (res.success) {
+        if (res.isStaticFallback) {
+          showToast('對話紀錄已儲存於本機', 'GitHub Pages 靜態環境無後端 API，已透過快照保存', 'info');
+        } else {
+          showToast('對話紀錄已成功存入 Notion！', '', 'success');
+        }
       } else {
-        showToast('無法存入 Notion', '', 'error');
+        showToast('無法存入 Notion', res.error || '', 'error');
       }
     } catch (err: any) {
       showToast('同步異常', err.message, 'error');
