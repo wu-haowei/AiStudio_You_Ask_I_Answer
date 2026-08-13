@@ -429,7 +429,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   className="flex-1 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
                 >
                   <Sparkles className="w-4 h-4" />
-                  <span>發布考驗 (雙方於彈窗作答，答案揭曉於對話框與 Notion)</span>
+                  <span>發布考驗 (雙方於彈窗作答，答案揭曉於對話框)</span>
                 </button>
               </div>
             </form>

@@ -1,22 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { ActiveTab, Category, FAQItem, ToastMessage, UserQuestion } from './types';
+import { checkAndMigrateStorageVersion, CURRENT_APP_VERSION } from './utils/storage';
+import { INITIAL_CATEGORIES, INITIAL_FAQS, INITIAL_USER_QUESTIONS } from './data/initialData';
 import {
-  exportDataAsJSON,
-  getStoredCategories,
-  getStoredFAQs,
-  getStoredUserQuestions,
-  getVotedFAQIds,
-  resetToDefaults,
-  saveStoredCategories,
-  saveStoredFAQs,
-  saveStoredUserQuestions,
-  saveVotedFAQId,
-  getStoredNotionConfig,
-  HARDCODED_NOTION_QUESTION_DB_ID,
-  checkAndMigrateStorageVersion,
-  CURRENT_APP_VERSION,
-} from './utils/storage';
-import { syncQuestionToNotion as syncToNotionApi } from './utils/notionApi';
+  COLLECTIONS,
+  deleteItem,
+  replaceCollection,
+  saveItem,
+  saveItems,
+  seedCollectionIfEmpty,
+  subscribeToCategories,
+  subscribeToFAQs,
+  subscribeToUserQuestions,
+} from './lib/firebase';
 import { Header } from './components/Header';
 import { CoPlayView } from './components/CoPlayView';
 import { AskQuestionModal } from './components/AskQuestionModal';
@@ -28,28 +24,10 @@ export default function App() {
   const [faqs, setFaqs] = useState<FAQItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [userQuestions, setUserQuestions] = useState<UserQuestion[]>([]);
-  const [votedStatus, setVotedStatus] = useState<Record<string, 'helpful' | 'unhelpful'>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [isAskModalOpen, setIsAskModalOpen] = useState(false);
+  const [isLoadingContent, setIsLoadingContent] = useState(true);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-
-  // Initialize data on mount
-  useEffect(() => {
-    const wasUpdated = checkAndMigrateStorageVersion();
-
-    setFaqs(getStoredFAQs());
-    setCategories(getStoredCategories());
-    setUserQuestions(getStoredUserQuestions());
-    setVotedStatus(getVotedFAQIds());
-
-    if (wasUpdated) {
-      showToast(
-        `已自動升級至最新版本 (v${CURRENT_APP_VERSION})`,
-        '已自動刷新 Session 與舊版暫存，確保應用程式穩定運作。',
-        'info'
-      );
-    }
-  }, []);
 
   const showToast = (
     title: string,
@@ -69,33 +47,47 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Helper to auto sync question to Notion
-  const syncQuestionToNotion = (item: {
-    question: string;
-    answer: string;
-    category?: string;
-    tags?: string[];
-    options?: string[];
-  }) => {
-    try {
-      const config = getStoredNotionConfig();
-      if (config.token) {
-        syncToNotionApi(
-          config.token,
-          config.questionDatabaseId || HARDCODED_NOTION_QUESTION_DB_ID,
-          item.question,
-          item.answer,
-          item.category || '雙人猜心',
-          item.tags || [],
-          item.options || []
-        ).catch((err) => console.error('Auto sync to Notion question DB failed:', err));
-      }
-    } catch (e) {
-      console.warn('Sync question exception:', e);
-    }
-  };
+  // Seed defaults on a fresh database, then live-subscribe to Firestore content.
+  useEffect(() => {
+    const wasUpdated = checkAndMigrateStorageVersion();
 
-  // FAQ CRUD handlers
+    let unsubscribers: Array<() => void> = [];
+
+    (async () => {
+      await Promise.all([
+        seedCollectionIfEmpty(COLLECTIONS.FAQS, INITIAL_FAQS),
+        seedCollectionIfEmpty(COLLECTIONS.CATEGORIES, INITIAL_CATEGORIES),
+        seedCollectionIfEmpty(COLLECTIONS.USER_QUESTIONS, INITIAL_USER_QUESTIONS),
+      ]);
+
+      unsubscribers = [
+        subscribeToFAQs((items) => {
+          setFaqs(
+            [...items].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
+          );
+          setIsLoadingContent(false);
+        }),
+        subscribeToCategories(setCategories),
+        subscribeToUserQuestions((items) =>
+          setUserQuestions(
+            [...items].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+          )
+        ),
+      ];
+    })();
+
+    if (wasUpdated) {
+      showToast(
+        `已自動升級至最新版本 (v${CURRENT_APP_VERSION})`,
+        '資料已全面改由 Firebase 雲端同步，舊版本機快取已清除。',
+        'info'
+      );
+    }
+
+    return () => unsubscribers.forEach((fn) => fn());
+  }, []);
+
+  // FAQ CRUD — writes go straight to Firestore; the subscription updates local state.
   const handleAddFAQ = (
     newFaqData: Omit<FAQItem, 'id' | 'updatedAt' | 'helpfulCount' | 'unhelpfulCount'>
   ) => {
@@ -107,30 +99,17 @@ export default function App() {
       views: 0,
       updatedAt: new Date().toISOString(),
     };
-    const updatedList = [created, ...faqs];
-    setFaqs(updatedList);
-    saveStoredFAQs(updatedList);
-
-    // Auto sync new question to Notion Question DB
-    syncQuestionToNotion(created);
+    saveItem(COLLECTIONS.FAQS, created);
   };
 
   const handleUpdateFAQ = (updatedFaq: FAQItem) => {
-    const updatedList = faqs.map((f) => (f.id === updatedFaq.id ? updatedFaq : f));
-    setFaqs(updatedList);
-    saveStoredFAQs(updatedList);
-
-    // Sync updated question to Notion without deleting old history
-    syncQuestionToNotion(updatedFaq);
+    saveItem(COLLECTIONS.FAQS, { ...updatedFaq, updatedAt: new Date().toISOString() });
   };
 
   const handleDeleteFAQ = (id: string) => {
-    const updatedList = faqs.filter((f) => f.id !== id);
-    setFaqs(updatedList);
-    saveStoredFAQs(updatedList);
+    deleteItem(COLLECTIONS.FAQS, id);
   };
 
-  // User Question Submission
   const handleSubmitUserQuestion = (data: {
     authorName: string;
     authorEmail: string;
@@ -146,16 +125,23 @@ export default function App() {
       createdAt: new Date().toISOString(),
       status: 'pending',
     };
-
-    const updatedList = [newQuestion, ...userQuestions];
-    setUserQuestions(updatedList);
-    saveStoredUserQuestions(updatedList);
-    showToast('自訂題目新增成功！', '已成功匯入雙人猜心連線題庫。', 'success');
+    saveItem(COLLECTIONS.USER_QUESTIONS, newQuestion);
+    showToast('自訂題目新增成功！', '已同步至雲端雙人猜心題庫。', 'success');
   };
 
   // Export / Import / Reset
   const handleExportData = () => {
-    const jsonStr = exportDataAsJSON();
+    const jsonStr = JSON.stringify(
+      {
+        version: CURRENT_APP_VERSION,
+        exportDate: new Date().toISOString(),
+        faqs,
+        categories,
+        userQuestions,
+      },
+      null,
+      2
+    );
     const blob = new Blob([jsonStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -166,7 +152,7 @@ export default function App() {
     showToast('已匯出題目備份檔', 'JSON 檔案已儲存至您的裝置。', 'success');
   };
 
-  const handleImportData = (jsonStr: string) => {
+  const handleImportData = async (jsonStr: string) => {
     try {
       const parsed = JSON.parse(jsonStr);
       let importedItems: FAQItem[] = [];
@@ -190,42 +176,36 @@ export default function App() {
         throw new Error('未發現有效的題目列表');
       }
 
-      // Preserve historical FAQs! Merge imported items without deleting history
+      // Merge, never wipe: existing ids are updated, duplicate questions skipped.
       const existingIds = new Set(faqs.map((f) => f.id));
       const existingQuestions = new Set(faqs.map((f) => f.question.trim()));
+      const toWrite: FAQItem[] = [];
 
-      const finalFaqs = [...faqs];
       for (const item of importedItems) {
         if (!item.question || !item.question.trim()) continue;
-
         if (existingIds.has(item.id)) {
-          const idx = finalFaqs.findIndex((f) => f.id === item.id);
-          if (idx !== -1) {
-            finalFaqs[idx] = { ...finalFaqs[idx], ...item };
-          }
+          const current = faqs.find((f) => f.id === item.id)!;
+          toWrite.push({ ...current, ...item, updatedAt: new Date().toISOString() });
         } else if (!existingQuestions.has(item.question.trim())) {
-          finalFaqs.push(item);
+          toWrite.push({ ...item, updatedAt: item.updatedAt || new Date().toISOString() });
           existingQuestions.add(item.question.trim());
         }
-
-        // Auto sync imported item to Notion Question DB
-        syncQuestionToNotion(item);
       }
 
-      setFaqs(finalFaqs);
-      saveStoredFAQs(finalFaqs);
+      await saveItems(COLLECTIONS.FAQS, toWrite);
     } catch (err: any) {
       console.error('Import parse error:', err);
       throw new Error(err.message || '解析 JSON 題目檔失敗');
     }
   };
 
-  const handleResetData = () => {
-    const restored = resetToDefaults();
-    setFaqs(restored.faqs);
-    setCategories(restored.categories);
-    setUserQuestions(restored.userQuestions);
-    setVotedStatus({});
+  const handleResetData = async () => {
+    await Promise.all([
+      replaceCollection(COLLECTIONS.FAQS, INITIAL_FAQS),
+      replaceCollection(COLLECTIONS.CATEGORIES, INITIAL_CATEGORIES),
+      replaceCollection(COLLECTIONS.USER_QUESTIONS, INITIAL_USER_QUESTIONS),
+    ]);
+    showToast('已還原預設題庫', '雲端題庫已重設為出廠內容。', 'success');
   };
 
   const pendingQuestionsCount = userQuestions.filter((q) => q.status === 'pending').length;
@@ -246,7 +226,7 @@ export default function App() {
       <main className={`flex-1 min-h-0 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-2 sm:py-3 flex flex-col ${
         activeTab === 'admin_manage' ? 'overflow-y-auto' : 'overflow-hidden'
       }`}>
-        {(activeTab === 'co_play' || activeTab === 'co_play_notion') && (
+        {activeTab === 'co_play' && (
           <CoPlayView faqs={faqs} showToast={showToast} />
         )}
 
@@ -254,6 +234,7 @@ export default function App() {
           <AdminManageView
             faqs={faqs}
             categories={categories}
+            isLoading={isLoadingContent}
             onAddFAQ={handleAddFAQ}
             onUpdateFAQ={handleUpdateFAQ}
             onDeleteFAQ={handleDeleteFAQ}
@@ -274,7 +255,7 @@ export default function App() {
               你問我答
             </button>
             <button onClick={() => setActiveTab('admin_manage')} className="hover:text-[#4A3F35] underline font-semibold">
-              後台管理與 Notion 設定
+              後台管理
             </button>
           </div>
         </div>

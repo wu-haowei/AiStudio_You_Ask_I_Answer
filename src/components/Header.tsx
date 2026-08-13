@@ -99,7 +99,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <Settings className="w-4 h-4" />
-              <span>後台管理與 Notion 設定</span>
+              <span>後台管理</span>
             </button>
           </nav>
 
@@ -187,7 +187,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <div className="flex items-center gap-2.5">
               <Settings className="w-4 h-4" />
-              <span>後台管理與 Notion 設定</span>
+              <span>後台管理</span>
             </div>
           </button>
         </div>

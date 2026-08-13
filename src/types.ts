@@ -44,14 +44,6 @@ export interface ToastMessage {
   description?: string;
 }
 
-export interface NotionConfig {
-  token: string;
-  databaseId: string;
-  questionDatabaseId?: string;
-  answerDatabaseId?: string;
-  autoSync: boolean;
-}
-
 export interface GameInvitation {
   id: string;
   sender: string;       // e.g. '1105'
@@ -97,26 +89,23 @@ export interface RoomMessage {
   id: string;
   author: string;
   text: string;
+  /** Display-only label, e.g. "14:32". */
   timestamp: string;
+  /** ISO timestamp — the ordering key for the Firestore messages subcollection. */
+  createdAt: string;
   type?: 'chat' | 'question' | 'system' | 'invite';
   questionData?: FAQItem;
   gameQuestion?: RoomQuestion;
-  notionQuestionId?: string;
-  notionAnswerId?: string;
-  isSyncedToNotion?: boolean;
 }
 
 export interface CoPlayRoom {
   code: string;
   hostName: string;
+  /** Stored in Firestore as a map keyed by player id; normalized to an array on read. */
   players: RoomPlayer[];
-  questions: FAQItem[];
   activeGameQuestion?: RoomQuestion | null;
   gameInvitation?: GameInvitation | null;
-  messages: RoomMessage[];
-  currentQuestionIndex: number;
   status: 'lobby' | 'playing' | 'finished';
-  turnSelections?: Record<string, Record<string, PlayerTurnSelection>>; // qIndex -> playerName -> choice
   createdAt: string;
   updatedAt: string;
 }

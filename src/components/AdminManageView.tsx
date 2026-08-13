@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 import { Category, FAQItem } from '../types';
 import { clearAllStorageAndSession, CURRENT_APP_VERSION } from '../utils/storage';
-import { AdminNotionSettings } from './admin/AdminNotionSettings';
 import { AdminJsonImportModal } from './admin/AdminJsonImportModal';
 
 interface AdminManageViewProps {
@@ -28,7 +27,8 @@ interface AdminManageViewProps {
   onUpdateFAQ: (faq: FAQItem) => void;
   onDeleteFAQ: (id: string) => void;
   onResetData: () => void;
-  onImportData: (jsonStr: string) => void;
+  onImportData: (jsonStr: string) => void | Promise<void>;
+  isLoading?: boolean;
   onExportData: () => void;
   showToast: (title: string, description?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
 }
@@ -42,6 +42,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   onResetData,
   onImportData,
   onExportData,
+  isLoading = false,
   showToast,
 }) => {
   const [search, setSearch] = useState('');
@@ -257,11 +258,11 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
           <h1 className="text-xl sm:text-2xl font-bold text-[#3A2E2B] flex items-center gap-2">
             <span>後台管理與題目匯入</span>
             <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#F3E8DC] text-[#7A5230] font-semibold">
-              共 {faqs.length} 題
+              {isLoading ? '雲端載入中…' : `共 ${faqs.length} 題`}
             </span>
           </h1>
           <p className="text-xs sm:text-sm text-[#7A6C65] mt-1">
-            設定 Notion API 連線、編輯題庫與批次匯入 JSON 題目檔。
+            題庫即時同步至 Firebase 雲端，可編輯題目與批次匯入 JSON 題目檔。
           </p>
         </div>
 
@@ -301,7 +302,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             </label>
             <button
               onClick={() => {
-                if (confirm('確定要將所有數據重置為預設題目庫嗎？')) {
+                if (confirm('確定要將雲端題庫重置為預設題目庫嗎？此動作會覆蓋所有裝置上的題庫內容。')) {
                   onResetData();
                   showToast('已重置為預設資料', '', 'info');
                 }
@@ -313,12 +314,12 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             </button>
             <button
               onClick={() => {
-                if (confirm('確定要強制清除 Session 與 Local Storage 本機快取嗎？這將消除版本升級後的舊版暫存錯誤，並重新載入頁面。')) {
+                if (confirm('確定要清除本機快取嗎？雲端題庫與對話紀錄不受影響，頁面將重新載入。')) {
                   clearAllStorageAndSession();
                   window.location.reload();
                 }
               }}
-              title={`一鍵清除 Session 與 Local Storage 快取 (目前版本 v${CURRENT_APP_VERSION})`}
+              title={`一鍵清除本機快取（不影響雲端題庫，目前版本 v${CURRENT_APP_VERSION}）`}
               className="p-2 rounded-xl text-amber-700 hover:bg-amber-100 transition-colors"
             >
               <Trash2 className="w-4 h-4" />
@@ -326,9 +327,6 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
           </div>
         </div>
       </div>
-
-      {/* Notion Integration Card inside Admin (Offloaded from main view) */}
-      <AdminNotionSettings faqs={faqs} showToast={showToast} />
 
       {/* Filter and Search Inputs */}
       <div className="flex flex-col sm:flex-row items-center gap-3">

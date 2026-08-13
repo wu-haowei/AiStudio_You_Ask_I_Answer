@@ -1,8 +1,31 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Two-player rooms. The room code acts as the shared secret.
     match /rooms/{roomCode} {
       allow read, write: if roomCode.size() > 0 && roomCode.size() <= 64;
+
+      // Chat history and reveal reports for a room.
+      match /messages/{messageId} {
+        allow read, create: if roomCode.size() > 0 && roomCode.size() <= 64;
+        // History is append-only: existing messages cannot be edited or removed.
+        allow update, delete: if false;
+      }
+    }
+
+    // Shared Q&A content managed from the admin view.
+    match /faqs/{faqId} {
+      allow read, write: if true;
+    }
+
+    match /categories/{categoryId} {
+      allow read, write: if true;
+    }
+
+    match /userQuestions/{questionId} {
+      allow read, write: if true;
     }
   }
 }
