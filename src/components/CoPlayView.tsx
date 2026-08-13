@@ -160,6 +160,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
 
   // Game Creator Modal Form
   const [isQuestionModalOpen, setIsQuestionModalOpen] = useState(false);
+  const [isQuestionModalDismissed, setIsQuestionModalDismissed] = useState(false);
+  const [isAnswerModalDismissed, setIsAnswerModalDismissed] = useState(false);
   const [questionText, setQuestionText] = useState('');
   const [questionCategory, setQuestionCategory] = useState('習性與喜好');
   const [customCategoryInput, setCustomCategoryInput] = useState('');
@@ -261,6 +263,19 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       }
     }
   }, [currentRoom, passcode]);
+
+  // Auto reset modal dismiss states when invite or question ID changes
+  useEffect(() => {
+    if (currentRoom?.gameInvitation?.id) {
+      setIsQuestionModalDismissed(false);
+    }
+  }, [currentRoom?.gameInvitation?.id]);
+
+  useEffect(() => {
+    if (currentRoom?.activeGameQuestion?.id) {
+      setIsAnswerModalDismissed(false);
+    }
+  }, [currentRoom?.activeGameQuestion?.id]);
 
   // Real-time Firebase Firestore & multi-tab listener (stably initialized per room)
   useEffect(() => {
@@ -510,6 +525,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
   // Initiate Game Challenge
   const handleSendGameInvite = async () => {
     if (!currentRoom) return;
+    setIsQuestionModalDismissed(false);
+    setIsQuestionModalOpen(true);
     const config = getStoredNotionConfig();
     try {
       const data = await fetchRoomApi(`/api/rooms/${currentRoom.code}/invite`, {
@@ -640,6 +657,44 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         saveLocalStaticRoom(room);
         setCurrentRoom(room);
         showToast('已取消發起', '已取消本次考驗邀請', 'info');
+      }
+    } catch (err: any) {
+      showToast('取消失敗', err.message, 'error');
+    }
+  };
+
+  // Cancel Active Game Question
+  const handleCancelActiveQuestion = async () => {
+    if (!currentRoom) return;
+    try {
+      const data = await fetchRoomApi(`/api/rooms/${currentRoom.code}/cancel-question`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode }),
+      });
+
+      if (data.success && data.room) {
+        setCurrentRoom(data.room);
+        setIsAnswerModalDismissed(false);
+        showToast('已取消考驗', '已取消目前的考驗題目', 'info');
+      } else {
+        const sysMsg = {
+          id: `msg-cancel-q-${Date.now()}`,
+          author: '系統廣播',
+          text: `🚫 【人員 ${passcode}】取消了本次猜心考驗題目。`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          type: 'system' as const,
+        };
+        const room: CoPlayRoom = {
+          ...currentRoom,
+          activeGameQuestion: undefined,
+          messages: [...currentRoom.messages, sysMsg],
+          updatedAt: new Date().toISOString(),
+        };
+        saveLocalStaticRoom(room);
+        setCurrentRoom(room);
+        setIsAnswerModalDismissed(false);
+        showToast('已取消考驗', '已取消目前的考驗題目', 'info');
       }
     } catch (err: any) {
       showToast('取消失敗', err.message, 'error');
@@ -1164,14 +1219,24 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       {isPendingInviteForMe && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-[#FAF7F2] border-2 border-[#D9C5B2] rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
-            <div className="flex items-center gap-3 border-b border-[#D9C5B2] pb-3">
-              <div className="w-10 h-10 rounded-2xl bg-[#A68B6D] text-white flex items-center justify-center">
-                <Gamepad2 className="w-5 h-5" />
+            <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-[#A68B6D] text-white flex items-center justify-center">
+                  <Gamepad2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-[#4A3F35]">🎮 你問我答考驗邀請</h3>
+                  <p className="text-xs text-[#7A6C5E]">發起人：{getNameByPasscode(inviteState.sender)}</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-base font-bold text-[#4A3F35]">🎮 你問我答考驗邀請</h3>
-                <p className="text-xs text-[#7A6C5E]">發起人：{getNameByPasscode(inviteState.sender)}</p>
-              </div>
+              <button
+                type="button"
+                onClick={() => handleRespondInvite(false)}
+                className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
+                title="關閉 / 婉拒"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
             <p className="text-xs sm:text-sm font-bold text-[#4A3F35] leading-relaxed bg-white p-4 rounded-2xl border border-[#D9C5B2]">
@@ -1203,14 +1268,24 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       {isPendingInviteSender && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-[#FAF7F2] border-2 border-[#D9C5B2] rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
-            <div className="flex items-center gap-3 border-b border-[#D9C5B2] pb-3">
-              <div className="w-10 h-10 rounded-2xl bg-[#A68B6D] text-white flex items-center justify-center animate-pulse">
-                <Clock className="w-5 h-5 animate-spin" />
+            <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-[#A68B6D] text-white flex items-center justify-center animate-pulse">
+                  <Clock className="w-5 h-5 animate-spin" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-[#4A3F35]">⏳ 等待對方回應中...</h3>
+                  <p className="text-xs text-[#7A6C5E]">邀請對象：【{partnerDisplayName}】</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-base font-bold text-[#4A3F35]">⏳ 等待對方回應中...</h3>
-                <p className="text-xs text-[#7A6C5E]">邀請對象：【{partnerDisplayName}】</p>
-              </div>
+              <button
+                type="button"
+                onClick={handleCancelInvite}
+                className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
+                title="取消發起並關閉"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
             <div className="bg-white p-4 rounded-2xl border border-[#D9C5B2] space-y-2 text-center">
@@ -1237,7 +1312,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
       )}
 
       {/* Modal Popup 2 - Initiator Selects Category & Question */}
-      {(isAcceptedWaitingInitiator || isQuestionModalOpen) && (
+      {(isAcceptedWaitingInitiator || isQuestionModalOpen) && !isQuestionModalDismissed && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in overflow-y-auto">
           <div className="bg-[#FAF7F2] border-2 border-[#D9C5B2] rounded-3xl p-5 sm:p-6 max-w-xl w-full shadow-2xl space-y-4 my-auto">
             <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-3">
@@ -1251,8 +1326,13 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
                 </div>
               </div>
               <button
-                onClick={() => setIsQuestionModalOpen(false)}
-                className="text-[#7A6C5E] hover:text-[#4A3F35] p-1 cursor-pointer"
+                type="button"
+                onClick={() => {
+                  setIsQuestionModalDismissed(true);
+                  setIsQuestionModalOpen(false);
+                }}
+                className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
+                title="暫時關閉視窗 (可於對話框點擊按鈕重新開啟)"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1476,10 +1556,20 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
                 </div>
               )}
 
-              <div className="pt-2">
+              <div className="pt-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsQuestionModalDismissed(true);
+                    setIsQuestionModalOpen(false);
+                  }}
+                  className="px-4 py-3 rounded-2xl text-xs font-bold text-[#7A6C5E] bg-[#E8D8C4]/60 hover:bg-[#D9C5B2] transition-colors cursor-pointer"
+                >
+                  暫時關閉
+                </button>
                 <button
                   type="submit"
-                  className="w-full milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+                  className="flex-1 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
                 >
                   <Sparkles className="w-4 h-4" />
                   <span>發布考驗 (雙方於彈窗作答，答案揭曉於對話框與 Notion)</span>
@@ -1492,7 +1582,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
 
       {/* Waiting Indicator for Target when Initiator is selecting question */}
       {isAcceptedWaitingTarget && (
-        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs text-emerald-900 font-bold shrink-0">
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs text-emerald-900 font-bold shrink-0 shadow-2xs mb-2">
           <span className="flex items-center gap-2">
             <Clock className="w-4 h-4 animate-spin text-emerald-600" />
             已同意挑戰！等待【{partnerDisplayName}】選擇/設定考驗題目...
@@ -1500,8 +1590,65 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         </div>
       )}
 
+      {/* Banner 1: Waiting Initiator to set question when Modal 2 is dismissed */}
+      {isAcceptedWaitingInitiator && isQuestionModalDismissed && (
+        <div className="p-3 bg-amber-50 border border-amber-300 rounded-2xl flex items-center justify-between text-xs text-amber-900 font-bold shrink-0 shadow-2xs animate-fade-in mb-2">
+          <span className="flex items-center gap-2 truncate pr-2">
+            <Sparkles className="w-4 h-4 text-amber-600 shrink-0 animate-pulse" />
+            <span className="truncate">【{partnerDisplayName}】已同意挑戰！請設定猜心題目</span>
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setIsQuestionModalDismissed(false);
+                setIsQuestionModalOpen(true);
+              }}
+              className="px-3 py-1.5 rounded-xl bg-[#A68B6D] hover:bg-[#8E7256] text-white text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+            >
+              設定題目 🎯
+            </button>
+            <button
+              type="button"
+              onClick={handleCancelInvite}
+              className="px-2 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-colors cursor-pointer"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Banner 2: Active question in progress when Modal 3 is dismissed */}
+      {activeQ && !activeQ.isRevealed && (isTarget || isInitiator) && isAnswerModalDismissed && (
+        <div className="p-3 bg-amber-50 border border-amber-300 rounded-2xl flex items-center justify-between text-xs text-amber-900 font-bold shrink-0 shadow-2xs animate-fade-in mb-2">
+          <div className="flex items-center gap-2 truncate pr-2">
+            <Target className="w-4 h-4 text-amber-600 shrink-0 animate-pulse" />
+            <span className="truncate">
+              🎯 猜心考驗作答進行中 [{activeQ.category}]：{activeQ.question}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsAnswerModalDismissed(false)}
+              className="px-3 py-1.5 rounded-xl bg-[#A68B6D] hover:bg-[#8E7256] text-white text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+            >
+              開啟作答 🎯
+            </button>
+            <button
+              type="button"
+              onClick={handleCancelActiveQuestion}
+              className="px-2 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-colors cursor-pointer"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Issue 2 Requirement: Modal Popup 3 - Active Question Answering & Guessing Modal */}
-      {activeQ && !activeQ.isRevealed && (isTarget || isInitiator) && (
+      {activeQ && !activeQ.isRevealed && (isTarget || isInitiator) && !isAnswerModalDismissed && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in overflow-y-auto">
           <div className="bg-[#FAF7F2] border-2 border-[#D9C5B2] rounded-3xl p-5 sm:p-6 max-w-lg w-full shadow-2xl space-y-4 my-auto">
             <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-3">
@@ -1516,9 +1663,19 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
                   </p>
                 </div>
               </div>
-              <span className="text-[10px] bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full font-bold">
-                考驗進行中
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full font-bold">
+                  考驗進行中
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsAnswerModalDismissed(true)}
+                  className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
+                  title="暫時關閉視窗 (可於對話框點擊按鈕重新開啟)"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Question Card */}
@@ -1597,7 +1754,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
                     </button>
                   </div>
                 ) : (
-                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-1">
+                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-2">
                     <div className="text-xs font-bold text-emerald-900 flex items-center justify-center gap-1.5">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                       你已完成真心話選擇！
@@ -1605,6 +1762,22 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
                     <p className="text-[11px] text-emerald-700 font-medium">
                       等待對方完成猜測，揭曉結果將自動發布至對話框...
                     </p>
+                    <div className="pt-1 flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsAnswerModalDismissed(true)}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        縮小視窗
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelActiveQuestion}
+                        className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-colors cursor-pointer"
+                      >
+                        取消本題
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1675,7 +1848,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
                     </button>
                   </div>
                 ) : (
-                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-1">
+                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-2">
                     <div className="text-xs font-bold text-emerald-900 flex items-center justify-center gap-1.5">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                       你已完成猜測選擇！
@@ -1683,6 +1856,22 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
                     <p className="text-[11px] text-emerald-700 font-medium">
                       等待對方送出真心話，揭曉結果將自動發布至對話框...
                     </p>
+                    <div className="pt-1 flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsAnswerModalDismissed(true)}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        縮小視窗
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelActiveQuestion}
+                        className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-colors cursor-pointer"
+                      >
+                        取消本題
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
