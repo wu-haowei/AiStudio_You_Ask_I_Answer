@@ -25,6 +25,7 @@ interface AdminManageViewProps {
   onAddFAQ: (faq: Omit<FAQItem, 'id' | 'updatedAt' | 'helpfulCount' | 'unhelpfulCount'>) => void;
   onUpdateFAQ: (faq: FAQItem) => void;
   onDeleteFAQ: (id: string) => void;
+  onDeleteFAQs: (ids: string[]) => void | Promise<void>;
   onResetData: () => void;
   onImportData: (jsonStr: string) => void | Promise<void>;
   isLoading?: boolean;
@@ -38,6 +39,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   onAddFAQ,
   onUpdateFAQ,
   onDeleteFAQ,
+  onDeleteFAQs,
   onResetData,
   onImportData,
   onExportData,
@@ -71,6 +73,11 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   // Delete Confirmation
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+
   const filteredFaqs = faqs.filter((f) => {
     if (selectedCategory !== 'all' && f.category !== selectedCategory) return false;
     if (search.trim()) {
@@ -83,6 +90,46 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     }
     return true;
   });
+
+  const selectedCount = selectedIds.size;
+  const allFilteredSelected =
+    filteredFaqs.length > 0 && filteredFaqs.every((f) => selectedIds.has(f.id));
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  /** Select-all applies to the current filter, not the whole library. */
+  const toggleSelectAllFiltered = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) filteredFaqs.forEach((f) => next.delete(f.id));
+      else filteredFaqs.forEach((f) => next.add(f.id));
+      return next;
+    });
+  };
+
+  const handleBulkDelete = async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+
+    setIsBulkDeleting(true);
+    try {
+      await onDeleteFAQs(ids);
+      setSelectedIds(new Set());
+      setIsBulkDeleteOpen(false);
+      showToast('已刪除題目', `共刪除 ${ids.length} 題`, 'info');
+    } catch (err: any) {
+      showToast('刪除失敗', err?.message || '請稍後再試', 'error');
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
 
   const handleOpenAddModal = () => {
     setEditingFaq(null);
@@ -287,6 +334,42 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         </select>
       </div>
 
+      {/* Selection Toolbar */}
+      {filteredFaqs.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-2xl bg-white border border-[#E8DFD3]">
+          <label className="flex items-center gap-2 text-xs font-semibold text-[#4A3F35] cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={allFilteredSelected}
+              onChange={toggleSelectAllFiltered}
+              className="w-4 h-4 accent-[#8C6D53] cursor-pointer"
+            />
+            <span>全選目前 {filteredFaqs.length} 題</span>
+          </label>
+
+          {selectedCount > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[#7A6C65]">已選 {selectedCount} 題</span>
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set())}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold text-[#7A6C65] hover:bg-[#F4ECE1] transition-colors cursor-pointer"
+              >
+                取消選取
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsBulkDeleteOpen(true)}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white transition-colors cursor-pointer inline-flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                刪除所選
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Q&A Data Cards List */}
       <div className="space-y-3">
         {filteredFaqs.length === 0 ? (
@@ -299,8 +382,16 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
               key={faq.id}
               className={`milk-tea-card rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
                 faq.isHidden ? 'opacity-60 bg-[#F5F2EB]' : ''
-              }`}
+              } ${selectedIds.has(faq.id) ? 'ring-2 ring-[#8C6D53]' : ''}`}
             >
+              <input
+                type="checkbox"
+                checked={selectedIds.has(faq.id)}
+                onChange={() => toggleSelected(faq.id)}
+                aria-label={`選取「${faq.question}」`}
+                className="w-4 h-4 accent-[#8C6D53] cursor-pointer shrink-0 self-start sm:self-center"
+              />
+
               <div className="space-y-1.5 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#F3E8DC] text-[#7A5230] font-semibold border border-[#E6D4C2]">
@@ -512,6 +603,34 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         onImportData={onImportData}
         showToast={showToast}
       />
+
+      {/* Bulk Delete Confirmation */}
+      {isBulkDeleteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-fade-in">
+          <div className="bg-[#FCFAF6] rounded-3xl border border-[#E8DFD3] p-6 max-w-sm w-full space-y-4">
+            <h3 className="text-base font-bold text-[#3A2E2B]">確認刪除所選題目？</h3>
+            <p className="text-xs text-[#7A6C65] leading-relaxed">
+              將永久刪除 {selectedCount} 題，所有裝置都會同步移除，此動作無法復原。
+            </p>
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                onClick={() => setIsBulkDeleteOpen(false)}
+                disabled={isBulkDeleting}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#7A6C65] hover:bg-[#F2EBE1] disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={isBulkDeleting}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 shadow-xs disabled:opacity-50"
+              >
+                {isBulkDeleting ? '刪除中…' : `刪除 ${selectedCount} 題`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {deletingId && (

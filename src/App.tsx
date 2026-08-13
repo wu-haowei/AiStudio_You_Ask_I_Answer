@@ -10,6 +10,7 @@ import {
 import {
   COLLECTIONS,
   deleteItem,
+  deleteItems,
   replaceCollection,
   saveItem,
   saveItems,
@@ -114,6 +115,8 @@ export default function App() {
   const handleDeleteFAQ = (id: string) => {
     deleteItem(COLLECTIONS.FAQS, id);
   };
+
+  const handleDeleteFAQs = (ids: string[]) => deleteItems(COLLECTIONS.FAQS, ids);
 
   // Export / Import / Reset
   const handleExportData = () => {
@@ -242,6 +245,7 @@ export default function App() {
             onAddFAQ={handleAddFAQ}
             onUpdateFAQ={handleUpdateFAQ}
             onDeleteFAQ={handleDeleteFAQ}
+            onDeleteFAQs={handleDeleteFAQs}
             onResetData={handleResetData}
             onImportData={handleImportData}
             onExportData={handleExportData}

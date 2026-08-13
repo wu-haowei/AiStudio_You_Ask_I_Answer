@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   Send,
   Sparkles,
@@ -9,6 +9,7 @@ import {
   Target,
   ArrowDown,
   Award,
+  ChevronUp,
   Reply,
   X,
 } from 'lucide-react';
@@ -16,6 +17,8 @@ import { CoPlayRoom, FAQItem, MessageReplyRef, RoomMessage, RoomQuestion } from 
 import {
   appendMessage,
   ensureRoom,
+  loadOlderMessages,
+  MESSAGE_PAGE_SIZE,
   setActiveGameQuestion,
   setGameInvitation,
   prunePlayers,
@@ -83,7 +86,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
 
   // Room State (room document + messages subcollection are tracked separately)
   const [currentRoom, setCurrentRoom] = useState<CoPlayRoom | null>(null);
+  /** Live window: the newest MESSAGE_PAGE_SIZE messages, kept in sync by the listener. */
   const [messages, setMessages] = useState<RoomMessage[]>([]);
+  /** Older pages fetched on demand when scrolling up. */
+  const [olderMessages, setOlderMessages] = useState<RoomMessage[]>([]);
+  const [hasMoreHistory, setHasMoreHistory] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [myPlayerId, setMyPlayerId] = useState<string>('');
 
@@ -95,6 +103,13 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const streamRef = useRef<HTMLDivElement>(null);
+  /** Scroll height captured before prepending a page, so the view can stay put. */
+  const pendingScrollAdjustRef = useRef<number | null>(null);
+  /** Synchronous guard — scroll events fire faster than state updates. */
+  const isLoadingMoreRef = useRef(false);
+  /** Previous live window, used to catch messages pushed out of it. */
+  const prevLiveMessagesRef = useRef<RoomMessage[]>([]);
 
   // Game Creator Modal Form
   const [isQuestionModalOpen, setIsQuestionModalOpen] = useState(false);
@@ -116,7 +131,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   // Scroll & New Messages Pill State
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const isInitialLoadRef = useRef(true);
-  const prevMsgCountRef = useRef<number>(0);
+  const lastSeenMessageIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Toast notification tracking
@@ -154,41 +169,108 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     window.setTimeout(() => setHighlightedId((cur) => (cur === id ? null : cur)), 1600);
   };
 
+  /** Paged-in history followed by the live window, de-duplicated by id. */
+  const visibleMessages = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: RoomMessage[] = [];
+    for (const m of [...olderMessages, ...messages]) {
+      if (m.id && seen.has(m.id)) continue;
+      if (m.id) seen.add(m.id);
+      merged.push(m);
+    }
+    return merged;
+  }, [olderMessages, messages]);
+
+  /** Fetches the next page of older messages, keeping the viewport anchored. */
+  const handleLoadOlder = async () => {
+    const oldest = visibleMessages[0];
+    if (!currentRoom || !oldest || isLoadingMoreRef.current || !hasMoreHistory) return;
+
+    isLoadingMoreRef.current = true;
+    setIsLoadingMore(true);
+    pendingScrollAdjustRef.current = streamRef.current?.scrollHeight ?? null;
+    try {
+      const page = await loadOlderMessages(currentRoom.code, oldest.createdAt, MESSAGE_PAGE_SIZE);
+      setHasMoreHistory(page.hasMore);
+      if (page.messages.length > 0) {
+        setOlderMessages((prev) => [...page.messages, ...prev]);
+      } else {
+        pendingScrollAdjustRef.current = null;
+      }
+    } catch {
+      pendingScrollAdjustRef.current = null;
+    } finally {
+      isLoadingMoreRef.current = false;
+      setIsLoadingMore(false);
+    }
+  };
+
+  /**
+   * The live window only holds the newest page. When a new message pushes an
+   * older one out of it, keep that one on screen by moving it into the paged
+   * history — otherwise it would silently vanish from the top of the thread.
+   */
+  useEffect(() => {
+    const previous = prevLiveMessagesRef.current;
+    prevLiveMessagesRef.current = messages;
+    if (previous.length === 0) return;
+
+    const liveIds = new Set(messages.map((m) => m.id));
+    const evicted = previous.filter((m) => !liveIds.has(m.id));
+    if (evicted.length === 0) return;
+
+    setOlderMessages((prev) => {
+      const known = new Set(prev.map((m) => m.id));
+      const merged = [...prev, ...evicted.filter((m) => !known.has(m.id))];
+      return merged.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+    });
+  }, [messages]);
+
+  // Keep the reading position stable after a page is prepended
+  useLayoutEffect(() => {
+    const el = streamRef.current;
+    const before = pendingScrollAdjustRef.current;
+    if (!el || before === null) return;
+    pendingScrollAdjustRef.current = null;
+    el.scrollTop += el.scrollHeight - before;
+  }, [olderMessages]);
+
   // Enter (or re-enter) the room whenever the signed-in name changes
   useEffect(() => {
     if (!passcode) {
       setCurrentRoom(null);
       setMessages([]);
+      setOlderMessages([]);
+      setHasMoreHistory(true);
       setMyPlayerId('');
       return;
     }
     enterRoom(passcode);
   }, [passcode]);
 
-  // Issue 1: Handle new messages notification pill instead of forcing auto-scroll
+  /**
+   * Announce new arrivals. The live window is capped, so compare the newest id
+   * rather than the message count — the count stops growing once it is full.
+   */
   useEffect(() => {
-    if (!messages) return;
-    const currentCount = messages.length;
+    const lastMsg = messages[messages.length - 1];
+    if (!lastMsg) return;
 
     if (isInitialLoadRef.current) {
-      if (currentCount > 0) {
-        scrollToBottom();
-        isInitialLoadRef.current = false;
-        prevMsgCountRef.current = currentCount;
-      }
+      isInitialLoadRef.current = false;
+      lastSeenMessageIdRef.current = lastMsg.id;
+      scrollToBottom();
       return;
     }
 
-    if (currentCount > prevMsgCountRef.current) {
-      const lastMsg = messages[messages.length - 1];
-      if (lastMsg && (lastMsg.author === passcode || lastMsg.author === displayName)) {
-        // User's own message -> scroll to bottom directly
-        scrollToBottom();
-      } else {
-        // Message from partner or system broadcast -> show notification pill button
-        setHasNewMessages(true);
-      }
-      prevMsgCountRef.current = currentCount;
+    if (lastSeenMessageIdRef.current === lastMsg.id) return;
+    lastSeenMessageIdRef.current = lastMsg.id;
+
+    if (lastMsg.author === passcode || lastMsg.author === displayName) {
+      // Our own message — follow it down
+      scrollToBottom();
+    } else {
+      setHasNewMessages(true);
     }
   }, [messages]);
 
@@ -860,7 +942,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
             <div>
               <h3 className="text-sm font-bold text-[#4A3F35]">對話</h3>
               <p className="text-[10px] text-[#7A6C5E]">
-                {isLoadingHistory ? '載入中…' : `${messages.length} 則訊息 ‧ 雲端同步`}
+                {isLoadingHistory ? '載入中…' : `${visibleMessages.length} 則訊息 ‧ 雲端同步`}
               </p>
             </div>
           </div>
@@ -892,19 +974,48 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
         )}
 
         {/* Embedded Dialogue Stream */}
-        <div className="flex-1 min-h-0 overflow-y-auto space-y-3.5 pr-1.5 scrollbar-thin relative">
+        <div
+          ref={streamRef}
+          onScroll={(e) => {
+            // Near the top and more history exists -> pull the next page
+            if (e.currentTarget.scrollTop < 80) handleLoadOlder();
+          }}
+          className="flex-1 min-h-0 overflow-y-auto space-y-3.5 pr-1.5 scrollbar-thin relative"
+        >
+          {currentRoom && !isLoadingHistory && visibleMessages.length > 0 && (
+            <div className="flex justify-center pb-1">
+              {isLoadingMore ? (
+                <span className="inline-flex items-center gap-1.5 text-[11px] text-[#7A6C5E]">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  載入更早訊息…
+                </span>
+              ) : hasMoreHistory ? (
+                <button
+                  type="button"
+                  onClick={handleLoadOlder}
+                  className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#E8D8C4]/70 hover:bg-[#E8D8C4] text-[11px] font-semibold text-[#5C4B3A] transition-colors cursor-pointer"
+                >
+                  <ChevronUp className="w-3.5 h-3.5" />
+                  載入更早訊息
+                </button>
+              ) : (
+                <span className="text-[11px] text-[#A69684]">已是最早的訊息</span>
+              )}
+            </div>
+          )}
+
           {!currentRoom || isLoadingHistory ? (
             <div className="flex items-center justify-center h-full text-xs text-[#7A6C5E] gap-2">
               <RefreshCw className="w-4 h-4 animate-spin text-[#A68B6D]" />
               <span>載入對話中…</span>
             </div>
-          ) : messages.length === 0 ? (
+          ) : visibleMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full gap-1 text-xs text-[#7A6C5E]">
               <span>還沒有任何對話</span>
               {!hasPartner && <span className="text-[11px]">等待對方輸入姓名進入</span>}
             </div>
           ) : (
-            messages.map((m, idx) => {
+            visibleMessages.map((m, idx) => {
               const isSystem = m.author.includes('系統');
               const isMe = m.author === passcode;
               // Legacy messages used a decorated author label; keep both working.

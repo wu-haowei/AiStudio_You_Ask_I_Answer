@@ -6,6 +6,7 @@ import {
   query,
   orderBy,
   limit as fsLimit,
+  startAfter,
   onSnapshot,
   setDoc,
   getDoc,
@@ -50,8 +51,8 @@ export const COLLECTIONS = {
   USER_QUESTIONS: 'userQuestions',
 } as const;
 
-/** How many historical messages to load when entering a room. */
-export const MESSAGE_HISTORY_LIMIT = 300;
+/** Messages fetched on entry, and per "load older" page. */
+export const MESSAGE_PAGE_SIZE = 50;
 
 /* ------------------------------------------------------------------ *
  * Utilities
@@ -286,28 +287,43 @@ export const appendMessage = async (
   return payload;
 };
 
-/** One-shot history read — used when entering a room before the listener attaches. */
-export const loadRecentMessages = async (
+/**
+ * Fetches the page of messages immediately older than `beforeCreatedAt`.
+ * Returns them oldest-first, plus whether a further page probably exists.
+ */
+export const loadOlderMessages = async (
   code: string,
-  max = MESSAGE_HISTORY_LIMIT
-): Promise<RoomMessage[]> => {
+  beforeCreatedAt: string,
+  max = MESSAGE_PAGE_SIZE
+): Promise<{ messages: RoomMessage[]; hasMore: boolean }> => {
   try {
-    const snap = await getDocs(query(messagesRef(code), orderBy('createdAt', 'desc'), fsLimit(max)));
-    return snap.docs.map((d) => d.data() as RoomMessage).reverse();
+    const snap = await getDocs(
+      query(
+        messagesRef(code),
+        orderBy('createdAt', 'desc'),
+        startAfter(beforeCreatedAt),
+        fsLimit(max)
+      )
+    );
+    return {
+      messages: snap.docs.map((d) => d.data() as RoomMessage).reverse(),
+      hasMore: snap.docs.length === max,
+    };
   } catch (err) {
-    console.warn('[firestore] failed to load message history:', err);
-    return [];
+    console.warn('[firestore] failed to load older messages:', err);
+    return { messages: [], hasMore: false };
   }
 };
 
 /**
  * Realtime listener over the most recent `max` messages, delivered oldest-first.
- * The first callback fires with the full history, so this doubles as the initial load.
+ * The first callback doubles as the initial load; anything older is paged in
+ * separately via loadOlderMessages.
  */
 export const subscribeToMessages = (
   code: string,
   onUpdate: (messages: RoomMessage[]) => void,
-  max = MESSAGE_HISTORY_LIMIT
+  max = MESSAGE_PAGE_SIZE
 ) => {
   if (!code) return () => {};
   return onSnapshot(
@@ -361,6 +377,20 @@ export const saveItems = async <T extends { id: string }>(name: string, items: T
     }
   } catch (err) {
     console.warn(`[firestore] failed to bulk save ${name}:`, err);
+  }
+};
+
+/** Batched delete — used by the admin bulk-delete action. */
+export const deleteItems = async (name: string, ids: string[]) => {
+  try {
+    for (let i = 0; i < ids.length; i += 400) {
+      const batch = writeBatch(db);
+      for (const id of ids.slice(i, i + 400)) batch.delete(doc(db, name, id));
+      await batch.commit();
+    }
+  } catch (err) {
+    console.warn(`[firestore] failed to bulk delete from ${name}:`, err);
+    throw err;
   }
 };
 
