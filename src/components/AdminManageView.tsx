@@ -28,6 +28,8 @@ import {
   saveStoredNotionConfig,
   HARDCODED_NOTION_QUESTION_DB_ID,
   HARDCODED_NOTION_ANSWER_DB_ID,
+  clearAllStorageAndSession,
+  CURRENT_APP_VERSION,
 } from '../utils/storage';
 import { testNotionConnection, syncQuestionToNotion } from '../utils/notionApi';
 
@@ -432,6 +434,18 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
               className="p-2 rounded-xl text-rose-600 hover:bg-rose-50 transition-colors"
             >
               <RotateCcw className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => {
+                if (confirm('確定要強制清除 Session 與 Local Storage 本機快取嗎？這將消除版本升級後的舊版暫存錯誤，並重新載入頁面。')) {
+                  clearAllStorageAndSession();
+                  window.location.reload();
+                }
+              }}
+              title={`一鍵清除 Session 與 Local Storage 快取 (目前版本 v${CURRENT_APP_VERSION})`}
+              className="p-2 rounded-xl text-amber-700 hover:bg-amber-100 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
             </button>
           </div>
         </div>

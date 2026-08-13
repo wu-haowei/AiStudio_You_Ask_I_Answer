@@ -13,6 +13,8 @@ import {
   saveVotedFAQId,
   getStoredNotionConfig,
   HARDCODED_NOTION_QUESTION_DB_ID,
+  checkAndMigrateStorageVersion,
+  CURRENT_APP_VERSION,
 } from './utils/storage';
 import { Header } from './components/Header';
 import { CoPlayView } from './components/CoPlayView';
@@ -32,10 +34,20 @@ export default function App() {
 
   // Initialize data on mount
   useEffect(() => {
+    const wasUpdated = checkAndMigrateStorageVersion();
+
     setFaqs(getStoredFAQs());
     setCategories(getStoredCategories());
     setUserQuestions(getStoredUserQuestions());
     setVotedStatus(getVotedFAQIds());
+
+    if (wasUpdated) {
+      showToast(
+        `已自動升級至最新版本 (v${CURRENT_APP_VERSION})`,
+        '已自動刷新 Session 與舊版暫存，確保應用程式穩定運作。',
+        'info'
+      );
+    }
   }, []);
 
   const showToast = (
