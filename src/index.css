@@ -66,8 +66,82 @@
 .milk-tea-input:focus {
   outline: none;
   background-color: #FFFFFF;
-  border-color: #A68B6D;
-  box-shadow: 0 0 0 3px rgba(166, 139, 109, 0.2);
+  border-color: #8E7256;
+  box-shadow: 0 0 0 3px rgba(142, 114, 86, 0.28);
+}
+
+/*
+ * Keyboard focus ring. focus-visible keeps it off mouse clicks, so buttons stay
+ * clean while remaining reachable by keyboard.
+ */
+:where(button, a, input, textarea, select):focus-visible {
+  outline: 2px solid #8E7256;
+  outline-offset: 2px;
+  border-radius: 0.75rem;
+}
+
+/* Quoted message inside a chat bubble */
+.reply-quote {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 0.375rem;
+  padding: 0.3rem 0.5rem;
+  border-left: 3px solid;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+
+.reply-quote:hover {
+  filter: brightness(0.96);
+}
+
+/* On a received (light) bubble */
+.reply-quote-incoming {
+  background-color: #EFE2D2;
+  border-left-color: #8E7256;
+}
+
+.reply-quote-incoming .reply-quote-author {
+  color: #6B5137;
+}
+
+.reply-quote-incoming .reply-quote-text {
+  color: #5C4B3A;
+}
+
+/* On an outgoing (brown) bubble */
+.reply-quote-outgoing {
+  background-color: #6F5940;
+  border-left-color: #F3E6D4;
+}
+
+.reply-quote-outgoing .reply-quote-author {
+  color: #F3E6D4;
+}
+
+.reply-quote-outgoing .reply-quote-text {
+  color: #E4D5C1;
+}
+
+.reply-quote-author {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply-quote-text {
+  display: block;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .milk-tea-btn-primary {

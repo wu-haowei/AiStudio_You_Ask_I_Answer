@@ -21,9 +21,6 @@ interface CoPlayInviteModalsProps {
 
   // Question Selector Form States
   questionCategory: string;
-  setQuestionCategory: (cat: string) => void;
-  customCategoryInput: string;
-  setCustomCategoryInput: (val: string) => void;
   questionText: string;
   setQuestionText: (val: string) => void;
   optA: string;
@@ -60,8 +57,6 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
 
   questionCategory,
 
-  customCategoryInput,
-  setCustomCategoryInput,
   questionText,
   setQuestionText,
   optA,
@@ -214,19 +209,6 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                     <option value="CUSTOM">自訂種類</option>
                   </select>
                 </div>
-
-                {questionCategory === 'CUSTOM' && (
-                  <div className="pt-1.5">
-                    <input
-                      type="text"
-                      required
-                      value={customCategoryInput}
-                      onChange={(e) => setCustomCategoryInput(e.target.value)}
-                      placeholder="輸入種類名稱"
-                      className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input font-bold"
-                    />
-                  </div>
-                )}
               </div>
 
               {/* Step 2: Category Randomization Preview OR Custom Text Input */}

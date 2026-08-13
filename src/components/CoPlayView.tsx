@@ -42,6 +42,9 @@ const TAB_SESSION_ID_KEY = 'milktea_coplay_tab_id';
 /** The single shared Firestore room for this two-player app. */
 const ROOM_CODE = 'MAIN-ROOM';
 
+/** Category label written on questions created with the custom option. */
+const CUSTOM_CATEGORY_LABEL = '自訂';
+
 /** Author label used for reveal report cards in the message stream. */
 const REVEAL_AUTHOR = '揭曉結果';
 
@@ -99,7 +102,6 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   const [isAnswerModalDismissed, setIsAnswerModalDismissed] = useState(false);
   const [questionText, setQuestionText] = useState('');
   const [questionCategory, setQuestionCategory] = useState('習性與喜好');
-  const [customCategoryInput, setCustomCategoryInput] = useState('');
   const [optA, setOptA] = useState('在家休息追劇');
   const [optB, setOptB] = useState('約朋友出門喝咖啡');
   const [optC, setOptC] = useState('戶外運動大自然');
@@ -518,7 +520,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
 
   // Randomize Question by Category using imported FAQ data
   const handleRandomizeQuestionByCategory = () => {
-    const activeCat = questionCategory === 'CUSTOM' ? customCategoryInput.trim() : questionCategory;
+    const activeCat = questionCategory === 'CUSTOM' ? '' : questionCategory;
     let pool = faqs;
     if (activeCat && activeCat !== 'CUSTOM' && activeCat !== '') {
       const match = faqs.filter((f) => f.category === activeCat);
@@ -553,7 +555,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     }
 
     const finalCategory =
-      questionCategory === 'CUSTOM' ? customCategoryInput.trim() || '自訂種類' : questionCategory;
+      questionCategory === 'CUSTOM' ? CUSTOM_CATEGORY_LABEL : questionCategory;
     const options = [optA, optB, optC, optD].filter((o) => o.trim() !== '');
 
     const gameQuestion: RoomQuestion = {
@@ -704,7 +706,6 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   const wasQuestionModalOpenRef = useRef(false);
   useEffect(() => {
     if (showQuestionModal && !wasQuestionModalOpenRef.current && questionCategory === 'CUSTOM') {
-      setCustomCategoryInput('');
       setQuestionText('');
       setOptA('');
       setOptB('');
@@ -744,9 +745,6 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
         }}
         onPublishGameQuestion={handlePublishGameQuestion}
         questionCategory={questionCategory}
-        setQuestionCategory={setQuestionCategory}
-        customCategoryInput={customCategoryInput}
-        setCustomCategoryInput={setCustomCategoryInput}
         questionText={questionText}
         setQuestionText={setQuestionText}
         optA={optA}
@@ -963,9 +961,13 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
                   ref={(node) => {
                     messageRefs.current[m.id] = node;
                   }}
-                  className={`group flex flex-col rounded-2xl transition-colors ${
+                  className={`group flex flex-col rounded-2xl transition-all ${
                     isSystem ? 'items-center' : isMe ? 'items-end' : 'items-start'
-                  } ${highlightedId === m.id ? 'ring-2 ring-[#A68B6D]' : ''}`}
+                  } ${
+                    highlightedId === m.id
+                      ? 'ring-2 ring-[#8E7256] ring-offset-2 ring-offset-[#FAF7F2]'
+                      : ''
+                  }`}
                 >
                   <div className="flex items-center gap-1.5 mb-1 text-[10px] text-[#7A6C5E]">
                     <span className="font-bold text-[#4A3F35]">
