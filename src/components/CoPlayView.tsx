@@ -28,6 +28,9 @@ import {
 import { CoPlayRoom, FAQItem, RoomQuestion } from '../types';
 import { getStoredNotionConfig } from '../utils/storage';
 import { subscribeToFirebaseRoom, syncRoomToFirebase } from '../lib/firebase';
+import { CoPlayPasscodeModal } from './coplay/CoPlayPasscodeModal';
+import { CoPlayInviteModals } from './coplay/CoPlayInviteModals';
+import { CoPlayActiveQuestionModal } from './coplay/CoPlayActiveQuestionModal';
 
 interface CoPlayViewProps {
   faqs: FAQItem[];
@@ -1022,103 +1025,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
 
   if (!passcode) {
     return (
-      <div className="flex-1 min-h-0 flex items-center justify-center p-4 animate-fade-in my-auto">
-        <div className="bg-[#FAF7F2] border-2 border-[#D9C5B2] rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-xl space-y-6 text-center">
-          <div className="w-16 h-16 rounded-3xl bg-[#A68B6D] text-white mx-auto flex items-center justify-center shadow-md">
-            <UserCheck className="w-8 h-8 text-amber-100" />
-          </div>
-
-          <div>
-            <h2 className="text-xl font-bold text-[#4A3F35]">請選擇或輸入身分連線登入</h2>
-            <p className="text-xs text-[#7A6C5E] mt-1.5 leading-relaxed">
-              點擊快捷暗號（1105 或 1115），或在下方輸入自訂帳號名稱，即可與線上親友連線互動！
-            </p>
-          </div>
-
-          {/* Quick Select Preset Buttons */}
-          <div className="space-y-2 text-left">
-            <p className="text-xs font-bold text-[#A68B6D]">快捷選擇暗號身分：</p>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => handleLoginWithPasscode('1105')}
-                disabled={isAuthLoading}
-                className="p-3.5 rounded-2xl border-2 border-[#D9C5B2] bg-white hover:bg-[#F5E6D3] text-left transition-all shadow-2xs group cursor-pointer relative"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="text-[11px] font-bold text-[#A68B6D] group-hover:text-[#4A3F35]">
-                    預設暗號 1105
-                  </div>
-                  {is1105Online ? (
-                    <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full font-bold flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> 線上
-                    </span>
-                  ) : (
-                    <span className="text-[9px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-bold">
-                      ⚪ 離線
-                    </span>
-                  )}
-                </div>
-                <div className="text-sm font-black text-[#4A3F35] mt-0.5 truncate">
-                  {getSavedNameForPasscode('1105')}
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleLoginWithPasscode('1115')}
-                disabled={isAuthLoading}
-                className="p-3.5 rounded-2xl border-2 border-[#D9C5B2] bg-white hover:bg-[#F5E6D3] text-left transition-all shadow-2xs group cursor-pointer relative"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="text-[11px] font-bold text-[#A68B6D] group-hover:text-[#4A3F35]">
-                    預設暗號 1115
-                  </div>
-                  {is1115Online ? (
-                    <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full font-bold flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> 線上
-                    </span>
-                  ) : (
-                    <span className="text-[9px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-bold">
-                      ⚪ 離線
-                    </span>
-                  )}
-                </div>
-                <div className="text-sm font-black text-[#4A3F35] mt-0.5 truncate">
-                  {getSavedNameForPasscode('1115')}
-                </div>
-              </button>
-            </div>
-          </div>
-
-          {/* Manual Input Form */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (loginCodeInput) handleLoginWithPasscode(loginCodeInput);
-            }}
-            className="space-y-3 border-t border-[#D9C5B2] pt-4 text-left"
-          >
-            <label className="block text-xs font-bold text-[#A68B6D]">自訂其他帳號或暗號：</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={loginCodeInput}
-                onChange={(e) => setLoginCodeInput(e.target.value)}
-                placeholder="例如：帳號 2、Alex、小明..."
-                className="flex-1 px-4 py-2.5 rounded-xl border border-[#D9C5B2] bg-white text-xs font-bold text-[#4A3F35] focus:outline-none focus:ring-2 focus:ring-[#A68B6D]"
-              />
-              <button
-                type="submit"
-                disabled={isAuthLoading || !loginCodeInput.trim()}
-                className="milk-tea-btn-primary px-5 py-2.5 rounded-xl text-xs font-bold shadow-md disabled:opacity-50 cursor-pointer shrink-0"
-              >
-                {isAuthLoading ? '連線中...' : '登入連線'}
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
+      <CoPlayPasscodeModal
+        loginCodeInput={loginCodeInput}
+        setLoginCodeInput={setLoginCodeInput}
+        isAuthLoading={isAuthLoading}
+        onLogin={handleLoginWithPasscode}
+      />
     );
   }
 
@@ -1239,370 +1151,42 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         </div>
       </div>
 
-      {/* Modal Popup 1 - Challenge Invitation Request */}
-      {isPendingInviteForMe && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-[#FAF7F2] border-2 border-[#D9C5B2] rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-[#A68B6D] text-white flex items-center justify-center">
-                  <Gamepad2 className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-[#4A3F35]">🎮 你問我答考驗邀請</h3>
-                  <p className="text-xs text-[#7A6C5E]">發起人：{getNameByPasscode(inviteState.sender)}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleRespondInvite(false)}
-                className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
-                title="關閉 / 婉拒"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <p className="text-xs sm:text-sm font-bold text-[#4A3F35] leading-relaxed bg-white p-4 rounded-2xl border border-[#D9C5B2]">
-              【{getNameByPasscode(inviteState.sender)}】向你發起了「你問我答」考驗！請問要接受考驗嗎？
-            </p>
-
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => handleRespondInvite(false)}
-                className="flex-1 py-3 rounded-2xl text-xs font-bold text-[#7A6C5E] bg-[#E8D8C4]/60 hover:bg-[#D9C5B2] transition-colors cursor-pointer"
-              >
-                下次再玩 🙅
-              </button>
-              <button
-                type="button"
-                onClick={() => handleRespondInvite(true)}
-                className="flex-1 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
-              >
-                <ThumbsUp className="w-4 h-4" />
-                <span>接受挑戰 👍</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Popup - Waiting Popup for Invite Sender with Cancel Option */}
-      {isPendingInviteSender && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-[#FAF7F2] border-2 border-[#D9C5B2] rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-[#A68B6D] text-white flex items-center justify-center animate-pulse">
-                  <Clock className="w-5 h-5 animate-spin" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-[#4A3F35]">⏳ 等待對方回應中...</h3>
-                  <p className="text-xs text-[#7A6C5E]">邀請對象：【{partnerDisplayName}】</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={handleCancelInvite}
-                className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
-                title="取消發起並關閉"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="bg-white p-4 rounded-2xl border border-[#D9C5B2] space-y-2 text-center">
-              <p className="text-xs sm:text-sm font-bold text-[#4A3F35]">
-                已向【{partnerDisplayName}】發出「你問我答」考驗邀請！
-              </p>
-              <p className="text-xs text-[#7A6C5E]">
-                請等待對方點擊接受，您也可以隨時點擊下方按鈕取消發起。
-              </p>
-            </div>
-
-            <div className="flex items-center justify-end pt-2">
-              <button
-                type="button"
-                onClick={handleCancelInvite}
-                className="w-full py-3 rounded-2xl text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                <XCircle className="w-4 h-4" />
-                <span>取消發起邀請</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Popup 2 - Initiator Selects Category & Question (Triggers ONLY when recipient accepts) */}
-      {(isAcceptedWaitingInitiator || (isQuestionModalOpen && inviteState?.status === 'accepted')) && !isQuestionModalDismissed && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in overflow-y-auto">
-          <div className="bg-[#FAF7F2] border-2 border-[#D9C5B2] rounded-3xl p-5 sm:p-6 max-w-xl w-full shadow-2xl space-y-4 my-auto">
-            <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-3">
-              <div className="flex items-center gap-2">
-                <div className="w-9 h-9 rounded-xl bg-[#A68B6D] text-white flex items-center justify-center">
-                  <Target className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm sm:text-base font-bold text-[#4A3F35]">🎯 選擇/設定猜心題目 (問對方的真心話)</h3>
-                  <p className="text-[11px] text-[#7A6C5E]">【{partnerDisplayName}】已準備好！設定題目後由你猜測對方的選擇</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsQuestionModalDismissed(true);
-                  setIsQuestionModalOpen(false);
-                }}
-                className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
-                title="暫時關閉視窗 (可於對話框點擊按鈕重新開啟)"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handlePublishGameQuestion} className="space-y-4">
-              {/* Step 1: Select Category */}
-              <div className="space-y-1.5 bg-white/90 p-3.5 rounded-2xl border border-[#D9C5B2] shadow-2xs">
-                <div className="flex items-center justify-between gap-2">
-                  <label className="text-xs font-bold text-[#4A3F35] flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-[#A68B6D]" />
-                    <span>步驟 1：選擇題目種類</span>
-                  </label>
-                  <select
-                    value={questionCategory}
-                    onChange={(e) => handleCategoryChange(e.target.value)}
-                    className="text-xs px-3 py-1.5 rounded-xl bg-white border border-[#D9C5B2] text-[#4A3F35] font-bold cursor-pointer hover:border-[#A68B6D] transition-colors"
-                  >
-                    <option value="習性與喜好">習性與喜好</option>
-                    <option value="人生規劃與經歷">人生規劃與經歷</option>
-                    <option value="感情相關">感情相關</option>
-                    <option value="狀況劇">狀況劇</option>
-                    <option value="敏感題">敏感題</option>
-                    <option value="CUSTOM">✏️ 自訂種類 (自行輸入題目與選項)</option>
-                  </select>
-                </div>
-
-                {questionCategory === 'CUSTOM' && (
-                  <div className="pt-1.5">
-                    <input
-                      type="text"
-                      required
-                      value={customCategoryInput}
-                      onChange={(e) => setCustomCategoryInput(e.target.value)}
-                      placeholder="請輸入自訂種類名稱 (例如：休閒嗜好、理財觀念...)"
-                      className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input font-bold"
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* Step 2: Category Randomization Preview OR Custom Text Input */}
-              {questionCategory !== 'CUSTOM' ? (
-                <div className="space-y-3">
-                  {/* Category Random Question Display Card */}
-                  <div className="bg-white p-4 rounded-2xl border border-[#D9C5B2] space-y-3 shadow-2xs">
-                    <div className="flex items-center justify-between border-b border-dashed border-[#D9C5B2] pb-2">
-                      <span className="text-xs font-bold text-[#A68B6D] flex items-center gap-1">
-                        <Dices className="w-4 h-4 text-[#A68B6D]" />
-                        已自動從「{questionCategory}」題庫為您隨機抽題
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleRandomizeQuestionByCategory}
-                        className="px-2.5 py-1.5 rounded-xl bg-[#A68B6D] text-white text-[11px] font-bold hover:bg-[#8E7256] transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
-                      >
-                        <Shuffle className="w-3.5 h-3.5" />
-                        <span>🎲 換一題 (隨機)</span>
-                      </button>
-                    </div>
-
-                    <div>
-                      <span className="text-[11px] font-bold text-[#7A6C5E] block mb-1">題目內容：</span>
-                      <p className="text-xs sm:text-sm font-bold text-[#4A3F35] leading-relaxed bg-[#FAF7F2] p-3 rounded-xl border border-[#E8D8C4]">
-                        {questionText || '點擊上方按鈕隨機抽題...'}
-                      </p>
-                    </div>
-
-                    <div>
-                      <span className="text-[11px] font-bold text-[#7A6C5E] block mb-1">作答選項預覽：</span>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#E8D8C4] text-[#4A3F35] font-medium truncate">
-                          <span className="font-bold text-[#A68B6D]">A.</span> {optA}
-                        </div>
-                        <div className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#E8D8C4] text-[#4A3F35] font-medium truncate">
-                          <span className="font-bold text-[#A68B6D]">B.</span> {optB}
-                        </div>
-                        <div className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#E8D8C4] text-[#4A3F35] font-medium truncate">
-                          <span className="font-bold text-[#A68B6D]">C.</span> {optC}
-                        </div>
-                        <div className="p-2.5 rounded-xl bg-[#FAF7F2] border border-[#E8D8C4] text-[#4A3F35] font-medium truncate">
-                          <span className="font-bold text-[#A68B6D]">D.</span> {optD}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="pt-1 flex items-center justify-between text-[11px]">
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingPreset(!isEditingPreset)}
-                        className="text-[#A68B6D] hover:underline font-bold flex items-center gap-1 cursor-pointer"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        <span>{isEditingPreset ? '隱藏手動修改' : '想要微調這題文字/選項內容？'}</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Optional Manual Edit Inputs if Initiator wants to tweak */}
-                  {isEditingPreset && (
-                    <div className="space-y-3 bg-amber-50/70 p-3.5 rounded-2xl border border-amber-200/80 animate-fade-in">
-                      <div>
-                        <label className="text-xs font-bold text-[#4A3F35] mb-1 block">微調題目內容：</label>
-                        <input
-                          type="text"
-                          required
-                          value={questionText}
-                          onChange={(e) => setQuestionText(e.target.value)}
-                          className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input font-bold"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs font-bold text-[#4A3F35] mb-1 block">微調選項內容：</label>
-                        <div className="grid grid-cols-2 gap-2">
-                          <input
-                            type="text"
-                            required
-                            value={optA}
-                            onChange={(e) => setOptA(e.target.value)}
-                            className="px-3 py-1.5 text-xs rounded-xl milk-tea-input"
-                          />
-                          <input
-                            type="text"
-                            required
-                            value={optB}
-                            onChange={(e) => setOptB(e.target.value)}
-                            className="px-3 py-1.5 text-xs rounded-xl milk-tea-input"
-                          />
-                          <input
-                            type="text"
-                            required
-                            value={optC}
-                            onChange={(e) => setOptC(e.target.value)}
-                            className="px-3 py-1.5 text-xs rounded-xl milk-tea-input"
-                          />
-                          <input
-                            type="text"
-                            required
-                            value={optD}
-                            onChange={(e) => setOptD(e.target.value)}
-                            className="px-3 py-1.5 text-xs rounded-xl milk-tea-input"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Preset Quick Picker Pills */}
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-[#7A6C5E] block">或從題庫中點選指定題目：</label>
-                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
-                      {faqs
-                        .filter((f) => !f.category || f.category === questionCategory)
-                        .map((f) => (
-                          <button
-                            key={f.id}
-                            type="button"
-                            onClick={() => handleSelectPresetFAQ(f)}
-                            className="text-[11px] px-2.5 py-1 rounded-xl bg-white border border-[#D9C5B2] text-[#4A3F35] font-medium hover:border-[#A68B6D] hover:bg-[#E8D8C4]/40 transition-colors text-left truncate max-w-full cursor-pointer"
-                          >
-                            💡 {f.question}
-                          </button>
-                        ))}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                /* Custom Question & Options Input Mode */
-                <div className="space-y-3 bg-white p-4 rounded-2xl border border-[#D9C5B2] shadow-2xs animate-fade-in">
-                  <div>
-                    <label className="text-xs font-bold text-[#4A3F35] mb-1 block">
-                      請輸入自訂題目內容 (問對方的真心話)：
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={questionText}
-                      onChange={(e) => setQuestionText(e.target.value)}
-                      placeholder="例如：你覺得我們第一次見面最深刻的事情是什麼？"
-                      className="w-full px-3.5 py-2.5 text-xs rounded-xl milk-tea-input font-bold"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-bold text-[#4A3F35] mb-1 block">請輸入 4 個作答選項：</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="text"
-                        required
-                        value={optA}
-                        onChange={(e) => setOptA(e.target.value)}
-                        placeholder="選項 A"
-                        className="px-3 py-2 text-xs rounded-xl milk-tea-input"
-                      />
-                      <input
-                        type="text"
-                        required
-                        value={optB}
-                        onChange={(e) => setOptB(e.target.value)}
-                        placeholder="選項 B"
-                        className="px-3 py-2 text-xs rounded-xl milk-tea-input"
-                      />
-                      <input
-                        type="text"
-                        required
-                        value={optC}
-                        onChange={(e) => setOptC(e.target.value)}
-                        placeholder="選項 C"
-                        className="px-3 py-2 text-xs rounded-xl milk-tea-input"
-                      />
-                      <input
-                        type="text"
-                        required
-                        value={optD}
-                        onChange={(e) => setOptD(e.target.value)}
-                        placeholder="選項 D"
-                        className="px-3 py-2 text-xs rounded-xl milk-tea-input"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="pt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsQuestionModalDismissed(true);
-                    setIsQuestionModalOpen(false);
-                  }}
-                  className="px-4 py-3 rounded-2xl text-xs font-bold text-[#7A6C5E] bg-[#E8D8C4]/60 hover:bg-[#D9C5B2] transition-colors cursor-pointer"
-                >
-                  暫時關閉
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  <span>發布考驗 (雙方於彈窗作答，答案揭曉於對話框與 Notion)</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* Invite and Question Selection Modals */}
+      <CoPlayInviteModals
+        isPendingInviteForMe={isPendingInviteForMe}
+        inviteStateSender={inviteState?.sender || ''}
+        getNameByPasscode={getNameByPasscode}
+        onRespondInvite={handleRespondInvite}
+        isPendingInviteSender={isPendingInviteSender}
+        partnerDisplayName={partnerDisplayName}
+        onCancelInvite={handleCancelInvite}
+        showQuestionModal={(isAcceptedWaitingInitiator || (isQuestionModalOpen && inviteState?.status === 'accepted')) && !isQuestionModalDismissed}
+        onCloseQuestionModal={() => {
+          setIsQuestionModalDismissed(true);
+          setIsQuestionModalOpen(false);
+        }}
+        onPublishGameQuestion={handlePublishGameQuestion}
+        questionCategory={questionCategory}
+        setQuestionCategory={setQuestionCategory}
+        customCategoryInput={customCategoryInput}
+        setCustomCategoryInput={setCustomCategoryInput}
+        questionText={questionText}
+        setQuestionText={setQuestionText}
+        optA={optA}
+        setOptA={setOptA}
+        optB={optB}
+        setOptB={setOptB}
+        optC={optC}
+        setOptC={setOptC}
+        optD={optD}
+        setOptD={setOptD}
+        isEditingPreset={isEditingPreset}
+        setIsEditingPreset={setIsEditingPreset}
+        handleCategoryChange={handleCategoryChange}
+        handleRandomizeQuestionByCategory={handleRandomizeQuestionByCategory}
+        handleSelectPresetFAQ={handleSelectPresetFAQ}
+        faqs={faqs}
+      />
 
       {/* Waiting Indicator for Target when Initiator is selecting question */}
       {isAcceptedWaitingTarget && (
@@ -1671,238 +1255,24 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast }) => {
         </div>
       )}
 
-      {/* Issue 2 Requirement: Modal Popup 3 - Active Question Answering & Guessing Modal */}
-      {activeQ && !activeQ.isRevealed && (isTarget || isInitiator) && !isAnswerModalDismissed && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in overflow-y-auto">
-          <div className="bg-[#FAF7F2] border-2 border-[#D9C5B2] rounded-3xl p-5 sm:p-6 max-w-lg w-full shadow-2xl space-y-4 my-auto">
-            <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-[#A68B6D] text-white flex items-center justify-center font-bold shadow-xs">
-                  <Target className="w-5 h-5 text-amber-100" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-[#4A3F35]">🎯 猜心考驗作答視窗</h3>
-                  <p className="text-xs text-[#7A6C5E]">
-                    {isTarget ? '👉 請選擇你的真實心聲' : `👉 請猜猜 ${partnerDisplayName} 的選擇`}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full font-bold">
-                  考驗進行中
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsAnswerModalDismissed(true)}
-                  className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
-                  title="暫時關閉視窗 (可於對話框點擊按鈕重新開啟)"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Question Card */}
-            <div className="bg-white p-4 rounded-2xl border border-[#D9C5B2] space-y-1.5 shadow-2xs">
-              <div className="text-xs font-bold text-[#A68B6D] flex items-center gap-1">
-                <Sparkles className="w-3.5 h-3.5 text-[#A68B6D]" />
-                [{activeQ.category}] {isTarget ? '這是問你的真心話：' : `猜猜對方的選擇：`}
-              </div>
-              <div className="text-xs sm:text-sm font-bold text-[#4A3F35] leading-relaxed">
-                {activeQ.question}
-              </div>
-            </div>
-
-            {/* Target Interaction (User B) */}
-            {isTarget && (
-              <div>
-                {!hasTargetAnswered ? (
-                  <div className="space-y-3">
-                    <p className="text-xs font-bold text-[#5C4B3A]">
-                      👉 請選擇你的「真心話 (個人真實選擇)」：
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {activeQ.options.map((opt, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => setSelectedOptIndex(idx)}
-                          className={`p-3 text-left text-xs rounded-xl border transition-all cursor-pointer ${
-                            selectedOptIndex === idx
-                              ? 'bg-[#A68B6D] text-white border-[#A68B6D] font-bold shadow-xs'
-                              : 'bg-white text-[#4A3F35] border-[#D9C5B2] hover:border-[#A68B6D]'
-                          }`}
-                        >
-                          {opt}
-                        </button>
-                      ))}
-
-                      {/* 5th Option: 其他 */}
-                      <button
-                        type="button"
-                        onClick={() => setSelectedOptIndex(4)}
-                        className={`p-3 text-left text-xs rounded-xl border transition-all cursor-pointer col-span-2 ${
-                          selectedOptIndex === 4
-                            ? 'bg-[#A68B6D] text-white border-[#A68B6D] font-bold shadow-xs'
-                            : 'bg-white text-[#4A3F35] border-[#D9C5B2] hover:border-[#A68B6D]'
-                        }`}
-                      >
-                        ✨ 其他 (自訂選項 / 補充說明)
-                      </button>
-                    </div>
-
-                    {/* Explanation Input Field */}
-                    {selectedOptIndex !== null && (
-                      <div className="space-y-1 pt-1 animate-fade-in">
-                        <label className="text-[11px] font-bold text-[#5C4B3A] flex items-center gap-1">
-                          <span>💬 {selectedOptIndex === 4 ? '請輸入「其他」自訂選項與詳細說明：' : '選擇此項目的詳細理由 / 說明 (選填)：'}</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={answerExplanation}
-                          onChange={(e) => setAnswerExplanation(e.target.value)}
-                          placeholder={selectedOptIndex === 4 ? "請輸入自訂答案與說明..." : "可填寫選擇此項目的原因..."}
-                          className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input font-bold"
-                        />
-                      </div>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => handleSubmitOption(activeQ)}
-                      disabled={isSubmittingOpt || selectedOptIndex === null}
-                      className="w-full mt-2 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 cursor-pointer"
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>確認送出真心話</span>
-                    </button>
-                  </div>
-                ) : (
-                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-2">
-                    <div className="text-xs font-bold text-emerald-900 flex items-center justify-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      你已完成真心話選擇！
-                    </div>
-                    <p className="text-[11px] text-emerald-700 font-medium">
-                      等待對方完成猜測，揭曉結果將自動發布至對話框...
-                    </p>
-                    <div className="pt-1 flex items-center justify-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setIsAnswerModalDismissed(true)}
-                        className="px-3 py-1.5 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-xs font-bold transition-colors cursor-pointer"
-                      >
-                        縮小視窗
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleCancelActiveQuestion}
-                        className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-colors cursor-pointer"
-                      >
-                        取消本題
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Initiator Interaction (User A) */}
-            {isInitiator && (
-              <div>
-                {!hasInitiatorGuessed ? (
-                  <div className="space-y-3">
-                    <p className="text-xs font-bold text-[#8C6D53]">
-                      👉 請猜猜【{partnerDisplayName}】會選擇哪一個選項？
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {activeQ.options.map((opt, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => setSelectedOptIndex(idx)}
-                          className={`p-3 text-left text-xs rounded-xl border transition-all cursor-pointer ${
-                            selectedOptIndex === idx
-                              ? 'bg-[#8C6D53] text-white border-[#8C6D53] font-bold shadow-xs'
-                              : 'bg-white text-[#4A3F35] border-[#D9C5B2] hover:border-[#8C6D53]'
-                          }`}
-                        >
-                          {opt}
-                        </button>
-                      ))}
-
-                      {/* 5th Option: 其他 */}
-                      <button
-                        type="button"
-                        onClick={() => setSelectedOptIndex(4)}
-                        className={`p-3 text-left text-xs rounded-xl border transition-all cursor-pointer col-span-2 ${
-                          selectedOptIndex === 4
-                            ? 'bg-[#8C6D53] text-white border-[#8C6D53] font-bold shadow-xs'
-                            : 'bg-white text-[#4A3F35] border-[#D9C5B2] hover:border-[#8C6D53]'
-                        }`}
-                      >
-                        ✨ 其他 (自訂選項 / 補充說明)
-                      </button>
-                    </div>
-
-                    {/* Explanation Input Field */}
-                    {selectedOptIndex !== null && (
-                      <div className="space-y-1 pt-1 animate-fade-in">
-                        <label className="text-[11px] font-bold text-[#8C6D53] flex items-center gap-1">
-                          <span>💬 {selectedOptIndex === 4 ? '請輸入你猜測對方選「其他」的詳細說明：' : '猜測原因 / 補充說明 (選填)：'}</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={answerExplanation}
-                          onChange={(e) => setAnswerExplanation(e.target.value)}
-                          placeholder={selectedOptIndex === 4 ? "請輸入自訂猜測與說明..." : "可填寫猜測的原因..."}
-                          className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input font-bold"
-                        />
-                      </div>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => handleSubmitOption(activeQ)}
-                      disabled={isSubmittingOpt || selectedOptIndex === null}
-                      className="w-full mt-2 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 cursor-pointer"
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>確認送出猜測</span>
-                    </button>
-                  </div>
-                ) : (
-                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-2">
-                    <div className="text-xs font-bold text-emerald-900 flex items-center justify-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      你已完成猜測選擇！
-                    </div>
-                    <p className="text-[11px] text-emerald-700 font-medium">
-                      等待對方送出真心話，揭曉結果將自動發布至對話框...
-                    </p>
-                    <div className="pt-1 flex items-center justify-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setIsAnswerModalDismissed(true)}
-                        className="px-3 py-1.5 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-xs font-bold transition-colors cursor-pointer"
-                      >
-                        縮小視窗
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleCancelActiveQuestion}
-                        className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-colors cursor-pointer"
-                      >
-                        取消本題
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Modal Popup 3 - Active Question Answering & Guessing Modal */}
+      <CoPlayActiveQuestionModal
+        activeQ={activeQ}
+        isTarget={isTarget}
+        isInitiator={isInitiator}
+        partnerDisplayName={partnerDisplayName}
+        isAnswerModalDismissed={isAnswerModalDismissed}
+        onDismissModal={() => setIsAnswerModalDismissed(true)}
+        selectedOptIndex={selectedOptIndex}
+        setSelectedOptIndex={setSelectedOptIndex}
+        answerExplanation={answerExplanation}
+        setAnswerExplanation={setAnswerExplanation}
+        hasTargetAnswered={hasTargetAnswered}
+        hasInitiatorGuessed={hasInitiatorGuessed}
+        isSubmittingOpt={isSubmittingOpt}
+        onSubmitOption={handleSubmitOption}
+        onCancelActiveQuestion={handleCancelActiveQuestion}
+      />
 
       {/* Main Dialogue Box */}
       <div className="milk-tea-card rounded-3xl p-3 sm:p-5 border border-[#D9C5B2] shadow-xs flex-1 min-h-0 flex flex-col justify-between overflow-hidden relative">

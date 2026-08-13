@@ -1,0 +1,138 @@
+import React, { useState } from 'react';
+import { Upload, X, Sparkles, Check } from 'lucide-react';
+
+interface AdminJsonImportModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onImportData: (jsonStr: string) => void;
+  showToast: (title: string, description?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
+}
+
+const sampleJsonTemplate = JSON.stringify(
+  [
+    {
+      question: '假日最喜歡的放鬆度過方式是什麼？',
+      answer: '考驗對方的日常習性與放鬆偏好。',
+      category: '習性與喜好',
+      tags: ['日常習慣', '假日休閒'],
+      options: ['在家躺平追劇看動漫', '約朋友出門踩點喝咖啡', '戶外運動踏青接觸大自然', '好好睡覺打電競打整天'],
+    },
+  ],
+  null,
+  2
+);
+
+export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
+  isOpen,
+  onClose,
+  onImportData,
+  showToast,
+}) => {
+  const [pastedJsonText, setPastedJsonText] = useState('');
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-fade-in">
+      <div className="bg-[#FCFAF6] rounded-3xl border border-[#E8DFD3] shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="px-6 py-5 bg-[#F5EFE6] border-b border-[#E8DFD3] flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Upload className="w-5 h-5 text-[#8C6D53]" />
+            <h3 className="text-base font-bold text-[#3A2E2B]">匯入題目 JSON 格式</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-xl text-[#7A6C65] hover:bg-[#EADDCB] transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-5 overflow-y-auto flex-1">
+          <div className="bg-[#F5EFE6] p-4 rounded-2xl border border-[#E8DFD3] space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#3A2E2B] flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-[#8C6D53]" />
+                範本 JSON 格式 (包含 6 大主題分類)
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(sampleJsonTemplate);
+                    showToast('已複製範本 JSON', '', 'success');
+                  }}
+                  className="px-2.5 py-1 text-xs rounded-lg bg-white border border-[#D0BFAC] text-[#4A3F35] font-semibold hover:bg-[#FAF7F2] cursor-pointer"
+                >
+                  複製範本
+                </button>
+                <button
+                  onClick={() => {
+                    const blob = new Blob([sampleJsonTemplate], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'qa_template.json';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    showToast('已下載 qa_template.json', '', 'info');
+                  }}
+                  className="px-2.5 py-1 text-xs rounded-lg bg-[#8C6D53] text-white font-semibold hover:bg-[#785C44] cursor-pointer"
+                >
+                  下載範本檔
+                </button>
+              </div>
+            </div>
+
+            <pre className="text-[11px] font-mono bg-[#2C2421] text-[#EADDCB] p-3 rounded-xl overflow-x-auto max-h-40 leading-relaxed">
+              {sampleJsonTemplate}
+            </pre>
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-xs font-bold text-[#3A2E2B]">
+              貼上 JSON 題目文字：
+            </label>
+            <textarea
+              rows={6}
+              value={pastedJsonText}
+              onChange={(e) => setPastedJsonText(e.target.value)}
+              placeholder="貼上 JSON 陣列內容..."
+              className="w-full px-4 py-3 text-xs font-mono rounded-xl milk-tea-input resize-none"
+            />
+          </div>
+
+          <div className="pt-3 flex items-center justify-end gap-3 border-t border-[#E8DFD3]">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl text-xs font-semibold text-[#7A6C65] hover:bg-[#F2EBE1] cursor-pointer"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!pastedJsonText.trim()) {
+                  showToast('請先貼上 JSON 數據', '', 'error');
+                  return;
+                }
+                try {
+                  onImportData(pastedJsonText.trim());
+                  onClose();
+                  setPastedJsonText('');
+                  showToast('成功匯入題目', '內容已即時更新', 'success');
+                } catch (err: any) {
+                  showToast('JSON 格式錯誤', '請檢查 JSON 格式是否完整', 'error');
+                }
+              }}
+              className="milk-tea-btn-primary px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            >
+              <Check className="w-4 h-4" />
+              <span>確認解析並匯入</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

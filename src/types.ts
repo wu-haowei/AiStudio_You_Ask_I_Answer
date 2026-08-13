@@ -69,6 +69,8 @@ export interface RoomQuestion {
   options: string[];
   targetAnswer?: number;    // User B's true choice (0-3)
   initiatorGuess?: number;  // User A's guess (0-3)
+  targetAnswerText?: string;
+  initiatorGuessText?: string;
   isRevealed?: boolean;
   isCorrect?: boolean;
   createdAt: string;

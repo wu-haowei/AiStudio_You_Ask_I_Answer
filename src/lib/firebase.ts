@@ -3,13 +3,15 @@ import { getFirestore, doc, onSnapshot, setDoc, getDoc, deleteField } from 'fire
 import { getAuth } from 'firebase/auth';
 import { CoPlayRoom } from '../types';
 
+const env = (import.meta as any).env || {};
+
 export const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDuWpe6wWkyzyuEqbTclpSgw7Akz9hqPVk",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "youaskianswer-aa276.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "youaskianswer-aa276",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "youaskianswer-aa276.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "659973025136",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:659973025136:web:68b0ce844d553928e333b5"
+  apiKey: env.VITE_FIREBASE_API_KEY || "AIzaSyDuWpe6wWkyzyuEqbTclpSgw7Akz9hqPVk",
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || "youaskianswer-aa276.firebaseapp.com",
+  projectId: env.VITE_FIREBASE_PROJECT_ID || "youaskianswer-aa276",
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || "youaskianswer-aa276.firebasestorage.app",
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || "659973025136",
+  appId: env.VITE_FIREBASE_APP_ID || "1:659973025136:web:68b0ce844d553928e333b5"
 };
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
