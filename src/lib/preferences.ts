@@ -104,48 +104,64 @@ const bestEncoderMime = (): string => {
 };
 
 /**
- * Shrinks an image until its data URL fits the size ceiling.
+ * Output size of a cropped background.
  *
- * Phone photos are several megabytes and would be rejected outright, so the
- * image is scaled down and re-encoded, dropping quality a step at a time until
- * it fits.
+ * Portrait, because the app is used on phones; a wide screen fills the frame
+ * with object-cover and trims the top and bottom instead. Fixing the output
+ * dimensions is what makes any source image usable — the encoder always works
+ * on the same pixel count no matter how large the original was.
  */
-export const compressImage = async (
+export const CROP_WIDTH = 900;
+export const CROP_HEIGHT = 1200;
+
+/** How the source image sits inside the crop frame. */
+export interface CropTransform {
+  /** 1 = fits the frame exactly; larger zooms in. */
+  zoom: number;
+  /** Pan, as a fraction of the frame's width and height. */
+  offsetX: number;
+  offsetY: number;
+}
+
+/**
+ * Draws the framed region at the fixed output size and encodes it.
+ *
+ * The geometry mirrors CSS `object-fit: cover` followed by the same translate
+ * and scale the editor previews with, so what the frame showed is what gets
+ * saved.
+ */
+export const renderCrop = async (
   file: File,
+  transform: CropTransform,
   maxBytes = MAX_BACKGROUND_BYTES
 ): Promise<string> => {
   const bitmap = await createImageBitmap(file);
 
-  // A phone screen never needs more than this for a background
-  const maxEdge = 1280;
-  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-  const width = Math.round(bitmap.width * scale);
-  const height = Math.round(bitmap.height * scale);
-
   const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = CROP_WIDTH;
+  canvas.height = CROP_HEIGHT;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('瀏覽器不支援圖片處理');
-  ctx.drawImage(bitmap, 0, 0, width, height);
+
+  // "cover": scale so the shorter side fills the frame, then apply the zoom
+  const coverScale = Math.max(CROP_WIDTH / bitmap.width, CROP_HEIGHT / bitmap.height);
+  const drawScale = coverScale * transform.zoom;
+  const drawWidth = bitmap.width * drawScale;
+  const drawHeight = bitmap.height * drawScale;
+
+  const left = (CROP_WIDTH - drawWidth) / 2 + transform.offsetX * CROP_WIDTH;
+  const top = (CROP_HEIGHT - drawHeight) / 2 + transform.offsetY * CROP_HEIGHT;
+
+  ctx.drawImage(bitmap, left, top, drawWidth, drawHeight);
   bitmap.close?.();
 
   const mime = bestEncoderMime();
-
   for (const quality of [0.82, 0.7, 0.58, 0.45, 0.34]) {
     const dataUrl = canvas.toDataURL(mime, quality);
     if (dataUrl.length <= maxBytes) return dataUrl;
   }
 
-  // Still too big — halve the dimensions once and take the lowest quality
-  const small = document.createElement('canvas');
-  small.width = Math.round(width / 2);
-  small.height = Math.round(height / 2);
-  small.getContext('2d')?.drawImage(canvas, 0, 0, small.width, small.height);
-  const fallback = small.toDataURL(mime, 0.4);
-
-  if (fallback.length > maxBytes) {
-    throw new Error('圖片太大，請換一張或先裁切');
-  }
-  return fallback;
+  // A fixed-size canvas at the lowest quality is already tiny; this is a
+  // last resort for pathological images rather than an expected path.
+  return canvas.toDataURL(mime, 0.28);
 };

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, ImagePlus, Trash2 } from 'lucide-react';
-import { compressImage, type UserPreferences } from '../lib/preferences';
+import { type UserPreferences } from '../lib/preferences';
+import { BackgroundCropEditor } from './BackgroundCropEditor';
 
 interface BackgroundSettingsModalProps {
   isOpen: boolean;
@@ -22,31 +23,41 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
   onSave,
   showToast,
 }) => {
-  const [isProcessing, setIsProcessing] = useState(false);
+  /** A chosen file waits here until it has been framed in the crop editor. */
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   // Fade is previewed live, so it is held locally until the modal closes
   const [fade, setFade] = useState(preferences.backgroundFade);
 
+  /*
+   * Preferences arrive from Firestore a moment after mount, so the slider has
+   * to pick up the stored value when the dialog opens rather than freezing on
+   * whatever the default was at first render.
+   */
+  useEffect(() => {
+    if (isOpen) setFade(preferences.backgroundFade);
+  }, [isOpen, preferences.backgroundFade]);
+
   if (!isOpen) return null;
 
-  const handleFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    e.target.value = '';
+    e.target.value = ''; // let the same file be re-picked after cancelling
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
       showToast('請選擇圖片檔', undefined, 'warning');
       return;
     }
+    setPendingFile(file);
+  };
 
-    setIsProcessing(true);
+  const handleCropApplied = async (dataUrl: string) => {
     try {
-      const dataUrl = await compressImage(file);
       await onSave({ chatBackground: dataUrl });
+      setPendingFile(null);
       showToast('背景已更新', undefined, 'success');
     } catch (err: any) {
       showToast('無法使用這張圖', err?.message || '請換一張試試', 'error');
-    } finally {
-      setIsProcessing(false);
     }
   };
 
@@ -54,6 +65,18 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
     setFade(value);
     onSave({ backgroundFade: value });
   };
+
+  if (pendingFile) {
+    return (
+      <BackgroundCropEditor
+        file={pendingFile}
+        fade={fade}
+        onFadeChange={handleFadeCommit}
+        onCancel={() => setPendingFile(null)}
+        onApply={handleCropApplied}
+      />
+    );
+  }
 
   const hasBackground = !!preferences.chatBackground;
 
@@ -127,22 +150,10 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
         </div>
 
         <div className="flex items-center gap-2 pt-1">
-          <label
-            className={`flex-1 py-3 rounded-2xl text-xs font-bold text-center cursor-pointer transition-colors inline-flex items-center justify-center gap-1.5 ${
-              isProcessing
-                ? 'bg-[#E8D8C4] text-[#A69684]'
-                : 'milk-tea-btn-primary shadow-sm'
-            }`}
-          >
+          <label className="flex-1 py-3 rounded-2xl text-xs font-bold text-center cursor-pointer transition-colors inline-flex items-center justify-center gap-1.5 milk-tea-btn-primary shadow-sm">
             <ImagePlus className="w-4 h-4" />
-            {isProcessing ? '處理中…' : hasBackground ? '換一張' : '選擇圖片'}
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              disabled={isProcessing}
-              onChange={handleFileChosen}
-            />
+            {hasBackground ? '換一張' : '選擇圖片'}
+            <input type="file" accept="image/*" className="hidden" onChange={handleFileChosen} />
           </label>
 
           {hasBackground && (
@@ -158,7 +169,7 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
         </div>
 
         <p className="text-[11px] text-[#A69684] leading-relaxed">
-          圖片會自動縮小並壓縮後存到雲端，原圖不會上傳。
+          選好圖後可以拖曳調整位置，只有框內範圍會上傳。
         </p>
       </div>
     </div>
