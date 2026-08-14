@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Settings, Users, Coffee, ChevronDown, Edit3, LogOut, Check } from 'lucide-react';
+import { Settings, Users, Coffee, ChevronDown, Edit3, LogOut, Check, Image } from 'lucide-react';
 import { ActiveTab } from '../types';
 import { useIdentity } from '../lib/identity';
 
@@ -8,6 +8,7 @@ interface HeaderProps {
   setActiveTab: (tab: ActiveTab) => void;
   /** Players seen in the room within the presence window. */
   onlineCount: number;
+  onOpenBackgroundSettings: () => void;
   /** Renaming mid-round would orphan the active question, so it is blocked. */
   isRoundActive: boolean;
   showToast: (
@@ -22,6 +23,7 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveTab,
   onlineCount,
   isRoundActive,
+  onOpenBackgroundSettings,
   showToast,
 }) => {
   const { name, isSignedIn, signIn, signOut } = useIdentity();
@@ -170,6 +172,17 @@ export const Header: React.FC<HeaderProps> = ({
                         >
                           <Edit3 className="w-4 h-4 text-[#A68B6D]" />
                           改名
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            onOpenBackgroundSettings();
+                          }}
+                          className="w-full px-4 py-2.5 text-left text-xs font-semibold text-[#4A3F35] hover:bg-[#F5EFE6] transition-colors flex items-center gap-2.5 cursor-pointer"
+                        >
+                          <Image className="w-4 h-4 text-[#A68B6D]" />
+                          聊天背景
                         </button>
                         <button
                           type="button"

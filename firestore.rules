@@ -75,6 +75,11 @@ service cloud.firestore {
       }
     }
 
+    // Per-person display preferences, keyed by the name used to sign in.
+    match /userPrefs/{name} {
+      allow read, write: if allowed();
+    }
+
     // Shared question library managed from the admin view.
     match /faqs/{faqId} {
       allow read, write: if allowed();

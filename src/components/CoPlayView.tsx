@@ -49,6 +49,8 @@ interface CoPlayViewProps {
   showToast: (title: string, description?: string, type?: 'success' | 'info' | 'warning' | 'error') => void;
   /** Reports presence and round state up to the header. */
   onStatusChange?: (status: { onlineCount: number; isRoundActive: boolean }) => void;
+  /** Personal chat background; empty image means the plain milk-tea surface. */
+  background?: { chatBackground: string; backgroundFade: number };
 }
 
 const TAB_SESSION_ID_KEY = 'milktea_coplay_tab_id';
@@ -108,7 +110,12 @@ const buildMessage = (
   };
 };
 
-export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatusChange }) => {
+export const CoPlayView: React.FC<CoPlayViewProps> = ({
+  faqs,
+  showToast,
+  onStatusChange,
+  background,
+}) => {
   // The signed-in name is the player's identity throughout the room.
   const { name: passcode, signIn } = useIdentity();
   const displayName = passcode;
@@ -1101,8 +1108,27 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
 
       {/* Main Dialogue Box */}
       <div className="milk-tea-card rounded-2xl sm:rounded-3xl p-2.5 sm:p-5 border border-[#D9C5B2] shadow-xs flex-1 min-h-0 flex flex-col justify-between overflow-hidden relative">
+        {/*
+         * Personal background. It sits behind everything in the card and never
+         * takes pointer events, with a wash on top so message text stays
+         * readable however busy the picture is.
+         */}
+        {background?.chatBackground && (
+          <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+            <img
+              src={background.chatBackground}
+              alt=""
+              className="w-full h-full object-cover"
+            />
+            <div
+              className="absolute inset-0 bg-[#FAF7F2]"
+              style={{ opacity: (background.backgroundFade ?? 72) / 100 }}
+            />
+          </div>
+        )}
+
         {/* Dialogue Header */}
-        <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-2.5 mb-2.5 shrink-0">
+        <div className="relative flex items-center justify-between border-b border-[#D9C5B2] pb-2.5 mb-2.5 shrink-0">
           <div className="flex items-center gap-2">
             <div className="hidden sm:flex w-8 h-8 rounded-xl bg-[#E8D8C4] text-[#5C4B3A] items-center justify-center font-bold">
               <MessageSquare className="w-4 h-4 text-[#A68B6D]" />
@@ -1309,7 +1335,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
         </div>
 
         {/* Bottom Input Area inside Dialogue Box */}
-        <div className="pt-2.5 sm:pt-3 border-t border-[#D9C5B2] shrink-0">
+        <div className="relative pt-2.5 sm:pt-3 border-t border-[#D9C5B2] shrink-0">
           {replyTarget && (
             <div className="mb-2 flex items-center gap-2 px-3 py-2 rounded-xl bg-[#F5EFE6] border-l-2 border-[#A68B6D] animate-fade-in">
               <Reply className="w-3.5 h-3.5 text-[#A68B6D] shrink-0" />

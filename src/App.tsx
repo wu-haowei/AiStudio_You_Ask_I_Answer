@@ -18,14 +18,21 @@ import {
   subscribeToFAQs,
 } from './lib/firebase';
 import { useIdentity } from './lib/identity';
+import {
+  DEFAULT_PREFERENCES,
+  savePreferences,
+  subscribeToPreferences,
+  type UserPreferences,
+} from './lib/preferences';
 import { AccessGate } from './components/AccessGate';
+import { BackgroundSettingsModal } from './components/BackgroundSettingsModal';
 import { Header } from './components/Header';
 import { CoPlayView } from './components/CoPlayView';
 import { AdminManageView } from './components/AdminManageView';
 import { ToastContainer } from './components/Toast';
 
 export default function App() {
-  const { isSignedIn } = useIdentity();
+  const { name: userName, isSignedIn } = useIdentity();
   const [activeTab, setActiveTab] = useState<ActiveTab>('co_play');
   const [faqs, setFaqs] = useState<FAQItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -34,6 +41,8 @@ export default function App() {
   const [access, setAccess] = useState<'checking' | 'blocked' | 'granted' | 'offline'>('checking');
   const [uid, setUid] = useState('');
   const [roomStatus, setRoomStatus] = useState({ onlineCount: 0, isRoundActive: false });
+  const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFERENCES);
+  const [isBackgroundModalOpen, setIsBackgroundModalOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const showToast = (
@@ -105,6 +114,25 @@ export default function App() {
 
     return () => unsubscribers.forEach((fn) => fn());
   }, [access]);
+
+  // Display preferences follow the signed-in name, not the device
+  useEffect(() => {
+    if (!userName) {
+      setPreferences(DEFAULT_PREFERENCES);
+      return;
+    }
+    return subscribeToPreferences(userName, setPreferences);
+  }, [userName]);
+
+  const handleSavePreferences = async (patch: Partial<UserPreferences>) => {
+    // Optimistic so the preview reacts immediately
+    setPreferences((prev) => ({ ...prev, ...patch }));
+    try {
+      await savePreferences(userName, patch);
+    } catch {
+      showToast('設定儲存失敗', '請檢查網路連線', 'error');
+    }
+  };
 
   const handleClaimAccess = async (code: string) => {
     const ok = await claimMembership(uid, code);
@@ -261,6 +289,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         onlineCount={roomStatus.onlineCount}
         isRoundActive={roomStatus.isRoundActive}
+        onOpenBackgroundSettings={() => setIsBackgroundModalOpen(true)}
         showToast={showToast}
       />
 
@@ -270,7 +299,12 @@ export default function App() {
         }`}
       >
         {currentTab === 'co_play' && (
-          <CoPlayView faqs={faqs} showToast={showToast} onStatusChange={setRoomStatus} />
+          <CoPlayView
+            faqs={faqs}
+            showToast={showToast}
+            onStatusChange={setRoomStatus}
+            background={preferences}
+          />
         )}
 
         {currentTab === 'admin_manage' && (
@@ -289,6 +323,14 @@ export default function App() {
           />
         )}
       </main>
+
+      <BackgroundSettingsModal
+        isOpen={isBackgroundModalOpen}
+        onClose={() => setIsBackgroundModalOpen(false)}
+        preferences={preferences}
+        onSave={handleSavePreferences}
+        showToast={showToast}
+      />
 
       <ToastContainer toasts={toasts} onDismiss={handleDismissToast} />
     </div>

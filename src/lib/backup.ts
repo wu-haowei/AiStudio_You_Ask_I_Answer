@@ -45,7 +45,7 @@ const KNOWN_SUBCOLLECTIONS: Record<string, string[]> = {
   rooms: ['messages', 'rounds'],
 };
 
-const ROOT_COLLECTIONS = ['faqs', 'categories', 'rooms'];
+const ROOT_COLLECTIONS = ['faqs', 'categories', 'rooms', 'userPrefs'];
 
 /** Timestamps must survive the JSON round trip; store them in a tagged shape. */
 const encodeValue = (value: unknown): unknown => {
