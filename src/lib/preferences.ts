@@ -123,6 +123,60 @@ export interface CropTransform {
   offsetY: number;
 }
 
+/** Anything the user could act on is spelled out; the rest is for the console. */
+export class BackgroundError extends Error {
+  constructor(
+    message: string,
+    /** Extra context shown in smaller print and logged in full. */
+    readonly detail?: string
+  ) {
+    super(message);
+    this.name = 'BackgroundError';
+  }
+}
+
+const describeBytes = (bytes: number) =>
+  bytes >= 1_000_000 ? `${(bytes / 1_000_000).toFixed(1)} MB` : `${Math.round(bytes / 1000)} KB`;
+
+/**
+ * Decodes a file into something drawable.
+ *
+ * `createImageBitmap` is the fast path but it is also the step that fails on
+ * phones: a large photo can exhaust memory, and some pickers hand over formats
+ * a given browser cannot decode this way. An <img> element succeeds in several
+ * of those cases, so it is worth a second attempt before giving up.
+ */
+const loadDrawable = async (
+  file: File
+): Promise<{ source: CanvasImageSource; width: number; height: number; via: string }> => {
+  try {
+    const bitmap = await createImageBitmap(file);
+    return { source: bitmap, width: bitmap.width, height: bitmap.height, via: 'createImageBitmap' };
+  } catch (bitmapError) {
+    console.warn('[background] createImageBitmap failed, falling back to <img>:', bitmapError);
+
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error('img decode failed'));
+        element.src = url;
+      });
+      return { source: img, width: img.naturalWidth, height: img.naturalHeight, via: '<img>' };
+    } catch (imgError) {
+      throw new BackgroundError(
+        '這張圖無法解碼',
+        `檔案 ${file.name || '(未命名)'}・${file.type || '未知格式'}・${describeBytes(file.size)}。` +
+          `瀏覽器兩種解碼方式都失敗了（${String(bitmapError)} / ${String(imgError)}）。` +
+          '手機拍的超大照片可能因記憶體不足而失敗，可先用相簿的編輯功能裁切後再試。'
+      );
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+};
+
 /**
  * Draws the framed region at the fixed output size and encodes it.
  *
@@ -135,33 +189,59 @@ export const renderCrop = async (
   transform: CropTransform,
   maxBytes = MAX_BACKGROUND_BYTES
 ): Promise<string> => {
-  const bitmap = await createImageBitmap(file);
+  const { source, width, height, via } = await loadDrawable(file);
 
   const canvas = document.createElement('canvas');
   canvas.width = CROP_WIDTH;
   canvas.height = CROP_HEIGHT;
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('瀏覽器不支援圖片處理');
+  if (!ctx) {
+    throw new BackgroundError('瀏覽器不支援圖片處理', '無法取得 canvas 2d context。');
+  }
 
   // "cover": scale so the shorter side fills the frame, then apply the zoom
-  const coverScale = Math.max(CROP_WIDTH / bitmap.width, CROP_HEIGHT / bitmap.height);
+  const coverScale = Math.max(CROP_WIDTH / width, CROP_HEIGHT / height);
   const drawScale = coverScale * transform.zoom;
-  const drawWidth = bitmap.width * drawScale;
-  const drawHeight = bitmap.height * drawScale;
+  const drawWidth = width * drawScale;
+  const drawHeight = height * drawScale;
 
   const left = (CROP_WIDTH - drawWidth) / 2 + transform.offsetX * CROP_WIDTH;
   const top = (CROP_HEIGHT - drawHeight) / 2 + transform.offsetY * CROP_HEIGHT;
 
-  ctx.drawImage(bitmap, left, top, drawWidth, drawHeight);
-  bitmap.close?.();
+  try {
+    ctx.drawImage(source, left, top, drawWidth, drawHeight);
+  } catch (err) {
+    throw new BackgroundError(
+      '繪製圖片時失敗',
+      `原圖 ${width}×${height}・${describeBytes(file.size)}・解碼方式 ${via}。${String(err)}`
+    );
+  } finally {
+    (source as ImageBitmap).close?.();
+  }
 
   const mime = bestEncoderMime();
-  for (const quality of [0.82, 0.7, 0.58, 0.45, 0.34]) {
+  let smallest = Number.POSITIVE_INFINITY;
+
+  for (const quality of [0.82, 0.7, 0.58, 0.45, 0.34, 0.24]) {
     const dataUrl = canvas.toDataURL(mime, quality);
+
+    // toDataURL silently returns PNG when it cannot honour the type, and PNG of
+    // a photo is far larger than the budget — worth naming if it happens.
+    if (!dataUrl.startsWith(`data:${mime}`)) {
+      throw new BackgroundError(
+        '瀏覽器無法壓縮這張圖',
+        `要求 ${mime} 但得到 ${dataUrl.slice(5, dataUrl.indexOf(';'))}。請改用其他瀏覽器再試。`
+      );
+    }
+
+    smallest = Math.min(smallest, dataUrl.length);
     if (dataUrl.length <= maxBytes) return dataUrl;
   }
 
-  // A fixed-size canvas at the lowest quality is already tiny; this is a
-  // last resort for pathological images rather than an expected path.
-  return canvas.toDataURL(mime, 0.28);
+  throw new BackgroundError(
+    '這張圖壓縮後仍然太大',
+    `最小壓到 ${describeBytes(smallest)}，超過 ${describeBytes(maxBytes)} 的上限。` +
+      `原圖 ${width}×${height}・${describeBytes(file.size)}・格式 ${mime}。` +
+      '試著把縮放調小一點，或換一張細節較少的圖。'
+  );
 };

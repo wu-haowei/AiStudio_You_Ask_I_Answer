@@ -1,6 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Move, X, Check } from 'lucide-react';
-import { CROP_HEIGHT, CROP_WIDTH, renderCrop, type CropTransform } from '../lib/preferences';
+import { Move, X, Check, AlertTriangle } from 'lucide-react';
+import {
+  BackgroundError,
+  CROP_HEIGHT,
+  CROP_WIDTH,
+  renderCrop,
+  type CropTransform,
+} from '../lib/preferences';
 
 interface BackgroundCropEditorProps {
   file: File;
@@ -42,6 +48,8 @@ export const BackgroundCropEditor: React.FC<BackgroundCropEditorProps> = ({
   const [natural, setNatural] = useState({ width: 0, height: 0 });
   const [transform, setTransform] = useState<CropTransform>({ zoom: 1, offsetX: 0, offsetY: 0 });
   const [isApplying, setIsApplying] = useState(false);
+  /** Kept on screen rather than shown as a toast — the reason matters here. */
+  const [failure, setFailure] = useState<{ message: string; detail?: string } | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const frameRef = useRef<HTMLDivElement>(null);
 
@@ -115,9 +123,26 @@ export const BackgroundCropEditor: React.FC<BackgroundCropEditorProps> = ({
   const handleApply = async () => {
     if (isApplying) return;
     setIsApplying(true);
+    setFailure(null);
+
     try {
       const dataUrl = await renderCrop(file, transform);
       await onApply(dataUrl);
+    } catch (err) {
+      // Everything needed to diagnose goes to the console; the dialog shows the
+      // readable part so the reason does not vanish with a toast.
+      console.error('[background] apply failed', {
+        error: err,
+        file: { name: file.name, type: file.type, size: file.size },
+        natural,
+        transform,
+      });
+
+      setFailure(
+        err instanceof BackgroundError
+          ? { message: err.message, detail: err.detail }
+          : { message: '套用失敗', detail: String((err as Error)?.message || err) }
+      );
     } finally {
       setIsApplying(false);
     }
@@ -242,9 +267,23 @@ export const BackgroundCropEditor: React.FC<BackgroundCropEditorProps> = ({
           </button>
         </div>
 
-        <p className="text-[11px] text-[#A69684] leading-relaxed">
-          只有框內範圍會被壓縮上傳，所以再大的原圖都能用。
-        </p>
+        {failure ? (
+          <div className="rounded-2xl bg-rose-50 border border-rose-200 p-3 space-y-1">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-rose-800">
+              <AlertTriangle className="w-4 h-4" />
+              {failure.message}
+            </div>
+            {failure.detail && (
+              <p className="text-[11px] text-rose-700 leading-relaxed break-words">
+                {failure.detail}
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-[11px] text-[#A69684] leading-relaxed">
+            只有框內範圍會被壓縮上傳，所以再大的原圖都能用。
+          </p>
+        )}
       </div>
     </div>
   );

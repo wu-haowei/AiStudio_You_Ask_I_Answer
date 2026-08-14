@@ -57,7 +57,12 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
       setPendingFile(null);
       showToast('背景已更新', undefined, 'success');
     } catch (err: any) {
-      showToast('無法使用這張圖', err?.message || '請換一張試試', 'error');
+      const raw = String(err?.message || err);
+      // Firestore rejects oversized documents with a byte count in the message
+      const tooBig = raw.includes('longer than') || raw.includes('1048487');
+      throw new Error(
+        tooBig ? '圖片超過雲端單筆資料上限，請縮小範圍後再試' : `儲存失敗：${raw}`
+      );
     }
   };
 
