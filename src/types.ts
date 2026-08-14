@@ -146,10 +146,17 @@ export interface CoPlayRoom {
   v?: number;
   hostName: string;
   /**
-   * Per-category timestamp marking when the "already played" list was last
-   * cleared, so a category whose questions ran out can start a fresh cycle.
+   * Library question ids already used, grouped by category. Kept on the room
+   * document so the replay filter needs no extra reads; emptying a category's
+   * list starts a fresh cycle.
    */
-  playedResetAt?: Record<string, string>;
+  playedFaqIds?: Record<string, string[]>;
+  /**
+   * ISO timestamps of recently published questions, pruned to the activity
+   * window on every write. Riding on the room document means the "last 3 hours"
+   * counter costs no reads of its own.
+   */
+  recentRounds?: string[];
   /** Stored in Firestore as a map keyed by player id; normalized to an array on read. */
   players: RoomPlayer[];
   activeGameQuestion?: RoomQuestion | null;

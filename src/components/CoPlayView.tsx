@@ -20,7 +20,6 @@ import {
   MessageReplyRef,
   RoomMessage,
   RoomQuestion,
-  RoundRecord,
 } from '../types';
 import {
   appendMessage,
@@ -35,7 +34,6 @@ import {
   recordRound,
   resetPlayedCategory,
   submitGameAnswer,
-  subscribeToRounds,
   subscribeToMessages,
   subscribeToRoom,
   touchPlayer,
@@ -64,8 +62,16 @@ const CUSTOM_CATEGORY_LABEL = '自訂';
 /** Author label used for reveal report cards in the message stream. */
 const REVEAL_AUTHOR = '揭曉結果';
 
-/** Presence heartbeat interval; a player counts as online for 30s after lastActive. */
-const HEARTBEAT_MS = 12000;
+/*
+ * Presence heartbeat.
+ *
+ * Every heartbeat writes the room document, and every write pushes a fresh
+ * snapshot to all connected devices — one billed read each. A slow beat is
+ * therefore the single biggest lever on read volume; the online window is
+ * three beats wide so a missed one does not flap the indicator.
+ */
+const HEARTBEAT_MS = 60000;
+const ONLINE_WINDOW_MS = 3 * HEARTBEAT_MS;
 
 /** Window for the "recently played" counter in the dialogue header. */
 const RECENT_ACTIVITY_MS = 3 * 60 * 60 * 1000;
@@ -129,8 +135,6 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [myPlayerId, setMyPlayerId] = useState<string>('');
-  /** Recent rounds, newest first — drives replay filtering and the 3h counter. */
-  const [rounds, setRounds] = useState<RoundRecord[]>([]);
 
   // Dialogue & Chat Input State
   const [chatMessageText, setChatMessageText] = useState('');
@@ -394,18 +398,26 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
       setIsLoadingHistory(false);
     });
 
-    const unsubscribeRounds = subscribeToRounds(roomCode, setRounds);
+    /*
+     * Heartbeat only while the tab is actually in front. A phone left on the
+     * home screen with the app in the background used to keep writing — and
+     * so keep generating reads on the other device — all day.
+     */
+    const beat = () => {
+      if (myPlayerId && document.visibilityState === 'visible') {
+        touchPlayer(roomCode, myPlayerId);
+      }
+    };
 
-    // Presence heartbeat so the online indicator stays accurate
-    const heartbeat = setInterval(() => {
-      if (myPlayerId) touchPlayer(roomCode, myPlayerId);
-    }, HEARTBEAT_MS);
+    beat();
+    const heartbeat = setInterval(beat, HEARTBEAT_MS);
+    document.addEventListener('visibilitychange', beat);
 
     return () => {
       clearInterval(heartbeat);
+      document.removeEventListener('visibilitychange', beat);
       unsubscribeRoom();
       unsubscribeMessages();
-      unsubscribeRounds();
     };
   }, [currentRoom?.code, myPlayerId, passcode]);
 
@@ -465,7 +477,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
 
   const partnerPlayer =
     otherPlayers.find(
-      (p) => p.lastActive && Date.now() - new Date(p.lastActive).getTime() < 30000
+      (p) => p.lastActive && Date.now() - new Date(p.lastActive).getTime() < ONLINE_WINDOW_MS
     ) || otherPlayers[0];
 
   const partnerPasscode = partnerPlayer?.name || '';
@@ -604,24 +616,30 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     setOptD(list[3] || '');
   };
 
-  /** Which library questions have already been played in the current cycle. */
+  /**
+   * Which library questions have already been played, per category. This rides
+   * along on the room document that is already being watched, so filtering
+   * costs no extra reads.
+   */
   const playedFaqIdsByCategory = useMemo(() => {
     const byCategory = new Map<string, Set<string>>();
-    for (const round of rounds) {
-      if (!round.faqId) continue;
-      const resetAt = currentRoom?.playedResetAt?.[round.category];
-      if (resetAt && round.createdAt < resetAt) continue;
-      if (!byCategory.has(round.category)) byCategory.set(round.category, new Set());
-      byCategory.get(round.category)!.add(round.faqId);
+    const played: Record<string, string[]> = currentRoom?.playedFaqIds || {};
+    for (const [category, ids] of Object.entries(played)) {
+      byCategory.set(category, new Set(Array.isArray(ids) ? ids : []));
     }
     return byCategory;
-  }, [rounds, currentRoom?.playedResetAt]);
+  }, [currentRoom?.playedFaqIds]);
 
-  /** Questions played in the last three hours, for the header counter. */
+  /**
+   * Questions published in the last three hours. The timestamps ride on the
+   * room document, which is already being watched, so this costs no reads.
+   */
   const recentRoundCount = useMemo(() => {
     const cutoff = Date.now() - RECENT_ACTIVITY_MS;
-    return rounds.filter((r) => new Date(r.createdAt).getTime() >= cutoff).length;
-  }, [rounds]);
+    return (currentRoom?.recentRounds || []).filter(
+      (at) => new Date(at).getTime() >= cutoff
+    ).length;
+  }, [currentRoom?.recentRounds]);
 
   /**
    * Draws a question that has not been played yet. When a category runs out,
@@ -731,15 +749,20 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     try {
       await setActiveGameQuestion(currentRoom.code, gameQuestion);
       await setGameInvitation(currentRoom.code, null);
-      await recordRound(currentRoom.code, {
-        id: gameQuestion.id,
-        ...(faqId ? { faqId } : {}),
-        question: gameQuestion.question,
-        category: finalCategory,
-        initiator: passcode,
-        target: partnerPasscode,
-        createdAt: gameQuestion.createdAt,
-      });
+      await recordRound(
+        currentRoom.code,
+        {
+          id: gameQuestion.id,
+          ...(faqId ? { faqId } : {}),
+          question: gameQuestion.question,
+          category: finalCategory,
+          initiator: passcode,
+          target: partnerPasscode,
+          createdAt: gameQuestion.createdAt,
+        },
+        currentRoom.recentRounds || [],
+        RECENT_ACTIVITY_MS
+      );
       await appendMessage(
         currentRoom.code,
         buildMessage({
@@ -860,7 +883,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   // A player counts as online while their heartbeat is less than 30s old
   const onlinePlayerCount =
     currentRoom?.players.filter(
-      (p) => p.lastActive && Date.now() - new Date(p.lastActive).getTime() < 30000
+      (p) => p.lastActive && Date.now() - new Date(p.lastActive).getTime() < ONLINE_WINDOW_MS
     ).length || 0;
 
   const isRoundActive = !!activeQ || !!inviteState;

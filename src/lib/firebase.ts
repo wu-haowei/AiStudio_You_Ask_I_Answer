@@ -14,6 +14,7 @@ import {
   deleteDoc,
   deleteField,
   writeBatch,
+  arrayUnion,
   runTransaction,
   serverTimestamp,
   type QueryDocumentSnapshot,
@@ -190,7 +191,8 @@ const normalizeRoom = (code: string, data: any): CoPlayRoom => ({
   code: code.toUpperCase(),
   v: data?.v,
   hostName: data?.hostName || '',
-  playedResetAt: data?.playedResetAt || {},
+  playedFaqIds: data?.playedFaqIds || {},
+  recentRounds: data?.recentRounds || [],
   players: playersMapToArray(data?.players),
   activeGameQuestion: data?.activeGameQuestion ?? null,
   gameInvitation: data?.gameInvitation ?? null,
@@ -378,11 +380,13 @@ export const appendMessage = async (
     createdAt: message.createdAt || new Date().toISOString(),
   };
   try {
+    // Only the message document is written. Touching the room document here
+    // would push a snapshot of it to every connected client — a read each —
+    // even though nothing about the room actually changed.
     await setDoc(doc(messagesRef(code), payload.id), {
       ...sanitizeForFirestore(payload, false),
       serverTime: serverTimestamp(),
     });
-    await updateRoom(code, {});
   } catch (err) {
     console.warn('[firestore] failed to append message:', err);
   }
@@ -457,40 +461,64 @@ export const subscribeToMessages = (
  * Round history
  * ------------------------------------------------------------------ */
 
-/** How many recent rounds to keep in memory for filtering and counting. */
-export const ROUND_HISTORY_LIMIT = 500;
-
-/** Records a published question so it is not drawn again, and can be counted. */
-export const recordRound = async (code: string, round: RoundRecord) => {
+/**
+ * Records a published question. The round document is the audit log; the id is
+ * also appended to the room's played list so the replay filter costs no extra
+ * reads (the room document is already being listened to).
+ */
+export const recordRound = async (
+  code: string,
+  round: RoundRecord,
+  /** Timestamps already on the room document, so they can be pruned in place. */
+  knownRecentRounds: string[] = [],
+  activityWindowMs = 3 * 60 * 60 * 1000
+) => {
   try {
+    // The round document is the audit log; nothing reads it at runtime.
     await setDoc(doc(roundsRef(code), round.id), {
       ...sanitizeForFirestore(round, false),
       serverTime: serverTimestamp(),
     });
+
+    const cutoff = Date.now() - activityWindowMs;
+    const recentRounds = [
+      ...knownRecentRounds.filter((at) => new Date(at).getTime() >= cutoff),
+      round.createdAt,
+    ];
+
+    // arrayUnion must not pass through sanitizeForFirestore — it would treat
+    // the sentinel as a plain object and destroy it.
+    await setDoc(
+      roomRef(code),
+      {
+        ...(round.faqId
+          ? { playedFaqIds: { [round.category]: arrayUnion(round.faqId) } }
+          : {}),
+        recentRounds,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
   } catch (err) {
     console.warn('[firestore] failed to record round:', err);
   }
 };
 
-export const subscribeToRounds = (
-  code: string,
-  onUpdate: (rounds: RoundRecord[]) => void,
-  max = ROUND_HISTORY_LIMIT
-) => {
-  if (!code) return () => {};
-  return onSnapshot(
-    query(roundsRef(code), orderBy('createdAt', 'desc'), fsLimit(max)),
-    (snap) => onUpdate(snap.docs.map((d) => d.data() as RoundRecord)),
-    (err) => console.warn('[firestore] rounds snapshot error:', err)
-  );
-};
-
 /**
- * Starts a fresh replay cycle for one category. Rounds are kept — only the
- * cut-off moves — so the activity counter and history stay intact.
+ * Starts a fresh replay cycle for one category by emptying its played list.
+ * Round documents are kept, so history and the activity counter are unaffected.
  */
-export const resetPlayedCategory = (code: string, category: string) =>
-  updateRoom(code, { playedResetAt: { [category]: new Date().toISOString() } });
+export const resetPlayedCategory = async (code: string, category: string) => {
+  try {
+    await setDoc(
+      roomRef(code),
+      { playedFaqIds: { [category]: [] }, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn('[firestore] failed to reset played questions:', err);
+  }
+};
 
 /* ------------------------------------------------------------------ *
  * Content collections: faqs / categories
