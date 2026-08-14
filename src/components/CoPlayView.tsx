@@ -630,6 +630,15 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     return byCategory;
   }, [currentRoom?.playedFaqIds]);
 
+  /** Flat set of every played id, for dimming the library picker. */
+  const playedFaqIdSet = useMemo(() => {
+    const all = new Set<string>();
+    for (const ids of playedFaqIdsByCategory.values()) {
+      for (const id of ids) all.add(id);
+    }
+    return all;
+  }, [playedFaqIdsByCategory]);
+
   /**
    * Questions published in the last three hours. The timestamps ride on the
    * room document, which is already being watched, so this costs no reads.
@@ -956,6 +965,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
         handleRandomizeQuestionByCategory={handleRandomizeQuestionByCategory}
         handleSelectPresetFAQ={handleSelectPresetFAQ}
         faqs={faqs}
+        playedFaqIds={playedFaqIdSet}
       />
 
       {/* Waiting Indicator for Target when Initiator is selecting question */}

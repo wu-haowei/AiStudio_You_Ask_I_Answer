@@ -39,6 +39,8 @@ interface CoPlayInviteModalsProps {
   handleRandomizeQuestionByCategory: () => void;
   handleSelectPresetFAQ: (f: FAQItem) => void;
   faqs: FAQItem[];
+  /** Ids already used in this cycle — shown dimmed, but still selectable. */
+  playedFaqIds: Set<string>;
 }
 
 export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
@@ -74,6 +76,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
   handleRandomizeQuestionByCategory,
   handleSelectPresetFAQ,
   faqs,
+  playedFaqIds,
 }) => {
   return (
     <>
@@ -317,20 +320,31 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   )}
 
                   <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-[#7A6C5E] block">從題庫選擇</label>
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-bold text-[#7A6C5E] block">從題庫選擇</label>
+                      <span className="text-[10px] text-[#A69684]">淡色 = 玩過了</span>
+                    </div>
                     <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
                       {faqs
                         .filter((f) => !f.category || f.category === questionCategory)
-                        .map((f) => (
-                          <button
-                            key={f.id}
-                            type="button"
-                            onClick={() => handleSelectPresetFAQ(f)}
-                            className="text-[11px] px-2.5 py-1 rounded-xl bg-white border border-[#D9C5B2] text-[#4A3F35] font-medium hover:border-[#A68B6D] hover:bg-[#E8D8C4]/40 transition-colors text-left truncate max-w-full cursor-pointer"
-                          >
-                            {f.question}
-                          </button>
-                        ))}
+                        .map((f) => {
+                          const isPlayed = playedFaqIds.has(f.id);
+                          return (
+                            <button
+                              key={f.id}
+                              type="button"
+                              onClick={() => handleSelectPresetFAQ(f)}
+                              title={isPlayed ? '這題已經玩過了' : undefined}
+                              className={`text-[11px] px-2.5 py-1 rounded-xl border font-medium transition-colors text-left truncate max-w-full cursor-pointer ${
+                                isPlayed
+                                  ? 'bg-[#F2EDE6] border-[#E4DACE] text-[#A69684] hover:text-[#7A6C5E] hover:border-[#D9C5B2]'
+                                  : 'bg-white border-[#D9C5B2] text-[#4A3F35] hover:border-[#A68B6D] hover:bg-[#E8D8C4]/40'
+                              }`}
+                            >
+                              {f.question}
+                            </button>
+                          );
+                        })}
                     </div>
                   </div>
                 </div>
