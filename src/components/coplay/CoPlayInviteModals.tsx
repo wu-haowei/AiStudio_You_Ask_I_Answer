@@ -41,6 +41,8 @@ interface CoPlayInviteModalsProps {
   faqs: FAQItem[];
   /** Ids already used in this cycle — shown dimmed, but still selectable. */
   playedFaqIds: Set<string>;
+  /** Categories present in the library; the list is not hard-coded. */
+  availableCategories: string[];
 }
 
 export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
@@ -77,6 +79,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
   handleSelectPresetFAQ,
   faqs,
   playedFaqIds,
+  availableCategories,
 }) => {
   return (
     <>
@@ -204,11 +207,11 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                     onChange={(e) => handleCategoryChange(e.target.value)}
                     className="text-xs px-3 py-1.5 rounded-xl bg-white border border-[#D9C5B2] text-[#4A3F35] font-bold cursor-pointer hover:border-[#A68B6D] transition-colors"
                   >
-                    <option value="習性與喜好">習性與喜好</option>
-                    <option value="人生規劃與經歷">人生規劃與經歷</option>
-                    <option value="感情相關">感情相關</option>
-                    <option value="狀況劇">狀況劇</option>
-                    <option value="敏感題">敏感題</option>
+                    {availableCategories.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
                     <option value="CUSTOM">自訂種類</option>
                   </select>
                 </div>
@@ -236,7 +239,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                     <div>
                       <span className="text-[11px] font-bold text-[#7A6C5E] block mb-1">題目</span>
                       <p className="text-xs sm:text-sm font-bold text-[#4A3F35] leading-relaxed bg-[#FAF7F2] p-3 rounded-xl border border-[#E8D8C4]">
-                        {questionText || '點右上角換一題'}
+                        {questionText || '題庫沒有可用題目'}
                       </p>
                     </div>
 

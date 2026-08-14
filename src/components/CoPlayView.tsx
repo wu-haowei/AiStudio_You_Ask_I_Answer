@@ -56,6 +56,9 @@ const TAB_SESSION_ID_KEY = 'milktea_coplay_tab_id';
 /** The single shared Firestore room for this two-player app. */
 const ROOM_CODE = 'MAIN-ROOM';
 
+/** Sentinel value for the "write my own" entry in the category dropdown. */
+const CUSTOM_CATEGORY_KEY = 'CUSTOM';
+
 /** Category label written on questions created with the custom option. */
 const CUSTOM_CATEGORY_LABEL = '自訂';
 
@@ -159,11 +162,13 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   const [isQuestionModalDismissed, setIsQuestionModalDismissed] = useState(false);
   const [isAnswerModalDismissed, setIsAnswerModalDismissed] = useState(false);
   const [questionText, setQuestionText] = useState('');
-  const [questionCategory, setQuestionCategory] = useState('習性與喜好');
-  const [optA, setOptA] = useState('在家休息追劇');
-  const [optB, setOptB] = useState('約朋友出門喝咖啡');
-  const [optC, setOptC] = useState('戶外運動大自然');
-  const [optD, setOptD] = useState('打電競遊戲一整天');
+  const [questionCategory, setQuestionCategory] = useState('');
+  // Left blank on purpose — a question is drawn when the form opens, so
+  // placeholder options can never sit under an empty question.
+  const [optA, setOptA] = useState('');
+  const [optB, setOptB] = useState('');
+  const [optC, setOptC] = useState('');
+  const [optD, setOptD] = useState('');
   const [isEditingPreset, setIsEditingPreset] = useState(false);
 
   /** Ordered picks for the active question — first entry is the top preference. */
@@ -630,6 +635,28 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     return byCategory;
   }, [currentRoom?.playedFaqIds]);
 
+  /**
+   * Categories actually present in the library. The picker used to hard-code a
+   * list, so a question from a category missing from it (for example 「隨機」)
+   * left the dropdown and the question list showing different things.
+   */
+  const availableCategories = useMemo(() => {
+    const seen: string[] = [];
+    for (const f of faqs) {
+      if (f.category && !seen.includes(f.category)) seen.push(f.category);
+    }
+    return seen;
+  }, [faqs]);
+
+  // Keep the selection pointing at a category that exists
+  useEffect(() => {
+    if (availableCategories.length === 0) return;
+    if (questionCategory === CUSTOM_CATEGORY_KEY) return;
+    if (!availableCategories.includes(questionCategory)) {
+      setQuestionCategory(availableCategories[0]);
+    }
+  }, [availableCategories, questionCategory]);
+
   /** Flat set of every played id, for dimming the library picker. */
   const playedFaqIdSet = useMemo(() => {
     const all = new Set<string>();
@@ -686,14 +713,14 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
 
   // Helper to randomize a question given a category
   const randomizeQuestionForCategory = (cat: string) => {
-    const faq = pickUnplayedFaq(cat === 'CUSTOM' ? '' : cat);
+    const faq = pickUnplayedFaq(cat === CUSTOM_CATEGORY_KEY ? '' : cat);
     if (faq) applyFaqToForm(faq);
   };
 
   const handleCategoryChange = (cat: string) => {
     setQuestionCategory(cat);
     setIsEditingPreset(false);
-    if (cat === 'CUSTOM') {
+    if (cat === CUSTOM_CATEGORY_KEY) {
       setQuestionText('');
       applyOptionsToForm([]);
     } else {
@@ -713,7 +740,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
       return;
     }
 
-    const faq = pickUnplayedFaq(questionCategory === 'CUSTOM' ? '' : questionCategory);
+    const faq = pickUnplayedFaq(questionCategory === CUSTOM_CATEGORY_KEY ? '' : questionCategory);
     if (!faq) {
       showToast('題庫沒有題目', undefined, 'warning');
       return;
@@ -732,7 +759,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     }
 
     const finalCategory =
-      questionCategory === 'CUSTOM' ? CUSTOM_CATEGORY_LABEL : questionCategory;
+      questionCategory === CUSTOM_CATEGORY_KEY ? CUSTOM_CATEGORY_LABEL : questionCategory;
     const options = [optA, optB, optC, optD].map((o) => o.trim()).filter(Boolean);
     if (options.length < 2) {
       showToast('選項至少要兩個', undefined, 'warning');
@@ -906,18 +933,35 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     onStatusChange?.({ onlineCount: onlinePlayerCount, isRoundActive });
   }, [onlinePlayerCount, isRoundActive, onStatusChange]);
 
-  // A custom question is one-off — clear last round's text when the form reopens
+  /*
+   * Fill the form each time it opens: a fresh unplayed question for a normal
+   * category, or a blank slate for a custom one (last round's text would
+   * otherwise still be sitting there).
+   */
   const wasQuestionModalOpenRef = useRef(false);
   useEffect(() => {
-    if (showQuestionModal && !wasQuestionModalOpenRef.current && questionCategory === 'CUSTOM') {
-      setQuestionText('');
-      setOptA('');
-      setOptB('');
-      setOptC('');
-      setOptD('');
+    if (!showQuestionModal) {
+      wasQuestionModalOpenRef.current = false;
+      return;
     }
-    wasQuestionModalOpenRef.current = showQuestionModal;
-  }, [showQuestionModal, questionCategory]);
+
+    const justOpened = !wasQuestionModalOpenRef.current;
+    wasQuestionModalOpenRef.current = true;
+
+    if (questionCategory === CUSTOM_CATEGORY_KEY) {
+      if (justOpened) {
+        setQuestionText('');
+        applyOptionsToForm([]);
+        setSourceFaqId(undefined);
+      }
+      return;
+    }
+
+    // Draw on open, and again if the library only finished loading afterwards
+    if (justOpened || !questionText.trim()) {
+      randomizeQuestionForCategory(questionCategory || availableCategories[0] || '');
+    }
+  }, [showQuestionModal, faqs.length]);
 
 
   if (!passcode) {
@@ -966,6 +1010,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
         handleSelectPresetFAQ={handleSelectPresetFAQ}
         faqs={faqs}
         playedFaqIds={playedFaqIdSet}
+        availableCategories={availableCategories}
       />
 
       {/* Waiting Indicator for Target when Initiator is selecting question */}
