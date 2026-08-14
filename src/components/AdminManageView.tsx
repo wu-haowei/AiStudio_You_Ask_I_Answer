@@ -11,10 +11,22 @@ import {
   Download,
   Upload,
   RotateCcw,
+  DatabaseBackup,
+  ArchiveRestore,
+  AlertTriangle,
   X,
   Check,
 } from 'lucide-react';
 import { Category, FAQItem } from '../types';
+import { db } from '../lib/firebase';
+import {
+  backupFileName,
+  createBackup,
+  parseBackupFile,
+  restoreBackup,
+  wipeDatabase,
+  type BackupFile,
+} from '../lib/backup';
 import { clearAllStorageAndSession, CURRENT_APP_VERSION } from '../utils/storage';
 import { AdminJsonImportModal } from './admin/AdminJsonImportModal';
 
@@ -72,6 +84,14 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
+  // Whole-database backup
+  const [isBackingUp, setIsBackingUp] = useState(false);
+
+  // Restore: a file is staged first so it can be confirmed before anything runs
+  const [pendingRestore, setPendingRestore] = useState<BackupFile | null>(null);
+  const [restoreStatus, setRestoreStatus] = useState('');
+  const [isRestoring, setIsRestoring] = useState(false);
+
   const filteredFaqs = faqs.filter((f) => {
     if (selectedCategory !== 'all' && f.category !== selectedCategory) return false;
     if (search.trim()) {
@@ -118,6 +138,78 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
       showToast('刪除失敗', err?.message || '請稍後再試', 'error');
     } finally {
       setIsBulkDeleting(false);
+    }
+  };
+
+  /**
+   * Downloads every collection, including chat history, as one JSON file.
+   * Firestore's managed export needs a paid plan, so the snapshot is assembled
+   * client-side instead.
+   */
+  const handleFullBackup = async () => {
+    if (isBackingUp) return;
+    setIsBackingUp(true);
+
+    try {
+      const backup = await createBackup(db);
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = backupFileName();
+      link.click();
+      URL.revokeObjectURL(url);
+
+      showToast('備份已下載', `共 ${backup.documentCount} 筆文件`, 'success');
+    } catch (err: any) {
+      console.error('Backup failed:', err);
+      showToast('備份失敗', err?.message || '請稍後再試', 'error');
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
+
+  /** Reads and validates a chosen file, then opens the confirmation dialog. */
+  const handleRestoreFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow picking the same file again after cancelling
+    if (!file) return;
+
+    try {
+      const backup = parseBackupFile(await file.text());
+      setPendingRestore(backup);
+    } catch (err: any) {
+      showToast('無法讀取備份檔', err?.message || '檔案格式不正確', 'error');
+    }
+  };
+
+  /** Empties every collection, then writes the backup back. */
+  const handleConfirmRestore = async () => {
+    if (!pendingRestore || isRestoring) return;
+
+    setIsRestoring(true);
+    try {
+      setRestoreStatus('清空資料庫…');
+      const removed = await wipeDatabase(db, (count) => {
+        setRestoreStatus(`清空資料庫… 已刪除 ${count} 筆`);
+      });
+
+      setRestoreStatus('寫回備份資料…');
+      const report = await restoreBackup(db, pendingRestore);
+
+      setPendingRestore(null);
+      showToast(
+        '還原完成',
+        `刪除 ${removed} 筆，寫入 ${report.written} 筆` +
+          (report.failed > 0 ? `，失敗 ${report.failed} 筆` : ''),
+        report.failed > 0 ? 'warning' : 'success'
+      );
+    } catch (err: any) {
+      console.error('Restore failed:', err);
+      showToast('還原失敗', err?.message || '請稍後再試', 'error');
+    } finally {
+      setIsRestoring(false);
+      setRestoreStatus('');
     }
   };
 
@@ -233,11 +325,31 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
           <div className="flex items-center gap-1 border-l border-[#E8DFD3] pl-2">
             <button
               onClick={onExportData}
-              title="匯出題庫"
+              title="匯出題庫 (只含題目與分類)"
               className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors"
             >
               <Download className="w-4 h-4" />
             </button>
+            <button
+              onClick={handleFullBackup}
+              disabled={isBackingUp}
+              title="下載完整備份 (含對話紀錄與出題歷史)"
+              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors disabled:opacity-50"
+            >
+              <DatabaseBackup className={`w-4 h-4 ${isBackingUp ? 'animate-pulse' : ''}`} />
+            </button>
+            <label
+              title="從備份還原 (會先清空整個資料庫)"
+              className="p-2 rounded-xl text-[#7A6C65] hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
+            >
+              <ArchiveRestore className="w-4 h-4" />
+              <input
+                type="file"
+                accept=".json,application/json"
+                onChange={handleRestoreFileChosen}
+                className="hidden"
+              />
+            </label>
             <button
               onClick={() => {
                 if (confirm('確定要將雲端題庫重置為預設題目庫嗎？此動作會覆蓋所有裝置上的題庫內容。')) {
@@ -566,6 +678,73 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         onImportData={onImportData}
         showToast={showToast}
       />
+
+      {/* Restore Confirmation */}
+      {pendingRestore && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-fade-in">
+          <div className="bg-[#FCFAF6] rounded-3xl border border-[#E8DFD3] p-6 max-w-md w-full space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-[#3A2E2B]">確認從備份還原？</h3>
+                <p className="text-xs text-[#7A6C65] mt-1 leading-relaxed">
+                  這會<span className="font-bold text-rose-700">先刪除</span>
+                  目前雲端的所有資料，再寫入備份內容。無法復原。
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-[#F5EFE6] border border-[#E8DFD3] p-3.5 space-y-1 text-xs">
+              <div className="flex justify-between">
+                <span className="text-[#7A6C65]">備份時間</span>
+                <span className="font-semibold text-[#3A2E2B]">
+                  {new Date(pendingRestore.exportedAt).toLocaleString()}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#7A6C65]">文件數量</span>
+                <span className="font-semibold text-[#3A2E2B]">
+                  {pendingRestore.documentCount ?? '—'} 筆
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[#7A6C65]">結構版本</span>
+                <span className="font-semibold text-[#3A2E2B]">
+                  v{pendingRestore.schemaVersion ?? '?'}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-[#7A6C65] leading-relaxed">
+              清空與寫入範圍：題庫、分類、房間狀態、對話紀錄、出題歷史。
+              建議先按左邊的備份鈕保存一份目前的狀態。
+            </p>
+
+            {restoreStatus && (
+              <p className="text-xs font-semibold text-[#8C6D53]">{restoreStatus}</p>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-1">
+              <button
+                onClick={() => setPendingRestore(null)}
+                disabled={isRestoring}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#7A6C65] hover:bg-[#F2EBE1] disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmRestore}
+                disabled={isRestoring}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 shadow-xs disabled:opacity-50"
+              >
+                {isRestoring ? '處理中…' : '清空並還原'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bulk Delete Confirmation */}
       {isBulkDeleteOpen && (

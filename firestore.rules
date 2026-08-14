@@ -59,16 +59,19 @@ service cloud.firestore {
     match /rooms/{roomCode} {
       allow read, write: if allowed();
 
+      /*
+       * Chat history and the round log were append-only, but that made a clean
+       * restore impossible — a backup could never replace what was already
+       * there. Deletion is now allowed so the admin restore can start from an
+       * empty database.
+       */
       match /messages/{messageId} {
-        allow read, create: if allowed();
-        // History is append-only: existing messages cannot be edited or removed.
-        allow update, delete: if false;
+        allow read, write: if allowed();
       }
 
       // Played-question log: drives replay filtering and activity counts.
       match /rounds/{roundId} {
-        allow read, create: if allowed();
-        allow update, delete: if false;
+        allow read, write: if allowed();
       }
     }
 
