@@ -11,3 +11,18 @@ createRoot(document.getElementById('root')!).render(
     </IdentityProvider>
   </StrictMode>,
 );
+
+/*
+ * Register the cache-free service worker. It only exists to make the app
+ * installable on a phone's home screen — every request still goes to the
+ * network, so there is no stale-asset behaviour to reason about.
+ */
+const isProduction = (import.meta as unknown as { env?: { PROD?: boolean } }).env?.PROD;
+
+if ('serviceWorker' in navigator && isProduction) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register(new URL('sw.js', document.baseURI).href)
+      .catch((err) => console.warn('Service worker registration failed:', err));
+  });
+}

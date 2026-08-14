@@ -13,7 +13,15 @@ import {
   Reply,
   X,
 } from 'lucide-react';
-import { CoPlayRoom, FAQItem, MessageReplyRef, RoomMessage, RoomQuestion } from '../types';
+import {
+  CoPlayRoom,
+  DATA_SCHEMA_VERSION,
+  FAQItem,
+  MessageReplyRef,
+  RoomMessage,
+  RoomQuestion,
+  RoundRecord,
+} from '../types';
 import {
   appendMessage,
   ensureRoom,
@@ -23,7 +31,11 @@ import {
   setActiveGameQuestion,
   setGameInvitation,
   prunePlayers,
+  readPicks,
+  recordRound,
+  resetPlayedCategory,
   submitGameAnswer,
+  subscribeToRounds,
   subscribeToMessages,
   subscribeToRoom,
   touchPlayer,
@@ -54,6 +66,10 @@ const REVEAL_AUTHOR = '揭曉結果';
 
 /** Presence heartbeat interval; a player counts as online for 30s after lastActive. */
 const HEARTBEAT_MS = 12000;
+
+/** Window for the "recently played" counter in the dialogue header. */
+const RECENT_ACTIVITY_MS = 3 * 60 * 60 * 1000;
+
 
 /**
  * Invite / decline / cancel notices are no longer recorded — they cluttered the
@@ -113,6 +129,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [myPlayerId, setMyPlayerId] = useState<string>('');
+  /** Recent rounds, newest first — drives replay filtering and the 3h counter. */
+  const [rounds, setRounds] = useState<RoundRecord[]>([]);
 
   // Dialogue & Chat Input State
   const [chatMessageText, setChatMessageText] = useState('');
@@ -144,8 +162,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   const [optD, setOptD] = useState('打電競遊戲一整天');
   const [isEditingPreset, setIsEditingPreset] = useState(false);
 
-  // Option selection & explanation for active game question
-  const [selectedOptIndex, setSelectedOptIndex] = useState<number | null>(null);
+  /** Ordered picks for the active question — first entry is the top preference. */
+  const [selectedOptIndexes, setSelectedOptIndexes] = useState<number[]>([]);
   const [answerExplanation, setAnswerExplanation] = useState('');
   const [isSubmittingOpt, setIsSubmittingOpt] = useState(false);
 
@@ -323,11 +341,11 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
 
     // Question alert
     const activeQ = currentRoom.activeGameQuestion;
-    if (activeQ && activeQ.targetAnswer === undefined && passcode !== activeQ.initiator) {
+    if (activeQ && readPicks(activeQ, 'target').length === 0 && passcode !== activeQ.initiator) {
       if (prevQuestionIdRef.current !== activeQ.id) {
         prevQuestionIdRef.current = activeQ.id;
         setIsAnswerModalDismissed(false);
-        setSelectedOptIndex(null);
+        setSelectedOptIndexes([]);
         setAnswerExplanation('');
         showToast('收到考驗題目', `來自 ${getNameByPasscode(activeQ.initiator)}`, 'info');
       }
@@ -344,7 +362,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   useEffect(() => {
     if (currentRoom?.activeGameQuestion?.id) {
       setIsAnswerModalDismissed(false);
-      setSelectedOptIndex(null);
+      setSelectedOptIndexes([]);
       setAnswerExplanation('');
     }
   }, [currentRoom?.activeGameQuestion?.id]);
@@ -376,6 +394,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
       setIsLoadingHistory(false);
     });
 
+    const unsubscribeRounds = subscribeToRounds(roomCode, setRounds);
+
     // Presence heartbeat so the online indicator stays accurate
     const heartbeat = setInterval(() => {
       if (myPlayerId) touchPlayer(roomCode, myPlayerId);
@@ -385,6 +405,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
       clearInterval(heartbeat);
       unsubscribeRoom();
       unsubscribeMessages();
+      unsubscribeRounds();
     };
   }, [currentRoom?.code, myPlayerId, passcode]);
 
@@ -527,7 +548,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
       if (accept) {
         setIsAnswerModalDismissed(false);
         setIsQuestionModalDismissed(false);
-        setSelectedOptIndex(null);
+        setSelectedOptIndexes([]);
         setAnswerExplanation('');
         showToast('已接受挑戰', `等待 ${partnerDisplayName} 出題`, 'success');
       } else {
@@ -583,19 +604,63 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     setOptD(list[3] || '');
   };
 
+  /** Which library questions have already been played in the current cycle. */
+  const playedFaqIdsByCategory = useMemo(() => {
+    const byCategory = new Map<string, Set<string>>();
+    for (const round of rounds) {
+      if (!round.faqId) continue;
+      const resetAt = currentRoom?.playedResetAt?.[round.category];
+      if (resetAt && round.createdAt < resetAt) continue;
+      if (!byCategory.has(round.category)) byCategory.set(round.category, new Set());
+      byCategory.get(round.category)!.add(round.faqId);
+    }
+    return byCategory;
+  }, [rounds, currentRoom?.playedResetAt]);
+
+  /** Questions played in the last three hours, for the header counter. */
+  const recentRoundCount = useMemo(() => {
+    const cutoff = Date.now() - RECENT_ACTIVITY_MS;
+    return rounds.filter((r) => new Date(r.createdAt).getTime() >= cutoff).length;
+  }, [rounds]);
+
+  /**
+   * Draws a question that has not been played yet. When a category runs out,
+   * the cycle restarts rather than leaving the picker with nothing to offer.
+   */
+  const pickUnplayedFaq = (cat: string): FAQItem | null => {
+    const inCategory = cat ? faqs.filter((f) => f.category === cat) : faqs;
+    const pool = inCategory.length > 0 ? inCategory : faqs;
+    if (pool.length === 0) return null;
+
+    const played = playedFaqIdsByCategory.get(cat) || new Set<string>();
+    const unplayed = pool.filter((f) => !played.has(f.id));
+
+    if (unplayed.length > 0) {
+      return unplayed[Math.floor(Math.random() * unplayed.length)];
+    }
+
+    // Everything in this category has been used — start a new cycle.
+    if (cat && currentRoom) {
+      resetPlayedCategory(currentRoom.code, cat);
+      showToast('題目已全部玩過一輪', `「${cat}」重新開始`, 'info');
+    }
+    return pool[Math.floor(Math.random() * pool.length)];
+  };
+
+  /** Remembers which library question the form currently holds. */
+  const [sourceFaqId, setSourceFaqId] = useState<string | undefined>(undefined);
+
+  const applyFaqToForm = (faq: FAQItem) => {
+    setQuestionText(faq.question);
+    if (faq.category) setQuestionCategory(faq.category);
+    applyOptionsToForm(faq.options);
+    setSourceFaqId(faq.id);
+  };
+
   // Helper to randomize a question given a category
   const randomizeQuestionForCategory = (cat: string) => {
-    let pool = faqs;
-    if (cat && cat !== 'CUSTOM') {
-      const match = faqs.filter((f) => f.category === cat);
-      if (match.length > 0) pool = match;
-    }
-    if (pool.length === 0) return;
-
-    const randomFaq = pool[Math.floor(Math.random() * pool.length)];
-    setQuestionText(randomFaq.question);
-    if (randomFaq.category) setQuestionCategory(randomFaq.category);
-    applyOptionsToForm(randomFaq.options);
+    const faq = pickUnplayedFaq(cat === 'CUSTOM' ? '' : cat);
+    if (faq) applyFaqToForm(faq);
   };
 
   const handleCategoryChange = (cat: string) => {
@@ -610,33 +675,25 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   };
 
   const handleSelectPresetFAQ = (f: FAQItem) => {
-    setQuestionText(f.question);
-    if (f.category) setQuestionCategory(f.category);
-    applyOptionsToForm(f.options);
+    applyFaqToForm(f);
     showToast('已套用題目', f.question, 'info');
   };
 
-  // Randomize Question by Category using imported FAQ data
+  // Draw another unplayed question from the current category
   const handleRandomizeQuestionByCategory = () => {
-    const activeCat = questionCategory === 'CUSTOM' ? '' : questionCategory;
-    let pool = faqs;
-    if (activeCat && activeCat !== 'CUSTOM' && activeCat !== '') {
-      const match = faqs.filter((f) => f.category === activeCat);
-      if (match.length > 0) pool = match;
-    }
-    if (pool.length === 0) pool = faqs;
-    if (pool.length === 0) {
+    if (faqs.length === 0) {
       showToast('題庫沒有題目', undefined, 'warning');
       return;
     }
 
-    const randomFaq = pool[Math.floor(Math.random() * pool.length)];
-    setQuestionText(randomFaq.question);
-    if (randomFaq.category) {
-      setQuestionCategory(randomFaq.category);
+    const faq = pickUnplayedFaq(questionCategory === 'CUSTOM' ? '' : questionCategory);
+    if (!faq) {
+      showToast('題庫沒有題目', undefined, 'warning');
+      return;
     }
-    applyOptionsToForm(randomFaq.options);
-    showToast('已換題', randomFaq.category || '自訂題庫', 'success');
+
+    applyFaqToForm(faq);
+    showToast('已換題', faq.category || '自訂題庫', 'success');
   };
 
   // Submit Chosen Question & Options
@@ -655,19 +712,34 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
       return;
     }
 
+    // A hand-edited question is no longer the library one it started from
+    const usedFaq = faqs.find((f) => f.id === sourceFaqId);
+    const faqId = usedFaq && usedFaq.question === questionText.trim() ? usedFaq.id : undefined;
+
     const gameQuestion: RoomQuestion = {
       id: `gq-${Date.now()}`,
+      v: DATA_SCHEMA_VERSION,
       initiator: passcode,
       target: partnerPasscode,
       question: questionText.trim(),
       category: finalCategory,
       options,
+      ...(faqId ? { sourceFaqId: faqId } : {}),
       createdAt: new Date().toISOString(),
     };
 
     try {
       await setActiveGameQuestion(currentRoom.code, gameQuestion);
       await setGameInvitation(currentRoom.code, null);
+      await recordRound(currentRoom.code, {
+        id: gameQuestion.id,
+        ...(faqId ? { faqId } : {}),
+        question: gameQuestion.question,
+        category: finalCategory,
+        initiator: passcode,
+        target: partnerPasscode,
+        createdAt: gameQuestion.createdAt,
+      });
       await appendMessage(
         currentRoom.code,
         buildMessage({
@@ -681,7 +753,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
 
       setIsQuestionModalOpen(false);
       setQuestionText('');
-      setSelectedOptIndex(null);
+      setSourceFaqId(undefined);
+      setSelectedOptIndexes([]);
       setAnswerExplanation('');
       scrollToBottom();
       showToast('題目已發布', finalCategory, 'success');
@@ -697,21 +770,22 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
    * completes the pair publishes the reveal report.
    */
   const handleSubmitOption = async (q: RoomQuestion) => {
-    if (selectedOptIndex === null) {
+    if (selectedOptIndexes.length === 0) {
       showToast('請先選擇選項', undefined, 'warning');
       return;
     }
     if (!currentRoom) return;
 
-    let selectedText = '';
-    if (selectedOptIndex === 4) {
-      const exp = answerExplanation.trim();
-      selectedText = exp ? `其他: ${exp}` : '其他 (未填說明)';
-    } else {
-      const baseOpt = q.options[selectedOptIndex] || `選項 ${selectedOptIndex + 1}`;
-      const exp = answerExplanation.trim();
-      selectedText = exp ? `${baseOpt} (說明: ${exp})` : baseOpt;
-    }
+    const labelFor = (idx: number) =>
+      idx === 4 ? answerExplanation.trim() || '其他' : q.options[idx] || `選項 ${idx + 1}`;
+
+    // "1. 在家追劇 ／ 2. 出門喝咖啡" — order carries the preference
+    const picksText = selectedOptIndexes
+      .map((idx, rank) => `${rank + 1}. ${labelFor(idx)}`)
+      .join(' ／ ');
+    const note = answerExplanation.trim();
+    const includeNote = note && !selectedOptIndexes.includes(4);
+    const selectedText = includeNote ? `${picksText} (說明: ${note})` : picksText;
 
     const isTargetSubmitting = passcode === q.target;
 
@@ -719,11 +793,11 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
     try {
       const updatedQ = await submitGameAnswer(currentRoom.code, {
         isTarget: isTargetSubmitting,
-        optionIndex: selectedOptIndex,
+        optionIndexes: selectedOptIndexes,
         optionText: selectedText,
       });
 
-      setSelectedOptIndex(null);
+      setSelectedOptIndexes([]);
       setAnswerExplanation('');
 
       await appendMessage(
@@ -741,8 +815,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
       // Only the submission that completed the pair publishes the reveal.
       if (updatedQ?.isRevealed) {
         const resultText = updatedQ.isCorrect
-          ? `猜對了！\n真心話答案是「${updatedQ.targetAnswerText}」。`
-          : `沒猜中。\n真心話是「${updatedQ.targetAnswerText}」\n猜測是「${updatedQ.initiatorGuessText}」。`;
+          ? `猜對了！\n真心話：${updatedQ.targetAnswerText}\n猜測：${updatedQ.initiatorGuessText}`
+          : `沒猜中。\n真心話：${updatedQ.targetAnswerText}\n猜測：${updatedQ.initiatorGuessText}`;
 
         await appendMessage(
           currentRoom.code,
@@ -779,8 +853,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
   const activeQ = currentRoom?.activeGameQuestion;
   const isTarget = activeQ ? passcode !== activeQ.initiator : false;
   const isInitiator = activeQ ? passcode === activeQ.initiator : false;
-  const hasTargetAnswered = activeQ ? activeQ.targetAnswer !== undefined : false;
-  const hasInitiatorGuessed = activeQ ? activeQ.initiatorGuess !== undefined : false;
+  // readPicks also understands rounds stored before multi-select existed
+  const hasTargetAnswered = activeQ ? readPicks(activeQ, 'target').length > 0 : false;
+  const hasInitiatorGuessed = activeQ ? readPicks(activeQ, 'initiator').length > 0 : false;
 
   // A player counts as online while their heartbeat is less than 30s old
   const onlinePlayerCount =
@@ -935,8 +1010,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
         partnerDisplayName={partnerDisplayName}
         isAnswerModalDismissed={isAnswerModalDismissed}
         onDismissModal={() => setIsAnswerModalDismissed(true)}
-        selectedOptIndex={selectedOptIndex}
-        setSelectedOptIndex={setSelectedOptIndex}
+        selectedOptIndexes={selectedOptIndexes}
+        setSelectedOptIndexes={setSelectedOptIndexes}
         answerExplanation={answerExplanation}
         setAnswerExplanation={setAnswerExplanation}
         hasTargetAnswered={hasTargetAnswered}
@@ -957,7 +1032,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({ faqs, showToast, onStatu
             <div>
               <h3 className="text-sm font-bold text-[#4A3F35]">對話</h3>
               <p className="text-[10px] text-[#7A6C5E]">
-                {isLoadingHistory ? '載入中…' : `${visibleMessages.length} 則訊息 ‧ 雲端同步`}
+                {isLoadingHistory
+                  ? '載入中…'
+                  : `${visibleMessages.length} 則訊息 ‧ 3 小時內 ${recentRoundCount} 題`}
               </p>
             </div>
           </div>

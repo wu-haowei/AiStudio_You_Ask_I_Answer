@@ -2,6 +2,9 @@ import React from 'react';
 import { Target, Sparkles, X, Check, CheckCircle2 } from 'lucide-react';
 import { RoomQuestion } from '../../types';
 
+/** A player may rank at most this many options. */
+const MAX_PICKS = 2;
+
 interface CoPlayActiveQuestionModalProps {
   activeQ: RoomQuestion | undefined;
   isTarget: boolean;
@@ -9,8 +12,9 @@ interface CoPlayActiveQuestionModalProps {
   partnerDisplayName: string;
   isAnswerModalDismissed: boolean;
   onDismissModal: () => void;
-  selectedOptIndex: number | null;
-  setSelectedOptIndex: (idx: number | null) => void;
+  /** Ordered picks; index 0 is the first preference. */
+  selectedOptIndexes: number[];
+  setSelectedOptIndexes: React.Dispatch<React.SetStateAction<number[]>>;
   answerExplanation: string;
   setAnswerExplanation: (val: string) => void;
   hasTargetAnswered: boolean;
@@ -27,8 +31,8 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
   partnerDisplayName,
   isAnswerModalDismissed,
   onDismissModal,
-  selectedOptIndex,
-  setSelectedOptIndex,
+  selectedOptIndexes,
+  setSelectedOptIndexes,
   answerExplanation,
   setAnswerExplanation,
   hasTargetAnswered,
@@ -37,6 +41,22 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
   onSubmitOption,
   onCancelActiveQuestion,
 }) => {
+  /**
+   * Tapping an option appends it to the ordered list; tapping it again removes
+   * it. Once two are chosen the oldest is dropped, so a third tap always works.
+   */
+  const togglePick = (idx: number) => {
+    setSelectedOptIndexes((prev) => {
+      if (prev.includes(idx)) return prev.filter((i) => i !== idx);
+      if (prev.length < MAX_PICKS) return [...prev, idx];
+      return [...prev.slice(1), idx];
+    });
+  };
+
+  const rankOf = (idx: number) => selectedOptIndexes.indexOf(idx);
+  const hasPicks = selectedOptIndexes.length > 0;
+  const isOtherPicked = selectedOptIndexes.includes(4);
+
   if (!activeQ || activeQ.isRevealed || (!isTarget && !isInitiator) || isAnswerModalDismissed) {
     return null;
   }
@@ -86,48 +106,39 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
               <div className="space-y-3">
                 <p className="text-xs font-bold text-[#5C4B3A]">
                   選擇你的真實答案
+                  <span className="ml-1 font-medium text-[#7A6C5E]">（最多兩個，依順序）</span>
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   {activeQ.options.map((opt, idx) => (
-                    <button
+                    <OptionButton
                       key={idx}
-                      type="button"
-                      onClick={() => setSelectedOptIndex(idx)}
-                      className={`p-3 text-left text-xs rounded-xl border transition-all cursor-pointer ${
-                        selectedOptIndex === idx
-                          ? 'bg-[#A68B6D] text-white border-[#A68B6D] font-bold shadow-xs'
-                          : 'bg-white text-[#4A3F35] border-[#D9C5B2] hover:border-[#A68B6D]'
-                      }`}
-                    >
-                      {opt}
-                    </button>
+                      label={opt}
+                      rank={rankOf(idx)}
+                      accent="#A68B6D"
+                      onClick={() => togglePick(idx)}
+                    />
                   ))}
 
-                  {/* 5th Option: 其他 */}
-                  <button
-                    type="button"
-                    onClick={() => setSelectedOptIndex(4)}
-                    className={`p-3 text-left text-xs rounded-xl border transition-all cursor-pointer col-span-2 ${
-                      selectedOptIndex === 4
-                        ? 'bg-[#A68B6D] text-white border-[#A68B6D] font-bold shadow-xs'
-                        : 'bg-white text-[#4A3F35] border-[#D9C5B2] hover:border-[#A68B6D]'
-                    }`}
-                  >
-                    ✨ 其他 (自訂選項 / 補充說明)
-                  </button>
+                  <OptionButton
+                    label="其他 (自訂選項)"
+                    rank={rankOf(4)}
+                    accent="#A68B6D"
+                    fullWidth
+                    onClick={() => togglePick(4)}
+                  />
                 </div>
 
                 {/* Explanation Input Field */}
-                {selectedOptIndex !== null && (
+                {hasPicks && (
                   <div className="space-y-1 pt-1 animate-fade-in">
                     <label className="text-[11px] font-bold text-[#5C4B3A] flex items-center gap-1">
-                      <span>{selectedOptIndex === 4 ? '自訂答案' : '補充說明（選填）'}</span>
+                      <span>{isOtherPicked ? '自訂答案' : '補充說明（選填）'}</span>
                     </label>
                     <input
                       type="text"
                       value={answerExplanation}
                       onChange={(e) => setAnswerExplanation(e.target.value)}
-                      placeholder={selectedOptIndex === 4 ? '輸入你的答案' : '可填寫選擇原因'}
+                      placeholder={isOtherPicked ? '輸入你的答案' : '可填寫選擇原因'}
                       className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input font-bold"
                     />
                   </div>
@@ -136,7 +147,7 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                 <button
                   type="button"
                   onClick={() => onSubmitOption(activeQ)}
-                  disabled={isSubmittingOpt || selectedOptIndex === null}
+                  disabled={isSubmittingOpt || !hasPicks}
                   className="w-full mt-2 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
@@ -180,48 +191,39 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
               <div className="space-y-3">
                 <p className="text-xs font-bold text-[#8C6D53]">
                   猜猜 {partnerDisplayName} 會選哪一個？
+                  <span className="ml-1 font-medium text-[#7A6C5E]">（最多兩個，猜中一個就算對）</span>
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   {activeQ.options.map((opt, idx) => (
-                    <button
+                    <OptionButton
                       key={idx}
-                      type="button"
-                      onClick={() => setSelectedOptIndex(idx)}
-                      className={`p-3 text-left text-xs rounded-xl border transition-all cursor-pointer ${
-                        selectedOptIndex === idx
-                          ? 'bg-[#8C6D53] text-white border-[#8C6D53] font-bold shadow-xs'
-                          : 'bg-white text-[#4A3F35] border-[#D9C5B2] hover:border-[#8C6D53]'
-                      }`}
-                    >
-                      {opt}
-                    </button>
+                      label={opt}
+                      rank={rankOf(idx)}
+                      accent="#8C6D53"
+                      onClick={() => togglePick(idx)}
+                    />
                   ))}
 
-                  {/* 5th Option: 其他 */}
-                  <button
-                    type="button"
-                    onClick={() => setSelectedOptIndex(4)}
-                    className={`p-3 text-left text-xs rounded-xl border transition-all cursor-pointer col-span-2 ${
-                      selectedOptIndex === 4
-                        ? 'bg-[#8C6D53] text-white border-[#8C6D53] font-bold shadow-xs'
-                        : 'bg-white text-[#4A3F35] border-[#D9C5B2] hover:border-[#8C6D53]'
-                    }`}
-                  >
-                    ✨ 其他 (自訂選項 / 補充說明)
-                  </button>
+                  <OptionButton
+                    label="其他 (自訂猜測)"
+                    rank={rankOf(4)}
+                    accent="#8C6D53"
+                    fullWidth
+                    onClick={() => togglePick(4)}
+                  />
                 </div>
 
                 {/* Explanation Input Field */}
-                {selectedOptIndex !== null && (
+                {hasPicks && (
                   <div className="space-y-1 pt-1 animate-fade-in">
                     <label className="text-[11px] font-bold text-[#8C6D53] flex items-center gap-1">
-                      <span>{selectedOptIndex === 4 ? '自訂猜測' : '補充說明（選填）'}</span>
+                      <span>{isOtherPicked ? '自訂猜測' : '補充說明（選填）'}</span>
                     </label>
                     <input
                       type="text"
                       value={answerExplanation}
                       onChange={(e) => setAnswerExplanation(e.target.value)}
-                      placeholder={selectedOptIndex === 4 ? '輸入你的猜測' : '可填寫猜測原因'}
+                      placeholder={isOtherPicked ? '輸入你的猜測' : '可填寫猜測原因'}
                       className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input font-bold"
                     />
                   </div>
@@ -230,7 +232,7 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                 <button
                   type="button"
                   onClick={() => onSubmitOption(activeQ)}
-                  disabled={isSubmittingOpt || selectedOptIndex === null}
+                  disabled={isSubmittingOpt || !hasPicks}
                   className="w-full mt-2 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
@@ -268,5 +270,43 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
         )}
       </div>
     </div>
+  );
+};
+
+/** One selectable option. A rank badge shows its position when picked. */
+const OptionButton: React.FC<{
+  label: string;
+  /** Position in the ordered picks, or -1 when unpicked. */
+  rank: number;
+  accent: string;
+  fullWidth?: boolean;
+  onClick: () => void;
+}> = ({ label, rank, accent, fullWidth, onClick }) => {
+  const isPicked = rank >= 0;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={isPicked}
+      style={isPicked ? { backgroundColor: accent, borderColor: accent } : undefined}
+      className={`relative p-3 pr-8 text-left text-xs rounded-xl border transition-all cursor-pointer ${
+        fullWidth ? 'col-span-2' : ''
+      } ${
+        isPicked
+          ? 'text-white font-bold shadow-xs'
+          : 'bg-white text-[#4A3F35] border-[#D9C5B2] hover:border-[#A68B6D]'
+      }`}
+    >
+      {label}
+      {isPicked && (
+        <span
+          className="absolute top-2 right-2 w-5 h-5 rounded-full bg-white/25 text-white text-[10px] font-bold flex items-center justify-center"
+          aria-label={`第 ${rank + 1} 順位`}
+        >
+          {rank + 1}
+        </span>
+      )}
+    </button>
   );
 };

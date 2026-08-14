@@ -21,6 +21,17 @@ export interface Category {
 
 export type ActiveTab = 'co_play' | 'admin_manage';
 
+/**
+ * Firestore document schema version. Bumped whenever stored shapes change;
+ * every field added since v1 is optional, so documents written by older
+ * versions keep working without migration.
+ *
+ *  v2 — chat history moved to a messages subcollection
+ *  v3 — messages carry replyTo snapshots
+ *  v4 — ordered multi-select answers, round history, per-category replay reset
+ */
+export const DATA_SCHEMA_VERSION = 4;
+
 export interface ToastMessage {
   id: string;
   type: 'success' | 'info' | 'warning' | 'error';
@@ -40,6 +51,8 @@ export interface GameInvitation {
 
 export interface RoomQuestion {
   id: string;
+  /** Schema marker; see DATA_SCHEMA_VERSION. */
+  v?: number;
   /** The guesser. */
   initiator: string;
   /** The person whose true answer is being guessed. */
@@ -47,12 +60,41 @@ export interface RoomQuestion {
   question: string;
   category: string;
   options: string[];
-  targetAnswer?: number;    // User B's true choice (0-3)
-  initiatorGuess?: number;  // User A's guess (0-3)
+  /** Library question this was drawn from, when it came from the preset list. */
+  sourceFaqId?: string;
+
+  /**
+   * Picks are ordered by preference, at most two. Rounds created before
+   * multi-select stored a single index in targetAnswer / initiatorGuess; those
+   * are read as a one-element list, so old records still render correctly.
+   */
+  targetAnswers?: number[];
+  initiatorGuesses?: number[];
+
+  /** @deprecated Superseded by targetAnswers; kept so old rounds still read. */
+  targetAnswer?: number;
+  /** @deprecated Superseded by initiatorGuesses. */
+  initiatorGuess?: number;
+
   targetAnswerText?: string;
   initiatorGuessText?: string;
   isRevealed?: boolean;
   isCorrect?: boolean;
+  createdAt: string;
+}
+
+/**
+ * One completed round, stored under rooms/{code}/rounds. Drives both the
+ * "already played" filter and the recent-activity counter.
+ */
+export interface RoundRecord {
+  id: string;
+  /** Absent when the question was typed by hand rather than drawn from the library. */
+  faqId?: string;
+  question: string;
+  category: string;
+  initiator: string;
+  target: string;
   createdAt: string;
 }
 
@@ -100,7 +142,14 @@ export interface RoomMessage {
 
 export interface CoPlayRoom {
   code: string;
+  /** Schema marker for the room document itself. */
+  v?: number;
   hostName: string;
+  /**
+   * Per-category timestamp marking when the "already played" list was last
+   * cleared, so a category whose questions ran out can start a fresh cycle.
+   */
+  playedResetAt?: Record<string, string>;
   /** Stored in Firestore as a map keyed by player id; normalized to an array on read. */
   players: RoomPlayer[];
   activeGameQuestion?: RoomQuestion | null;

@@ -64,6 +64,12 @@ service cloud.firestore {
         // History is append-only: existing messages cannot be edited or removed.
         allow update, delete: if false;
       }
+
+      // Played-question log: drives replay filtering and activity counts.
+      match /rounds/{roundId} {
+        allow read, create: if allowed();
+        allow update, delete: if false;
+      }
     }
 
     // Shared question library managed from the admin view.

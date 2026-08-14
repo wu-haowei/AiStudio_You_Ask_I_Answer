@@ -7,7 +7,7 @@
  * cleared on upgrade.
  */
 
-export const CURRENT_APP_VERSION = '3.1.0';
+export const CURRENT_APP_VERSION = '4.0.0';
 export const APP_VERSION_KEY = 'milktea_qa_app_version';
 
 /** Keys written by pre-Firebase builds; removed on upgrade. */

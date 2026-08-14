@@ -92,3 +92,19 @@ Firestore → 同一個 `config` 集合 → 新增文件：
 聊天紀錄存在 `rooms/{房間代號}/messages`。
 重構過程中房間代號從 `DUAL-1105-1115` 改成 `MAIN-ROOM`，
 舊代號底下的對話仍在 Firestore，只是 App 不會讀取。需要的話可以手動搬移。
+
+---
+
+## 資料結構版本
+
+目前為 **v4**（`DATA_SCHEMA_VERSION`，定義在 `src/types.ts`）。
+
+| 版本 | 變更 |
+| --- | --- |
+| v2 | 對話紀錄移到 `messages` 子集合 |
+| v3 | 訊息帶引用快照 `replyTo` |
+| v4 | 多選作答、`rounds` 出題紀錄、分類重玩重置 |
+
+**相容性**：v2 之後新增的欄位全部是選填。舊題目只存單一 `targetAnswer` / `initiatorGuess`，讀取時會自動視為長度 1 的陣列，所以舊的揭曉紀錄照常顯示，不需要做資料遷移。
+
+新增的子集合 `rooms/{code}/rounds` 記錄每次出題，用途有二：判斷哪些題目已經玩過、統計最近 3 小時的題數。安全規則已一併更新（append-only），**請重新發布 `firestore.rules`**，否則出題會寫入失敗。

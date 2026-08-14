@@ -27,6 +27,8 @@ import {
   RoomMessage,
   RoomPlayer,
   RoomQuestion,
+  RoundRecord,
+  DATA_SCHEMA_VERSION,
 } from '../types';
 
 const env = (import.meta as any).env || {};
@@ -48,6 +50,8 @@ export const auth = getAuth(app);
 export const COLLECTIONS = {
   ROOMS: 'rooms',
   MESSAGES: 'messages',
+  /** Completed rounds; drives replay filtering and recent-activity counts. */
+  ROUNDS: 'rounds',
   FAQS: 'faqs',
   CATEGORIES: 'categories',
   /** Allowlist of anonymous UIDs permitted to use the app. */
@@ -172,6 +176,8 @@ const sanitizeForFirestore = (obj: any, isTopLevel = true): any => {
 const roomRef = (code: string) => doc(db, COLLECTIONS.ROOMS, code.toUpperCase());
 const messagesRef = (code: string) =>
   collection(db, COLLECTIONS.ROOMS, code.toUpperCase(), COLLECTIONS.MESSAGES);
+const roundsRef = (code: string) =>
+  collection(db, COLLECTIONS.ROOMS, code.toUpperCase(), COLLECTIONS.ROUNDS);
 
 /** Firestore stores players as a map (safe concurrent merges); the UI wants an array. */
 const playersMapToArray = (players: any): RoomPlayer[] => {
@@ -182,7 +188,9 @@ const playersMapToArray = (players: any): RoomPlayer[] => {
 
 const normalizeRoom = (code: string, data: any): CoPlayRoom => ({
   code: code.toUpperCase(),
+  v: data?.v,
   hostName: data?.hostName || '',
+  playedResetAt: data?.playedResetAt || {},
   players: playersMapToArray(data?.players),
   activeGameQuestion: data?.activeGameQuestion ?? null,
   gameInvitation: data?.gameInvitation ?? null,
@@ -206,6 +214,7 @@ export const ensureRoom = async (code: string, hostName = ''): Promise<CoPlayRoo
   const now = new Date().toISOString();
   const fresh = {
     code: code.toUpperCase(),
+    v: DATA_SCHEMA_VERSION,
     hostName,
     players: {},
     status: 'playing',
@@ -294,6 +303,18 @@ export const setActiveGameQuestion = (code: string, question: RoomQuestion | nul
   updateRoom(code, { activeGameQuestion: question });
 
 /**
+ * Reads a side's picks, tolerating rounds stored before multi-select existed.
+ */
+export const readPicks = (q: RoomQuestion, side: 'target' | 'initiator'): number[] => {
+  if (side === 'target') {
+    if (q.targetAnswers?.length) return q.targetAnswers;
+    return q.targetAnswer !== undefined ? [q.targetAnswer] : [];
+  }
+  if (q.initiatorGuesses?.length) return q.initiatorGuesses;
+  return q.initiatorGuess !== undefined ? [q.initiatorGuess] : [];
+};
+
+/**
  * Records one player's option for the active question inside a transaction, so
  * two devices submitting at the same time cannot clobber each other. Returns the
  * merged question — `isRevealed` is true only for the call that completed the
@@ -301,7 +322,7 @@ export const setActiveGameQuestion = (code: string, question: RoomQuestion | nul
  */
 export const submitGameAnswer = async (
   code: string,
-  opts: { isTarget: boolean; optionIndex: number; optionText: string }
+  opts: { isTarget: boolean; optionIndexes: number[]; optionText: string }
 ): Promise<RoomQuestion | null> => {
   const ref = roomRef(code);
   return runTransaction(db, async (tx) => {
@@ -311,19 +332,23 @@ export const submitGameAnswer = async (
     const current = snap.data()?.activeGameQuestion as RoomQuestion | undefined;
     if (!current) return null;
 
-    const updated: RoomQuestion = { ...current };
+    const updated: RoomQuestion = { ...current, v: DATA_SCHEMA_VERSION };
     if (opts.isTarget) {
-      updated.targetAnswer = opts.optionIndex;
+      updated.targetAnswers = opts.optionIndexes;
       updated.targetAnswerText = opts.optionText;
     } else {
-      updated.initiatorGuess = opts.optionIndex;
+      updated.initiatorGuesses = opts.optionIndexes;
       updated.initiatorGuessText = opts.optionText;
     }
 
+    const targetPicks = readPicks(updated, 'target');
+    const guessPicks = readPicks(updated, 'initiator');
+
     const wasRevealed = !!current.isRevealed;
-    if (updated.targetAnswer !== undefined && updated.initiatorGuess !== undefined) {
+    if (targetPicks.length > 0 && guessPicks.length > 0) {
       updated.isRevealed = true;
-      updated.isCorrect = updated.targetAnswer === updated.initiatorGuess;
+      // Any overlap counts as a hit, whatever the preference order.
+      updated.isCorrect = guessPicks.some((pick) => targetPicks.includes(pick));
     }
 
     tx.set(
@@ -427,6 +452,45 @@ export const subscribeToMessages = (
     (err) => console.warn('[firestore] messages snapshot error:', err)
   );
 };
+
+/* ------------------------------------------------------------------ *
+ * Round history
+ * ------------------------------------------------------------------ */
+
+/** How many recent rounds to keep in memory for filtering and counting. */
+export const ROUND_HISTORY_LIMIT = 500;
+
+/** Records a published question so it is not drawn again, and can be counted. */
+export const recordRound = async (code: string, round: RoundRecord) => {
+  try {
+    await setDoc(doc(roundsRef(code), round.id), {
+      ...sanitizeForFirestore(round, false),
+      serverTime: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn('[firestore] failed to record round:', err);
+  }
+};
+
+export const subscribeToRounds = (
+  code: string,
+  onUpdate: (rounds: RoundRecord[]) => void,
+  max = ROUND_HISTORY_LIMIT
+) => {
+  if (!code) return () => {};
+  return onSnapshot(
+    query(roundsRef(code), orderBy('createdAt', 'desc'), fsLimit(max)),
+    (snap) => onUpdate(snap.docs.map((d) => d.data() as RoundRecord)),
+    (err) => console.warn('[firestore] rounds snapshot error:', err)
+  );
+};
+
+/**
+ * Starts a fresh replay cycle for one category. Rounds are kept — only the
+ * cut-off moves — so the activity counter and history stay intact.
+ */
+export const resetPlayedCategory = (code: string, category: string) =>
+  updateRoom(code, { playedResetAt: { [category]: new Date().toISOString() } });
 
 /* ------------------------------------------------------------------ *
  * Content collections: faqs / categories
