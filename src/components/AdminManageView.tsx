@@ -11,6 +11,7 @@ import {
   Download,
   Upload,
   RotateCcw,
+  History,
   DatabaseBackup,
   ArchiveRestore,
   AlertTriangle,
@@ -37,8 +38,16 @@ interface AdminManageViewProps {
   onUpdateFAQ: (faq: FAQItem) => void;
   onDeleteFAQ: (id: string) => void;
   onDeleteFAQs: (ids: string[]) => void | Promise<void>;
-  onResetData: () => void;
+  /** Writes the built-in questions into this pair's library. */
+  onImportDefaults: () => void | Promise<void>;
+  /** Copies the old shared MAIN-ROOM content into this pair's room. */
+  onMigrateLegacy: () => void | Promise<void>;
   onImportData: (jsonStr: string) => void | Promise<void>;
+  /** True while this pair has no library of its own and is playing the built-in set. */
+  isUsingDefaults?: boolean;
+  partnerName?: string;
+  /** Signed-in name — backup and restore are limited to this person's rooms. */
+  myName: string;
   isLoading?: boolean;
   onExportData: () => void;
   showToast: (title: string, description?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
@@ -51,8 +60,12 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   onUpdateFAQ,
   onDeleteFAQ,
   onDeleteFAQs,
-  onResetData,
+  onImportDefaults,
+  onMigrateLegacy,
   onImportData,
+  isUsingDefaults = false,
+  partnerName,
+  myName,
   onExportData,
   isLoading = false,
   showToast,
@@ -142,16 +155,17 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   };
 
   /**
-   * Downloads every collection, including chat history, as one JSON file.
-   * Firestore's managed export needs a paid plan, so the snapshot is assembled
-   * client-side instead.
+   * Downloads a JSON snapshot of everything this account can see: the shared
+   * library plus every conversation it takes part in, chat history included.
+   * Firestore's managed export needs a paid plan, so it is assembled
+   * client-side — and the rules only hand over your own rooms anyway.
    */
   const handleFullBackup = async () => {
     if (isBackingUp) return;
     setIsBackingUp(true);
 
     try {
-      const backup = await createBackup(db);
+      const backup = await createBackup(db, undefined, myName);
       const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -190,9 +204,11 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     setIsRestoring(true);
     try {
       setRestoreStatus('清空資料庫…');
-      const removed = await wipeDatabase(db, (count) => {
-        setRestoreStatus(`清空資料庫… 已刪除 ${count} 筆`);
-      });
+      const removed = await wipeDatabase(
+        db,
+        (count) => setRestoreStatus(`清空資料庫… 已刪除 ${count} 筆`),
+        myName
+      );
 
       setRestoreStatus('寫回備份資料…');
       const report = await restoreBackup(db, pendingRestore);
@@ -299,7 +315,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             </span>
           </h1>
           <p className="text-xs sm:text-sm text-[#7A6C65] mt-1">
-            題庫即時同步至雲端，所有裝置共用。
+            {isUsingDefaults
+              ? '目前使用內建預設題庫，新增或匯入後就會變成你們專屬的題庫。'
+              : `這是你與${partnerName || '對方'}專屬的題庫，不會影響其他對話。`}
           </p>
         </div>
 
@@ -352,15 +370,29 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             </label>
             <button
               onClick={() => {
-                if (confirm('確定要將雲端題庫重置為預設題目庫嗎？此動作會覆蓋所有裝置上的題庫內容。')) {
-                  onResetData();
-
+                if (confirm('要把內建預設題目匯入這組的題庫嗎？重複的題目會自動略過。')) {
+                  onImportDefaults();
                 }
               }}
-              title="還原預設題庫"
-              className="p-2 rounded-xl text-rose-600 hover:bg-rose-50 transition-colors"
+              title="匯入內建預設題目"
+              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors"
             >
               <RotateCcw className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => {
+                if (
+                  confirm(
+                    '要把舊版共用房間 (MAIN-ROOM) 的對話與題目搬到這組對話嗎？舊資料會保留不刪除。'
+                  )
+                ) {
+                  onMigrateLegacy();
+                }
+              }}
+              title="搬移舊版共用房間的資料"
+              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors"
+            >
+              <History className="w-4 h-4" />
             </button>
             <button
               onClick={() => {

@@ -40,11 +40,14 @@ import {
   upsertPlayer,
 } from '../lib/firebase';
 import { useIdentity } from '../lib/identity';
-import { CoPlayPasscodeModal } from './coplay/CoPlayPasscodeModal';
 import { CoPlayInviteModals } from './coplay/CoPlayInviteModals';
 import { CoPlayActiveQuestionModal } from './coplay/CoPlayActiveQuestionModal';
 
 interface CoPlayViewProps {
+  /** The pair room this conversation belongs to. */
+  roomId: string;
+  /** The other person in the pair, known before either side connects. */
+  partnerName: string;
   faqs: FAQItem[];
   showToast: (title: string, description?: string, type?: 'success' | 'info' | 'warning' | 'error') => void;
   /** Reports presence and round state up to the header. */
@@ -54,9 +57,6 @@ interface CoPlayViewProps {
 }
 
 const TAB_SESSION_ID_KEY = 'milktea_coplay_tab_id';
-
-/** The single shared Firestore room for this two-player app. */
-const ROOM_CODE = 'MAIN-ROOM';
 
 /** Sentinel value for the "write my own" entry in the category dropdown. */
 const CUSTOM_CATEGORY_KEY = 'CUSTOM';
@@ -111,13 +111,15 @@ const buildMessage = (
 };
 
 export const CoPlayView: React.FC<CoPlayViewProps> = ({
+  roomId,
+  partnerName,
   faqs,
   showToast,
   onStatusChange,
   background,
 }) => {
   // The signed-in name is the player's identity throughout the room.
-  const { name: passcode, signIn } = useIdentity();
+  const { name: passcode } = useIdentity();
   const displayName = passcode;
 
   // Tab-unique session id so two windows on one device are separate players
@@ -130,8 +132,6 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     return id;
   });
 
-  const [isAuthLoading, setIsAuthLoading] = useState(false);
-  const [loginCodeInput, setLoginCodeInput] = useState('');
 
   // Room State (room document + messages subcollection are tracked separately)
   const [currentRoom, setCurrentRoom] = useState<CoPlayRoom | null>(null);
@@ -292,9 +292,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     el.scrollTop += el.scrollHeight - before;
   }, [olderMessages]);
 
-  // Enter (or re-enter) the room whenever the signed-in name changes
+  // Enter (or re-enter) whenever the signed-in name or the open room changes
   useEffect(() => {
-    if (!passcode) {
+    if (!passcode || !roomId) {
       setCurrentRoom(null);
       setMessages([]);
       setOlderMessages([]);
@@ -305,7 +305,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       return;
     }
     enterRoom(passcode);
-  }, [passcode]);
+  }, [passcode, roomId]);
 
   /**
    * Announce new arrivals. The live window is capped, so compare the newest id
@@ -438,16 +438,19 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     const cleanName = rawName.trim();
     if (!cleanName) return;
 
-    setIsAuthLoading(true);
     try {
       // Drop tab sessions that stopped sending heartbeats long ago
-      await prunePlayers(ROOM_CODE);
+      await prunePlayers(roomId);
 
-      const room = await ensureRoom(ROOM_CODE, cleanName);
+      const room = await ensureRoom(
+        roomId,
+        cleanName,
+        [cleanName, partnerName.trim()].filter(Boolean).sort((a, b) => a.localeCompare(b))
+      );
       const thisPlayerId = `p-${tabSessionId}`;
       const existing = room.players.find((p) => p.id === thisPlayerId);
 
-      await upsertPlayer(ROOM_CODE, {
+      await upsertPlayer(roomId, {
         id: thisPlayerId,
         name: cleanName,
         score: existing?.score ?? 0,
@@ -460,40 +463,25 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     } catch (err: any) {
       console.error('Failed to enter room:', err);
       showToast('連線失敗', err?.message || '請檢查網路連線', 'error');
-    } finally {
-      setIsAuthLoading(false);
     }
-  };
-
-  /** Entry screen submit — any non-empty name is accepted. */
-  const handleLogin = (rawName: string) => {
-    const clean = rawName.trim();
-    if (!clean) {
-      showToast('請輸入姓名', undefined, 'warning');
-      return;
-    }
-    signIn(clean);
   };
 
   // Names are the identity, so no lookup table is needed
   const getNameByPasscode = (code: string) => code || '';
 
-  /**
-   * The opponent is the other player in the room. Prefer someone whose heartbeat
-   * is still live; otherwise fall back to the most recently seen player so an
-   * in-progress round survives a brief disconnect.
+  /*
+   * The opponent is fixed by the pairing, so it comes from the prop rather than
+   * from whoever happens to be in the players list. Two windows of my own
+   * account are two player rows with my name on them, and picking "the other
+   * row" used to make me my own opponent.
    */
-  const otherPlayers = (currentRoom?.players || [])
-    .filter((p) => p.id !== myPlayerId && p.name)
-    .sort((a, b) => (b.lastActive || '').localeCompare(a.lastActive || ''));
-
-  const partnerPlayer =
-    otherPlayers.find(
-      (p) => p.lastActive && Date.now() - new Date(p.lastActive).getTime() < ONLINE_WINDOW_MS
-    ) || otherPlayers[0];
-
-  const partnerPasscode = partnerPlayer?.name || '';
+  const partnerPasscode = partnerName.trim();
   const partnerDisplayName = partnerPasscode || '對方';
+
+  const partnerPlayer = (currentRoom?.players || [])
+    .filter((p) => p.name === partnerPasscode)
+    .sort((a, b) => (b.lastActive || '').localeCompare(a.lastActive || ''))[0];
+
   const hasPartner = !!partnerPasscode;
 
   // Send Chat Message
@@ -923,11 +911,21 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   const hasTargetAnswered = activeQ ? readPicks(activeQ, 'target').length > 0 : false;
   const hasInitiatorGuessed = activeQ ? readPicks(activeQ, 'initiator').length > 0 : false;
 
-  // A player counts as online while their heartbeat is less than 30s old
-  const onlinePlayerCount =
-    currentRoom?.players.filter(
-      (p) => p.lastActive && Date.now() - new Date(p.lastActive).getTime() < ONLINE_WINDOW_MS
-    ).length || 0;
+  /*
+   * People online, not tabs online. Each window registers its own player row,
+   * so counting rows made a second window of the same account look like an
+   * extra person; the names are de-duplicated instead.
+   */
+  const onlinePlayerCount = new Set(
+    (currentRoom?.players || [])
+      .filter(
+        (p) =>
+          p.name &&
+          p.lastActive &&
+          Date.now() - new Date(p.lastActive).getTime() < ONLINE_WINDOW_MS
+      )
+      .map((p) => p.name)
+  ).size;
 
   const isRoundActive = !!activeQ || !!inviteState;
 
@@ -971,16 +969,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   }, [showQuestionModal, faqs.length]);
 
 
-  if (!passcode) {
-    return (
-      <CoPlayPasscodeModal
-        loginCodeInput={loginCodeInput}
-        setLoginCodeInput={setLoginCodeInput}
-        isAuthLoading={isAuthLoading}
-        onLogin={handleLogin}
-      />
-    );
-  }
+  // Sign-in and room selection happen before this view is mounted
+  if (!passcode || !roomId) return null;
 
   return (
     <div className="flex-1 min-h-0 flex flex-col h-full animate-fade-in overflow-hidden">

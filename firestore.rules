@@ -4,17 +4,23 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     /*
-     * Access switch.
+     * There is no backend, so these rules are the only place anything can be
+     * enforced. Two ideas do all the work:
      *
-     * config/access.requireInvite is the single source of truth for whether the
-     * invite gate is on. The app reads the same document, so flipping this one
-     * boolean in the Firebase console turns the gate on or off for both the UI
-     * and these rules — no redeploy needed.
+     *   1. A password is proven by writing a hash into sessions/{uid}. The rule
+     *      compares it against secrets/{key}, which no client may read, so a
+     *      wrong password is refused by Firestore rather than by app code that
+     *      devtools could step over.
      *
-     * If the document is missing, the gate is OFF and the app is open. That is
-     * the deliberate default so the rules can be published before the gate is
-     * ever configured.
+     *   2. Everything else asks "which name does this uid belong to?" by
+     *      reading that session document. A pair's room, chat history and
+     *      question library are readable only by the two names in it.
      */
+
+    /* ---------------------------------------------------------------- *
+     * Invite gate — controls who may create an account
+     * ---------------------------------------------------------------- */
+
     function inviteRequired() {
       return exists(/databases/$(database)/documents/config/access)
         && get(/databases/$(database)/documents/config/access).data.requireInvite == true;
@@ -25,20 +31,33 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/members/$(request.auth.uid));
     }
 
-    function allowed() {
-      return !inviteRequired() || isMember();
+    /** With the gate off anyone may register; with it on, only allowlisted devices. */
+    function canRegister() {
+      return request.auth != null && (!inviteRequired() || isMember());
     }
 
     function inviteCode() {
       return get(/databases/$(database)/documents/config/invite).data.code;
     }
 
-    /*
-     * Allowlist. A device joins by writing its own document with the shared
-     * invite code; the rule compares it against config/invite, which the client
-     * can never read. Entries cannot be edited or removed from the app —
-     * manage them in the Firebase console.
-     */
+    /* ---------------------------------------------------------------- *
+     * Session helpers
+     * ---------------------------------------------------------------- */
+
+    function hasSession() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/sessions/$(request.auth.uid));
+    }
+
+    /** The signed-in display name. Only call this when hasSession() is true. */
+    function me() {
+      return get(/databases/$(database)/documents/sessions/$(request.auth.uid)).data.name;
+    }
+
+    /* ---------------------------------------------------------------- *
+     * Accounts
+     * ---------------------------------------------------------------- */
+
     match /members/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow create: if request.auth != null
@@ -55,38 +74,153 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Rooms and their chat history.
-    match /rooms/{roomCode} {
-      allow read, write: if allowed();
+    /*
+     * Public account record. Readable so the login screen can say "this name is
+     * new, use the default password", and so the rules below can confirm that a
+     * name and its document key belong together.
+     */
+    match /users/{name} {
+      allow read: if true;
+      // The id and the stored name must agree, or a session could be bound to
+      // one person's name using another person's secret
+      allow create: if canRegister() && request.resource.data.name == name;
+      // Only the owner may touch it afterwards, and never rename it
+      allow update: if hasSession()
+        && me() == name
+        && request.resource.data.name == name;
+      allow delete: if false;
+    }
 
+    /*
+     * Password hashes. Never readable by anyone — the whole scheme depends on
+     * that, since a readable hash is a hash an attacker can replay.
+     */
+    match /secrets/{name} {
+      allow read: if false;
+      // Claiming a name is a one-off; `create` only ever applies to a document
+      // that does not exist yet, so a password cannot be overwritten this way
+      allow create: if canRegister();
+      allow update: if hasSession() && me() == name;
+      allow delete: if false;
+    }
+
+    /*
+     * The proof of identity. Writing this document IS the password check: the
+     * submitted hash must match the stored secret, and the name must match the
+     * one recorded under that key.
+     */
+    match /sessions/{uid} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.name is string
+        && get(/databases/$(database)/documents/secrets/$(request.resource.data.name)).data.passwordHash
+             == request.resource.data.passwordHash;
+    }
+
+    /* ---------------------------------------------------------------- *
+     * Finding someone to talk to
+     * ---------------------------------------------------------------- */
+
+    // Who is online. Everyone signed in may look; you may only publish yourself.
+    match /presence/{key} {
+      allow read: if hasSession();
+      allow create, update: if hasSession() && request.resource.data.name == me();
+      allow delete: if hasSession() && resource.data.name == me();
+    }
+
+    // Invitations are visible to the two people named in them and no one else.
+    match /chatInvites/{inviteId} {
+      allow read, delete: if hasSession()
+        && (resource.data.from == me() || resource.data.to == me());
+      allow create: if hasSession() && request.resource.data.from == me();
+      // Either side may answer; neither may rewrite who it is from or to
+      allow update: if hasSession()
+        && (resource.data.from == me() || resource.data.to == me())
+        && request.resource.data.from == resource.data.from
+        && request.resource.data.to == resource.data.to;
+    }
+
+    /* ---------------------------------------------------------------- *
+     * Pair rooms
+     * ---------------------------------------------------------------- */
+
+    /*
+     * MAIN-ROOM predates pairing and has no participant list. It stays open to
+     * anyone signed in so the one-off migration button can copy it across;
+     * remove this exception once everyone has moved their history over.
+     */
+    function isLegacyRoom(roomId) {
+      return roomId == 'MAIN-ROOM';
+    }
+
+    function inRoom(roomId) {
+      return isLegacyRoom(roomId)
+        || me() in get(/databases/$(database)/documents/rooms/$(roomId)).data.participants;
+    }
+
+    match /rooms/{roomId} {
       /*
-       * Chat history and the round log were append-only, but that made a clean
-       * restore impossible — a backup could never replace what was already
-       * there. Deletion is now allowed so the admin restore can start from an
-       * empty database.
+       * `resource == null` covers a room that does not exist yet: the app looks
+       * before it creates, and a denied lookup would surface as an error rather
+       * than as "not there".
        */
+      allow read: if hasSession()
+        && (resource == null
+            || isLegacyRoom(roomId)
+            || !('participants' in resource.data)
+            || me() in resource.data.participants);
+
+      // A room may only be created with yourself in it
+      allow create: if hasSession()
+        && (isLegacyRoom(roomId) || me() in request.resource.data.participants);
+
+      // The participant list is fixed once the pair exists
+      allow update: if hasSession()
+        && (isLegacyRoom(roomId) || me() in resource.data.participants)
+        && (isLegacyRoom(roomId)
+            || !('participants' in resource.data)
+            || request.resource.data.participants == resource.data.participants);
+
+      // Deletion stays available so the admin restore can start from a clean slate
+      allow delete: if hasSession() && (isLegacyRoom(roomId) || me() in resource.data.participants);
+
+      // Chat history
       match /messages/{messageId} {
-        allow read, write: if allowed();
+        allow read, write: if hasSession() && inRoom(roomId);
       }
 
-      // Played-question log: drives replay filtering and activity counts.
+      // Played-question log: drives replay filtering and activity counts
       match /rounds/{roundId} {
-        allow read, write: if allowed();
+        allow read, write: if hasSession() && inRoom(roomId);
+      }
+
+      // This pair's own question library
+      match /faqs/{faqId} {
+        allow read, write: if hasSession() && inRoom(roomId);
       }
     }
+
+    /* ---------------------------------------------------------------- *
+     * Everything else
+     * ---------------------------------------------------------------- */
 
     // Per-person display preferences, keyed by the name used to sign in.
     match /userPrefs/{name} {
-      allow read, write: if allowed();
+      allow read: if hasSession();
+      allow write: if hasSession() && me() == name;
     }
 
-    // Shared question library managed from the admin view.
+    /*
+     * The old shared library and its categories. Questions now live under each
+     * room; these remain readable so the migration button can copy them.
+     */
     match /faqs/{faqId} {
-      allow read, write: if allowed();
+      allow read, write: if hasSession();
     }
 
     match /categories/{categoryId} {
-      allow read, write: if allowed();
+      allow read, write: if hasSession();
     }
 
     // Anything not listed above is denied.

@@ -33,7 +33,12 @@ export const MAX_BACKGROUND_BYTES = 600_000;
   * Names are free text, but a Firestore document id cannot contain a slash and
   * must not be "." or "..", so the name is percent-encoded before use.
   */
-const prefsRef = (name: string) => doc(db, PREFS_COLLECTION, encodeURIComponent(name));
+/*
+ * The name is the document id verbatim — security rules compare it against the
+ * signed-in name and cannot url-encode, so encoding here would lock everyone
+ * out of their own preferences.
+ */
+const prefsRef = (name: string) => doc(db, PREFS_COLLECTION, name.trim());
 
 export const subscribeToPreferences = (
   name: string,

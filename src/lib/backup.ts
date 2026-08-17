@@ -2,12 +2,15 @@ import {
   collection,
   doc,
   getDocs,
+  query,
   setDoc,
+  where,
   writeBatch,
   Timestamp,
   type CollectionReference,
   type DocumentReference,
   type Firestore,
+  type Query,
 } from 'firebase/firestore';
 import { DATA_SCHEMA_VERSION } from '../types';
 
@@ -42,10 +45,22 @@ export interface BackupFile {
  * added later needs a line here to be included in backups.
  */
 const KNOWN_SUBCOLLECTIONS: Record<string, string[]> = {
-  rooms: ['messages', 'rounds'],
+  // `faqs` here is the pair's own question library, stored under its room
+  rooms: ['messages', 'rounds', 'faqs'],
 };
 
 const ROOT_COLLECTIONS = ['faqs', 'categories', 'rooms', 'userPrefs'];
+
+/**
+ * Rooms belong to a pair, and the rules only let you read the ones you are in.
+ * Listing the whole collection would therefore be rejected, so when a name is
+ * given the rooms are fetched with a participant filter instead — the backup
+ * covers your own conversations, which is all anyone is allowed to see.
+ */
+const roomsFor = (db: Firestore, scopeName?: string) =>
+  scopeName
+    ? query(collection(db, 'rooms'), where('participants', 'array-contains', scopeName.trim()))
+    : collection(db, 'rooms');
 
 /** Timestamps must survive the JSON round trip; store them in a tagged shape. */
 const encodeValue = (value: unknown): unknown => {
@@ -62,7 +77,7 @@ const encodeValue = (value: unknown): unknown => {
 };
 
 const dumpCollection = async (
-  ref: CollectionReference,
+  ref: CollectionReference | Query,
   subcollectionNames: string[],
   onProgress?: (count: number) => void
 ): Promise<{ collection: BackupCollection; count: number }> => {
@@ -100,14 +115,15 @@ const dumpCollection = async (
 /** Reads everything and returns a self-contained snapshot object. */
 export const createBackup = async (
   db: Firestore,
-  onProgress?: (count: number) => void
+  onProgress?: (count: number) => void,
+  scopeName?: string
 ): Promise<BackupFile> => {
   const collections: Record<string, BackupCollection> = {};
   let documentCount = 0;
 
   for (const name of ROOT_COLLECTIONS) {
     const result = await dumpCollection(
-      collection(db, name),
+      name === 'rooms' ? roomsFor(db, scopeName) : collection(db, name),
       KNOWN_SUBCOLLECTIONS[name] || [],
       onProgress
     );
@@ -157,12 +173,13 @@ const deleteInBatches = async (
  */
 export const wipeDatabase = async (
   db: Firestore,
-  onProgress?: (removed: number) => void
+  onProgress?: (removed: number) => void,
+  scopeName?: string
 ): Promise<number> => {
   let removed = 0;
 
   for (const name of ROOT_COLLECTIONS) {
-    const snap = await getDocs(collection(db, name));
+    const snap = await getDocs(name === 'rooms' ? roomsFor(db, scopeName) : collection(db, name));
 
     for (const document of snap.docs) {
       for (const sub of KNOWN_SUBCOLLECTIONS[name] || []) {

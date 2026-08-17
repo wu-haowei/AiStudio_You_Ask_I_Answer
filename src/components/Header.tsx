@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Settings, Users, Coffee, ChevronDown, Edit3, LogOut, Check, Image } from 'lucide-react';
+import { Settings, Users, Coffee, ChevronDown, LogOut, Image, ArrowLeft } from 'lucide-react';
 import { ActiveTab } from '../types';
 import { useIdentity } from '../lib/identity';
 
@@ -9,8 +9,12 @@ interface HeaderProps {
   /** Players seen in the room within the presence window. */
   onlineCount: number;
   onOpenBackgroundSettings: () => void;
-  /** Renaming mid-round would orphan the active question, so it is blocked. */
-  isRoundActive: boolean;
+  /** Writes the built-in questions into this pair's library. */
+  onImportDefaults: () => Promise<void> | void;
+  onSignOut: () => void;
+  /** Present only while a conversation is open. */
+  partnerName?: string;
+  onLeaveRoom?: () => void;
   showToast: (
     title: string,
     description?: string,
@@ -22,15 +26,18 @@ export const Header: React.FC<HeaderProps> = ({
   activeTab,
   setActiveTab,
   onlineCount,
-  isRoundActive,
   onOpenBackgroundSettings,
+  onImportDefaults,
+  onSignOut,
+  partnerName,
+  onLeaveRoom,
   showToast,
 }) => {
-  const { name, isSignedIn, signIn, signOut } = useIdentity();
+  const { name, isSignedIn } = useIdentity();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [nameInput, setNameInput] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
+  /** Counts taps on the logo so a double tap can trigger the import. */
+  const logoTapRef = useRef(0);
 
   // Close the menu when clicking anywhere else
   useEffect(() => {
@@ -38,28 +45,36 @@ export const Header: React.FC<HeaderProps> = ({
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setIsMenuOpen(false);
-        setIsEditingName(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isMenuOpen]);
 
-  const handleSaveName = (e: React.FormEvent) => {
-    e.preventDefault();
-    const clean = nameInput.trim();
-    if (!clean) {
-      showToast('請輸入名稱', undefined, 'warning');
+  /**
+   * Double-tapping the logo loads the built-in questions into this pair's
+   * library — a deliberate shortcut rather than a visible button, since it is
+   * only needed once per conversation.
+   */
+  const handleLogoTap = () => {
+    logoTapRef.current += 1;
+    if (logoTapRef.current === 1) {
+      window.setTimeout(() => {
+        if (logoTapRef.current === 1) setActiveTab('co_play');
+        logoTapRef.current = 0;
+      }, 300);
       return;
     }
-    if (isRoundActive) {
-      showToast('考驗進行中', '結束這一題後才能改名', 'warning');
+
+    logoTapRef.current = 0;
+    if (!partnerName) {
+      showToast('請先選擇一個對話', '題庫是每組對話各自獨立的', 'warning');
       return;
     }
-    signIn(clean);
-    setIsEditingName(false);
-    setIsMenuOpen(false);
-    showToast('名稱已更新', clean, 'success');
+    if (!confirm('要把預設題目匯入這組的題庫嗎？')) return;
+    Promise.resolve(onImportDefaults()).catch((err) =>
+      showToast('匯入失敗', err?.message || '請稍後再試', 'error')
+    );
   };
 
   const tabClass = (isActive: boolean) =>
@@ -74,22 +89,37 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between gap-2 h-14">
           {/* Brand */}
-          <button
-            type="button"
-            onClick={() => setActiveTab('co_play')}
-            className="flex items-center gap-2 shrink-0 cursor-pointer"
-          >
-            <div className="w-9 h-9 rounded-2xl bg-[#A68B6D] flex items-center justify-center text-white">
-              <Coffee className="w-5 h-5" />
-            </div>
-            <span className="text-base sm:text-lg font-bold text-[#4A3F35] tracking-tight">
-              你問我答
-            </span>
-          </button>
+          <div className="flex items-center gap-2 min-w-0">
+            {onLeaveRoom && (
+              <button
+                type="button"
+                onClick={onLeaveRoom}
+                aria-label="回到對話列表"
+                className="p-2 -ml-1 rounded-xl text-[#7A6C5E] hover:text-[#4A3F35] hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer shrink-0"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleLogoTap}
+              title="連點兩下可匯入預設題目"
+              className="flex items-center gap-2 shrink-0 cursor-pointer select-none"
+            >
+              <div className="w-9 h-9 rounded-2xl bg-[#A68B6D] flex items-center justify-center text-white">
+                <Coffee className="w-5 h-5" />
+              </div>
+              <span className="text-base sm:text-lg font-bold text-[#4A3F35] tracking-tight truncate">
+                {partnerName || '你問我答'}
+              </span>
+            </button>
+          </div>
 
           {isSignedIn && (
             <div className="flex items-center gap-2 min-w-0">
-              {/* Tabs */}
+              {/* Tabs — only meaningful once a conversation is open */}
+              {partnerName && (
               <nav className="flex items-center gap-1 bg-[#E8D8C4]/60 p-1 rounded-2xl border border-[#D9C5B2]">
                 <button
                   onClick={() => setActiveTab('co_play')}
@@ -106,6 +136,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <span className="hidden sm:inline">後台</span>
                 </button>
               </nav>
+              )}
 
               {/* Player menu */}
               <div className="relative shrink-0" ref={menuRef}>
@@ -132,72 +163,30 @@ export const Header: React.FC<HeaderProps> = ({
                       </div>
                     </div>
 
-                    {isEditingName ? (
-                      <form onSubmit={handleSaveName} className="p-3 space-y-2">
-                        <input
-                          type="text"
-                          value={nameInput}
-                          onChange={(e) => setNameInput(e.target.value)}
-                          placeholder="輸入新名稱"
-                          maxLength={20}
-                          autoFocus
-                          className="w-full px-3 py-2 text-xs rounded-xl border border-[#D9C5B2] bg-white text-[#4A3F35] font-semibold focus:outline-none focus:ring-2 focus:ring-[#A68B6D]"
-                        />
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="submit"
-                            className="flex-1 py-2 rounded-xl bg-[#A68B6D] hover:bg-[#8E7256] text-white text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1"
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                            儲存
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setIsEditingName(false)}
-                            className="px-3 py-2 rounded-xl bg-[#F2EBE1] text-[#7A6C5E] text-xs font-bold cursor-pointer"
-                          >
-                            取消
-                          </button>
-                        </div>
-                      </form>
-                    ) : (
-                      <div className="py-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setNameInput(name);
-                            setIsEditingName(true);
-                          }}
-                          className="w-full px-4 py-2.5 text-left text-xs font-semibold text-[#4A3F35] hover:bg-[#F5EFE6] transition-colors flex items-center gap-2.5 cursor-pointer"
-                        >
-                          <Edit3 className="w-4 h-4 text-[#A68B6D]" />
-                          改名
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsMenuOpen(false);
-                            onOpenBackgroundSettings();
-                          }}
-                          className="w-full px-4 py-2.5 text-left text-xs font-semibold text-[#4A3F35] hover:bg-[#F5EFE6] transition-colors flex items-center gap-2.5 cursor-pointer"
-                        >
-                          <Image className="w-4 h-4 text-[#A68B6D]" />
-                          聊天背景
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsMenuOpen(false);
-                            signOut();
-                            setActiveTab('co_play');
-                          }}
-                          className="w-full px-4 py-2.5 text-left text-xs font-semibold text-[#4A3F35] hover:bg-[#F5EFE6] transition-colors flex items-center gap-2.5 cursor-pointer"
-                        >
-                          <LogOut className="w-4 h-4 text-[#A68B6D]" />
-                          切換帳號
-                        </button>
-                      </div>
-                    )}
+                    <div className="py-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          onOpenBackgroundSettings();
+                        }}
+                        className="w-full px-4 py-2.5 text-left text-xs font-semibold text-[#4A3F35] hover:bg-[#F5EFE6] transition-colors flex items-center gap-2.5 cursor-pointer"
+                      >
+                        <Image className="w-4 h-4 text-[#A68B6D]" />
+                        聊天背景
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          onSignOut();
+                        }}
+                        className="w-full px-4 py-2.5 text-left text-xs font-semibold text-[#4A3F35] hover:bg-[#F5EFE6] transition-colors flex items-center gap-2.5 cursor-pointer"
+                      >
+                        <LogOut className="w-4 h-4 text-[#A68B6D]" />
+                        登出
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

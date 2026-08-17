@@ -53,6 +53,7 @@ export const COLLECTIONS = {
   MESSAGES: 'messages',
   /** Completed rounds; drives replay filtering and recent-activity counts. */
   ROUNDS: 'rounds',
+  /** Per-pair question library, stored under each room. */
   FAQS: 'faqs',
   CATEGORIES: 'categories',
   /** Allowlist of anonymous UIDs permitted to use the app. */
@@ -174,11 +175,16 @@ const sanitizeForFirestore = (obj: any, isTopLevel = true): any => {
   return obj;
 };
 
-const roomRef = (code: string) => doc(db, COLLECTIONS.ROOMS, code.toUpperCase());
+/*
+ * Room ids are generated from participant names and are case-sensitive, so
+ * they must be used verbatim. An earlier version upper-cased them, which was
+ * harmless for the single hard-coded room but would silently point a pair at a
+ * room that does not exist.
+ */
+const roomRef = (code: string) => doc(db, COLLECTIONS.ROOMS, code);
 const messagesRef = (code: string) =>
-  collection(db, COLLECTIONS.ROOMS, code.toUpperCase(), COLLECTIONS.MESSAGES);
-const roundsRef = (code: string) =>
-  collection(db, COLLECTIONS.ROOMS, code.toUpperCase(), COLLECTIONS.ROUNDS);
+  collection(db, COLLECTIONS.ROOMS, code, COLLECTIONS.MESSAGES);
+const roundsRef = (code: string) => collection(db, COLLECTIONS.ROOMS, code, COLLECTIONS.ROUNDS);
 
 /** Firestore stores players as a map (safe concurrent merges); the UI wants an array. */
 const playersMapToArray = (players: any): RoomPlayer[] => {
@@ -188,7 +194,7 @@ const playersMapToArray = (players: any): RoomPlayer[] => {
 };
 
 const normalizeRoom = (code: string, data: any): CoPlayRoom => ({
-  code: code.toUpperCase(),
+  code,
   v: data?.v,
   hostName: data?.hostName || '',
   playedFaqIds: data?.playedFaqIds || {},
@@ -206,7 +212,15 @@ const normalizeRoom = (code: string, data: any): CoPlayRoom => ({
  * ------------------------------------------------------------------ */
 
 /** Creates the room document if it does not exist yet. Safe to call on every entry. */
-export const ensureRoom = async (code: string, hostName = ''): Promise<CoPlayRoom> => {
+export const ensureRoom = async (
+  code: string,
+  hostName = '',
+  /**
+   * Both names in the pair. Security rules read this list to decide who may see
+   * the conversation, so a room created without it would be unreachable.
+   */
+  participants: string[] = []
+): Promise<CoPlayRoom> => {
   const ref = roomRef(code);
   const snap = await getDoc(ref);
   if (snap.exists()) {
@@ -215,9 +229,10 @@ export const ensureRoom = async (code: string, hostName = ''): Promise<CoPlayRoo
 
   const now = new Date().toISOString();
   const fresh = {
-    code: code.toUpperCase(),
+    code,
     v: DATA_SCHEMA_VERSION,
     hostName,
+    participants,
     players: {},
     status: 'playing',
     createdAt: now,
@@ -455,6 +470,77 @@ export const subscribeToMessages = (
       }),
     (err) => console.warn('[firestore] messages snapshot error:', err)
   );
+};
+
+/* ------------------------------------------------------------------ *
+ * Per-room question library
+ * ------------------------------------------------------------------ */
+
+const roomFaqsRef = (code: string) => collection(db, COLLECTIONS.ROOMS, code, COLLECTIONS.FAQS);
+
+/**
+ * Watches a pair's own questions.
+ *
+ * An empty library is not an error: the caller falls back to the built-in
+ * defaults so a new pair has something to play with immediately, while still
+ * being able to tell "never imported" apart from "imported then emptied".
+ */
+export const subscribeToRoomFaqs = (code: string, onUpdate: (items: FAQItem[]) => void) => {
+  if (!code) return () => {};
+  return onSnapshot(
+    roomFaqsRef(code),
+    (snap) => onUpdate(snap.docs.map((d) => ({ ...(d.data() as FAQItem), id: d.id }))),
+    (err) => console.warn('[firestore] room faqs snapshot error:', err)
+  );
+};
+
+export const saveRoomFaq = async (code: string, item: FAQItem) => {
+  try {
+    await setDoc(doc(roomFaqsRef(code), item.id), sanitizeForFirestore(item, false), {
+      merge: true,
+    });
+  } catch (err) {
+    console.warn('[firestore] failed to save room faq:', err);
+  }
+};
+
+export const deleteRoomFaq = async (code: string, id: string) => {
+  try {
+    await deleteDoc(doc(roomFaqsRef(code), id));
+  } catch (err) {
+    console.warn('[firestore] failed to delete room faq:', err);
+  }
+};
+
+/** Batched upsert — Firestore caps a batch at 500 writes. */
+export const saveRoomFaqs = async (code: string, items: FAQItem[]) => {
+  try {
+    for (let i = 0; i < items.length; i += 400) {
+      const batch = writeBatch(db);
+      for (const item of items.slice(i, i + 400)) {
+        batch.set(doc(roomFaqsRef(code), item.id), sanitizeForFirestore(item, false), {
+          merge: true,
+        });
+      }
+      await batch.commit();
+    }
+  } catch (err) {
+    console.warn('[firestore] failed to bulk save room faqs:', err);
+    throw err;
+  }
+};
+
+export const deleteRoomFaqs = async (code: string, ids: string[]) => {
+  try {
+    for (let i = 0; i < ids.length; i += 400) {
+      const batch = writeBatch(db);
+      for (const id of ids.slice(i, i + 400)) batch.delete(doc(roomFaqsRef(code), id));
+      await batch.commit();
+    }
+  } catch (err) {
+    console.warn('[firestore] failed to bulk delete room faqs:', err);
+    throw err;
+  }
 };
 
 /* ------------------------------------------------------------------ *
