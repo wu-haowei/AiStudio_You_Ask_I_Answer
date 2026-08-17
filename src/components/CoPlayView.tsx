@@ -40,6 +40,7 @@ import {
   upsertPlayer,
 } from '../lib/firebase';
 import { useIdentity } from '../lib/identity';
+import { sameName } from '../lib/pairing';
 import { CoPlayInviteModals } from './coplay/CoPlayInviteModals';
 import { CoPlayActiveQuestionModal } from './coplay/CoPlayActiveQuestionModal';
 
@@ -479,7 +480,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   const partnerDisplayName = partnerPasscode || '對方';
 
   const partnerPlayer = (currentRoom?.players || [])
-    .filter((p) => p.name === partnerPasscode)
+    .filter((p) => sameName(p.name, partnerPasscode))
     .sort((a, b) => (b.lastActive || '').localeCompare(a.lastActive || ''))[0];
 
   const hasPartner = !!partnerPasscode;
@@ -924,7 +925,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
           p.lastActive &&
           Date.now() - new Date(p.lastActive).getTime() < ONLINE_WINDOW_MS
       )
-      .map((p) => p.name)
+      .map((p) => p.name.trim().toLowerCase())
   ).size;
 
   const isRoundActive = !!activeQ || !!inviteState;

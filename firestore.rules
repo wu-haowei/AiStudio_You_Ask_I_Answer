@@ -54,6 +54,11 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/sessions/$(request.auth.uid)).data.name;
     }
 
+    /** Lowercased form of the same name — names are case-insensitive. */
+    function myKey() {
+      return me().lower();
+    }
+
     /* ---------------------------------------------------------------- *
      * Accounts
      * ---------------------------------------------------------------- */
@@ -79,15 +84,18 @@ service cloud.firestore {
      * new, use the default password", and so the rules below can confirm that a
      * name and its document key belong together.
      */
-    match /users/{name} {
+    match /users/{key} {
       allow read: if true;
-      // The id and the stored name must agree, or a session could be bound to
-      // one person's name using another person's secret
-      allow create: if canRegister() && request.resource.data.name == name;
+      /*
+       * The id is the lowercased name. Enforcing that here is what keeps
+       * "Amy" and "amy" one account — and stops a session being bound to one
+       * person's name using another person's secret.
+       */
+      allow create: if canRegister() && request.resource.data.name.lower() == key;
       // Only the owner may touch it afterwards, and never rename it
       allow update: if hasSession()
-        && me() == name
-        && request.resource.data.name == name;
+        && myKey() == key
+        && request.resource.data.name.lower() == key;
       allow delete: if false;
     }
 
@@ -95,12 +103,12 @@ service cloud.firestore {
      * Password hashes. Never readable by anyone — the whole scheme depends on
      * that, since a readable hash is a hash an attacker can replay.
      */
-    match /secrets/{name} {
+    match /secrets/{key} {
       allow read: if false;
       // Claiming a name is a one-off; `create` only ever applies to a document
       // that does not exist yet, so a password cannot be overwritten this way
       allow create: if canRegister();
-      allow update: if hasSession() && me() == name;
+      allow update: if hasSession() && myKey() == key;
       allow delete: if false;
     }
 
@@ -114,7 +122,10 @@ service cloud.firestore {
       allow create, update: if request.auth != null
         && request.auth.uid == uid
         && request.resource.data.name is string
-        && get(/databases/$(database)/documents/secrets/$(request.resource.data.name)).data.passwordHash
+        // `key` is carried in the document because a path segment has to be a
+        // plain value; it is checked against the name rather than trusted
+        && request.resource.data.key == request.resource.data.name.lower()
+        && get(/databases/$(database)/documents/secrets/$(request.resource.data.key)).data.passwordHash
              == request.resource.data.passwordHash;
     }
 
@@ -125,18 +136,18 @@ service cloud.firestore {
     // Who is online. Everyone signed in may look; you may only publish yourself.
     match /presence/{key} {
       allow read: if hasSession();
-      allow create, update: if hasSession() && request.resource.data.name == me();
-      allow delete: if hasSession() && resource.data.name == me();
+      allow create, update: if hasSession() && request.resource.data.name.lower() == myKey();
+      allow delete: if hasSession() && resource.data.name.lower() == myKey();
     }
 
     // Invitations are visible to the two people named in them and no one else.
     match /chatInvites/{inviteId} {
       allow read, delete: if hasSession()
-        && (resource.data.from == me() || resource.data.to == me());
-      allow create: if hasSession() && request.resource.data.from == me();
+        && (resource.data.from.lower() == myKey() || resource.data.to.lower() == myKey());
+      allow create: if hasSession() && request.resource.data.from.lower() == myKey();
       // Either side may answer; neither may rewrite who it is from or to
       allow update: if hasSession()
-        && (resource.data.from == me() || resource.data.to == me())
+        && (resource.data.from.lower() == myKey() || resource.data.to.lower() == myKey())
         && request.resource.data.from == resource.data.from
         && request.resource.data.to == resource.data.to;
     }
@@ -154,9 +165,23 @@ service cloud.firestore {
       return roomId == 'MAIN-ROOM';
     }
 
+    /*
+     * Membership of a pair room.
+     *
+     * Names are case-insensitive, but a rule cannot lowercase the entries of a
+     * list — so rooms carry a lowercased copy of the pair and that is what is
+     * checked. Rooms written before that field existed fall back to the
+     * as-typed names.
+     */
+    function isIn(room) {
+      return ('participantKeys' in room)
+        ? myKey() in room.participantKeys
+        : me() in room.participants;
+    }
+
     function inRoom(roomId) {
       return isLegacyRoom(roomId)
-        || me() in get(/databases/$(database)/documents/rooms/$(roomId)).data.participants;
+        || isIn(get(/databases/$(database)/documents/rooms/$(roomId)).data);
     }
 
     match /rooms/{roomId} {
@@ -169,21 +194,21 @@ service cloud.firestore {
         && (resource == null
             || isLegacyRoom(roomId)
             || !('participants' in resource.data)
-            || me() in resource.data.participants);
+            || isIn(resource.data));
 
       // A room may only be created with yourself in it
       allow create: if hasSession()
-        && (isLegacyRoom(roomId) || me() in request.resource.data.participants);
+        && (isLegacyRoom(roomId) || isIn(request.resource.data));
 
       // The participant list is fixed once the pair exists
       allow update: if hasSession()
-        && (isLegacyRoom(roomId) || me() in resource.data.participants)
+        && (isLegacyRoom(roomId) || isIn(resource.data))
         && (isLegacyRoom(roomId)
             || !('participants' in resource.data)
             || request.resource.data.participants == resource.data.participants);
 
       // Deletion stays available so the admin restore can start from a clean slate
-      allow delete: if hasSession() && (isLegacyRoom(roomId) || me() in resource.data.participants);
+      allow delete: if hasSession() && (isLegacyRoom(roomId) || isIn(resource.data));
 
       // Chat history
       match /messages/{messageId} {
@@ -206,9 +231,9 @@ service cloud.firestore {
      * ---------------------------------------------------------------- */
 
     // Per-person display preferences, keyed by the name used to sign in.
-    match /userPrefs/{name} {
+    match /userPrefs/{key} {
       allow read: if hasSession();
-      allow write: if hasSession() && me() == name;
+      allow write: if hasSession() && myKey() == key;
     }
 
     /*

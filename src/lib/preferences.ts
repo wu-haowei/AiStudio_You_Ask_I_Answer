@@ -38,7 +38,7 @@ export const MAX_BACKGROUND_BYTES = 600_000;
  * signed-in name and cannot url-encode, so encoding here would lock everyone
  * out of their own preferences.
  */
-const prefsRef = (name: string) => doc(db, PREFS_COLLECTION, name.trim());
+const prefsRef = (name: string) => doc(db, PREFS_COLLECTION, name.trim().toLowerCase());
 
 export const subscribeToPreferences = (
   name: string,

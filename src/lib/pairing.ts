@@ -40,15 +40,24 @@ export interface ChatInvite {
   createdAt: string;
 }
 
-const encodeName = (name: string) => encodeURIComponent(name.trim());
+/** Names are case-insensitive, so ids are built from the lowercased form. */
+const keyOf = (name: string) => encodeURIComponent(name.trim().toLowerCase());
+
+/** True when two names refer to the same person. */
+export const sameName = (a: string, b: string) =>
+  a.trim().toLowerCase() === b.trim().toLowerCase();
 
 /**
  * Room id for a pair, derived from both names so each side computes the same
  * one without having to look it up or agree on who created it first.
+ *
+ * Case is folded first: "Amy" inviting "bob" and "amy" inviting "Bob" have to
+ * land in the same room, or the two of them would sit in separate copies of
+ * their own conversation.
  */
 export const pairRoomId = (a: string, b: string): string => {
-  const [first, second] = [a.trim(), b.trim()].sort((x, y) => x.localeCompare(y));
-  return `pair__${encodeName(first)}__${encodeName(second)}`;
+  const [first, second] = [keyOf(a), keyOf(b)].sort((x, y) => x.localeCompare(y));
+  return `pair__${first}__${second}`;
 };
 
 export const isOnline = (record: { lastActive?: string }) =>
@@ -57,7 +66,7 @@ export const isOnline = (record: { lastActive?: string }) =>
 export const announcePresence = async (name: string) => {
   if (!name) return;
   try {
-    await setDoc(doc(db, PRESENCE, encodeName(name)), {
+    await setDoc(doc(db, PRESENCE, keyOf(name)), {
       name,
       lastActive: new Date().toISOString(),
     });
@@ -68,7 +77,7 @@ export const announcePresence = async (name: string) => {
 
 export const clearPresence = async (name: string) => {
   if (!name) return;
-  await deleteDoc(doc(db, PRESENCE, encodeName(name))).catch(() => {});
+  await deleteDoc(doc(db, PRESENCE, keyOf(name))).catch(() => {});
 };
 
 /** Only attach this while the conversation list is visible. */
@@ -158,10 +167,24 @@ export const ensurePairRoom = async (a: string, b: string): Promise<string> => {
   const snap = await getDoc(ref);
 
   if (!snap.exists()) {
+    /*
+     * Room ids used to be built from the names as typed, so a pair created
+     * before case folding lives under a different id. Reuse it rather than
+     * starting an empty second conversation between the same two people.
+     */
+    const existing = (await listMyRooms(a)).find((room) =>
+      room.participants.some((p) => sameName(p, b))
+    );
+    if (existing) return existing.id;
+
     const now = new Date().toISOString();
+    const participants = [a.trim(), b.trim()].sort((x, y) => x.localeCompare(y));
     await setDoc(ref, {
       code: id,
-      participants: [a.trim(), b.trim()].sort((x, y) => x.localeCompare(y)),
+      participants,
+      // Lowercased copy: rules cannot fold case inside a list, and this is what
+      // lets someone signed in as "amy" open a room created by "Amy"
+      participantKeys: participants.map((p) => p.toLowerCase()),
       players: {},
       status: 'playing',
       createdAt: now,
@@ -199,4 +222,4 @@ export const listMyRooms = async (name: string): Promise<PairRoomSummary[]> => {
 
 /** The other person in a pair room. */
 export const partnerOf = (participants: string[], me: string) =>
-  participants.find((p) => p !== me) || '對方';
+  participants.find((p) => !sameName(p, me)) || '對方';

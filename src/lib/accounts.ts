@@ -8,14 +8,15 @@ import { db, ensureSignedIn } from './firebase';
  * skip it: security rules compare a submitted hash against one stored in a
  * document no client may read.
  *
- *   users/{name}      public    { name, mustChangePassword }
- *   secrets/{name}    no read   { passwordHash }
- *   sessions/{uid}    own only  { name, passwordHash }
+ *   users/{key}       public    { key, name, mustChangePassword }
+ *   secrets/{key}     no read   { passwordHash }
+ *   sessions/{uid}    own only  { key, name, passwordHash }
  *
- * The name is used verbatim as the document id. Url-encoding it would be
- * tidier, but security rules cannot url-encode, and a rule that cannot
- * recompute the key cannot tell whether a session's name really belongs to the
- * secret it was checked against. Names are validated instead.
+ * `key` is the lowercased name and is the document id, so "Amy" and "amy" are
+ * the same account. The original spelling is kept in `name` and is what other
+ * people see. Rules can call `.lower()`, so they can check the two agree —
+ * url-encoding, by contrast, is something rules cannot recompute, which is why
+ * the id stays this close to the raw name.
  *
  * The session document is both the proof and the binding: it can only be
  * written with a hash that matches the secret, and every other rule asks
@@ -46,6 +47,7 @@ export const assertUsableName = (name: string): string => {
 };
 
 export interface AccountRecord {
+  /** Display name, spelled the way it was first registered. */
   name: string;
   exists: boolean;
   mustChangePassword: boolean;
@@ -53,14 +55,21 @@ export interface AccountRecord {
 
 export class AuthError extends Error {}
 
+/** Lowercased name — the account key, and what every document id uses. */
+export const accountKey = (name: string): string => assertUsableName(name).toLowerCase();
+
 /**
- * Hashes with SHA-256 and a fixed application salt plus the name.
+ * Hashes with SHA-256 and a fixed application salt plus the account key.
+ *
+ * The key rather than the display name, so typing "Amy" and "amy" produces the
+ * same hash — otherwise case-insensitive login would still fail at the password
+ * check.
  *
  * Not bcrypt — without a server there is nowhere to run a slow KDF — but it
  * keeps plain passwords out of the database and out of network payloads.
  */
 export const hashPassword = async (name: string, password: string): Promise<string> => {
-  const data = new TextEncoder().encode(`youaskianswer:${name.trim()}:${password}`);
+  const data = new TextEncoder().encode(`youaskianswer:${name.trim().toLowerCase()}:${password}`);
   const digest = await crypto.subtle.digest('SHA-256', data);
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, '0'))
@@ -71,10 +80,11 @@ export const hashPassword = async (name: string, password: string): Promise<stri
 export const lookupAccount = async (name: string): Promise<AccountRecord> => {
   const clean = assertUsableName(name);
   try {
-    const snap = await getDoc(doc(db, USERS, clean));
+    const snap = await getDoc(doc(db, USERS, accountKey(clean)));
     if (!snap.exists()) return { name: clean, exists: false, mustChangePassword: true };
     return {
-      name: clean,
+      // The stored spelling wins, so signing in as "amy" still shows "Amy"
+      name: (snap.data().name as string) || clean,
       exists: true,
       mustChangePassword: snap.data().mustChangePassword !== false,
     };
@@ -99,9 +109,12 @@ export const signInWithPassword = async (
   const clean = assertUsableName(name);
   if (!password) throw new AuthError('請輸入密碼');
 
+  const key = accountKey(clean);
   const user = await ensureSignedIn();
   const account = await lookupAccount(clean);
-  const hash = await hashPassword(clean, password);
+  // Whatever the person typed, the display name is the registered spelling
+  const display = account.name;
+  const hash = await hashPassword(key, password);
 
   if (!account.exists) {
     if (password !== DEFAULT_PASSWORD) {
@@ -114,13 +127,14 @@ export const signInWithPassword = async (
      * thrown: if a previous attempt half-created the account, the session write
      * below is still the honest test of whether the password is right.
      */
-    await setDoc(doc(db, SECRETS, clean), {
+    await setDoc(doc(db, SECRETS, key), {
       passwordHash: hash,
       createdAt: new Date().toISOString(),
     }).catch((err) => console.warn('[accounts] secret creation rejected:', err));
 
-    await setDoc(doc(db, USERS, clean), {
-      name: clean,
+    await setDoc(doc(db, USERS, key), {
+      key,
+      name: display,
       exists: true,
       mustChangePassword: true,
       createdAt: new Date().toISOString(),
@@ -134,7 +148,8 @@ export const signInWithPassword = async (
    */
   try {
     await setDoc(doc(db, SESSIONS, user.uid), {
-      name: clean,
+      key,
+      name: display,
       passwordHash: hash,
       boundAt: new Date().toISOString(),
     });
@@ -146,14 +161,14 @@ export const signInWithPassword = async (
   }
 
   await setDoc(
-    doc(db, USERS, clean),
+    doc(db, USERS, key),
     { lastLoginAt: new Date().toISOString() },
     { merge: true }
   ).catch(() => {
     // A failed timestamp update must not block a successful login
   });
 
-  return account.exists ? account : { name: clean, exists: true, mustChangePassword: true };
+  return account.exists ? account : { name: display, exists: true, mustChangePassword: true };
 };
 
 /** Replaces the password, then refreshes the session so it stays valid. */
@@ -163,18 +178,19 @@ export const changePassword = async (
   nextPassword: string
 ): Promise<void> => {
   const clean = assertUsableName(name);
+  const key = accountKey(clean);
   if (nextPassword.length < 4) throw new AuthError('新密碼至少 4 個字元');
   if (nextPassword === DEFAULT_PASSWORD) throw new AuthError('請不要沿用預設密碼');
   if (nextPassword === currentPassword) throw new AuthError('新密碼不能和目前的一樣');
 
   const user = await ensureSignedIn();
-  const nextHash = await hashPassword(clean, nextPassword);
+  const nextHash = await hashPassword(key, nextPassword);
 
   try {
     // Rules require the caller's session to be bound to this name, which it
     // only can be if the current password was correct at sign-in.
     await setDoc(
-      doc(db, SECRETS, clean),
+      doc(db, SECRETS, key),
       { passwordHash: nextHash, updatedAt: new Date().toISOString() },
       { merge: true }
     );
@@ -185,13 +201,14 @@ export const changePassword = async (
 
   // The session carries the old hash; leaving it stale would fail later checks
   await setDoc(doc(db, SESSIONS, user.uid), {
+    key,
     name: clean,
     passwordHash: nextHash,
     boundAt: new Date().toISOString(),
   });
 
   await setDoc(
-    doc(db, USERS, clean),
+    doc(db, USERS, key),
     { mustChangePassword: false },
     { merge: true }
   );
@@ -211,7 +228,10 @@ export const hasValidSession = async (name: string): Promise<boolean> => {
   try {
     const user = await ensureSignedIn();
     const snap = await getDoc(doc(db, SESSIONS, user.uid));
-    return snap.exists() && snap.data().name === clean;
+    return (
+      snap.exists() &&
+      String(snap.data().name || '').toLowerCase() === clean.toLowerCase()
+    );
   } catch (err) {
     console.warn('[accounts] session check failed:', err);
     // A network blip should not throw someone out of their own account
@@ -233,7 +253,7 @@ export const endSession = async (): Promise<void> => {
 export const subscribeToAccount = (name: string, onUpdate: (account: AccountRecord) => void) => {
   if (!name) return () => {};
   return onSnapshot(
-    doc(db, USERS, name.trim()),
+    doc(db, USERS, accountKey(name)),
     (snap) =>
       onUpdate({
         name,

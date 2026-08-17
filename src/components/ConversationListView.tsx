@@ -11,6 +11,7 @@ import {
   PairRoomSummary,
   partnerOf,
   respondToInvite,
+  sameName,
   sendChatInvite,
   subscribeToInvites,
   subscribeToPresence,
@@ -121,8 +122,10 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
   };
 
   // Anyone already in a conversation with me does not need an invite button
-  const existingPartners = new Set(rooms.map((r) => partnerOf(r.participants, me)));
-  const invitable = people.filter((p) => p.name !== me && !existingPartners.has(p.name));
+  const existingPartners = rooms.map((r) => partnerOf(r.participants, me));
+  const invitable = people.filter(
+    (p) => !sameName(p.name, me) && !existingPartners.some((partner) => sameName(partner, p.name))
+  );
 
   const card = 'rounded-2xl border border-[#D9C5B2] bg-white';
 
@@ -173,7 +176,7 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
         ) : (
           rooms.map((room) => {
             const partner = partnerOf(room.participants, me);
-            const online = people.some((p) => p.name === partner);
+            const online = people.some((p) => sameName(p.name, partner));
             return (
               <button
                 key={room.id}

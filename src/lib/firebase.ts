@@ -233,6 +233,7 @@ export const ensureRoom = async (
     v: DATA_SCHEMA_VERSION,
     hostName,
     participants,
+    participantKeys: participants.map((p) => p.trim().toLowerCase()),
     players: {},
     status: 'playing',
     createdAt: now,

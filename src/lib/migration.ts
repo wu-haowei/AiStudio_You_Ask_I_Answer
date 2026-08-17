@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, writeBatch } from 'firebase/firestore';
 import { db } from './firebase';
 
 /**
@@ -17,6 +17,8 @@ export interface MigrationReport {
   messages: number;
   rounds: number;
   faqs: number;
+  /** Questions marked as already played, merged category by category. */
+  playedFaqIds: number;
 }
 
 /** Copies documents from one subcollection to another, keeping their ids. */
@@ -55,7 +57,7 @@ export const migrateLegacyRoom = async (targetRoomId: string): Promise<Migration
     throw new Error('目標房間不正確');
   }
 
-  const report: MigrationReport = { messages: 0, rounds: 0, faqs: 0 };
+  const report: MigrationReport = { messages: 0, rounds: 0, faqs: 0, playedFaqIds: 0 };
 
   for (const sub of ['messages', 'rounds', 'faqs'] as const) {
     const from = ['rooms', LEGACY_ROOM, sub];
@@ -63,7 +65,50 @@ export const migrateLegacyRoom = async (targetRoomId: string): Promise<Migration
     report[sub] = await copySubcollection(from, to, await idsIn(to));
   }
 
+  report.playedFaqIds = await copyPlayedQuestions(targetRoomId);
+
   return report;
+};
+
+/**
+ * Carries over "we have already played this one".
+ *
+ * This lives on the room document rather than in a subcollection — the replay
+ * filter reads it from a document the app is already listening to, which is
+ * why copying the subcollections alone left every question looking unplayed.
+ *
+ * The two lists are merged per category rather than overwritten, so running
+ * this after a pair has already played a few rounds does not undo them.
+ */
+const copyPlayedQuestions = async (targetRoomId: string): Promise<number> => {
+  const legacy = await getDoc(doc(db, 'rooms', LEGACY_ROOM));
+  const played = (legacy.data()?.playedFaqIds || {}) as Record<string, string[]>;
+  if (Object.keys(played).length === 0) return 0;
+
+  const target = await getDoc(doc(db, 'rooms', targetRoomId));
+  const current = (target.data()?.playedFaqIds || {}) as Record<string, string[]>;
+
+  const merged: Record<string, string[]> = { ...current };
+  let added = 0;
+
+  for (const [category, ids] of Object.entries(played)) {
+    if (!Array.isArray(ids)) continue;
+    const existing = new Set(merged[category] || []);
+    const before = existing.size;
+    for (const id of ids) existing.add(id);
+    added += existing.size - before;
+    merged[category] = Array.from(existing);
+  }
+
+  if (added > 0) {
+    await setDoc(
+      doc(db, 'rooms', targetRoomId),
+      { playedFaqIds: merged, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+  }
+
+  return added;
 };
 
 /**

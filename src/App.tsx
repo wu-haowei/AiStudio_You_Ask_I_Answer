@@ -328,7 +328,8 @@ export default function App() {
       const faqCount = await importLegacyFaqs(activeRoom.id);
       showToast(
         '舊資料已搬移',
-        `對話 ${report.messages} 筆、出題 ${report.rounds} 筆、題目 ${report.faqs + faqCount} 題`,
+        `對話 ${report.messages} 筆、出題 ${report.rounds} 筆、題目 ${report.faqs + faqCount} 題` +
+          `、已玩過 ${report.playedFaqIds} 題`,
         'success'
       );
     } catch (err: any) {
