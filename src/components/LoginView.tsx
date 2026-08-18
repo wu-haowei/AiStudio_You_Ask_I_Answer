@@ -103,7 +103,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
         paddingTop: 'max(1rem, env(safe-area-inset-top))',
         paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
       }}
-      className="h-screen h-dvh bg-[#F5E6D3] flex items-center justify-center px-4 font-sans text-[#4A3F35]"
+      className="h-full bg-[#F5E6D3] flex items-center justify-center px-4 font-sans text-[#4A3F35]"
     >
       <div className="bg-[#FAF7F2] border border-[#D9C5B2] rounded-3xl p-6 sm:p-8 max-w-sm w-full shadow-lg space-y-6">
         <div className="text-center space-y-3">

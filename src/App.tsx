@@ -355,7 +355,7 @@ export default function App() {
 
   if (access === 'checking') {
     return (
-      <div className="h-screen h-dvh bg-[#F5E6D3] flex items-center justify-center text-sm text-[#7A6C5E]">
+      <div className="h-full bg-[#F5E6D3] flex items-center justify-center text-sm text-[#7A6C5E]">
         連線中…
       </div>
     );
@@ -363,7 +363,7 @@ export default function App() {
 
   if (access === 'offline') {
     return (
-      <div className="h-screen h-dvh bg-[#F5E6D3] flex flex-col items-center justify-center gap-2 p-6 text-center">
+      <div className="h-full bg-[#F5E6D3] flex flex-col items-center justify-center gap-2 p-6 text-center">
         <p className="text-sm font-bold text-[#4A3F35]">無法連線</p>
         <p className="text-xs text-[#7A6C5E]">請檢查網路後重新整理頁面</p>
       </div>
@@ -388,7 +388,7 @@ export default function App() {
         paddingLeft: 'env(safe-area-inset-left)',
         paddingRight: 'env(safe-area-inset-right)',
       }}
-      className="h-screen h-dvh bg-[#F5E6D3] flex flex-col font-sans text-[#4A3F35] selection:bg-[#E8D8C4] overflow-hidden"
+      className="h-full bg-[#F5E6D3] flex flex-col font-sans text-[#4A3F35] selection:bg-[#E8D8C4] overflow-hidden"
     >
       <Header
         activeTab={currentTab}

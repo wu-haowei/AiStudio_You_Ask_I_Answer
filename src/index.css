@@ -17,26 +17,39 @@
   /*
    * The app is a fixed shell, not a scrolling page.
    *
-   * On phones the address bar collapses as you scroll, so a 100vh layout is
-   * taller than the visible viewport and the document itself starts to
-   * scroll — taking the header with it, however sticky it is. Pinning the
-   * document height and moving all scrolling inside the message list is what
-   * actually keeps the top bar in place.
+   * Viewport units are the wrong tool here: on phones `100vh` measures the
+   * viewport with the browser toolbars hidden, `100dvh` changes as they slide,
+   * and installed-to-home-screen is different again. A fixed body sidesteps
+   * all of it — it is laid out against the viewport itself, so it is always
+   * exactly what the person can see, and the document cannot scroll at all.
+   * Everything inside sizes off `height: 100%` and scrolling happens only in
+   * the message list.
    */
-  html,
-  body,
-  #root {
+  html {
     height: 100%;
-    overflow: hidden;
-    overscroll-behavior: none;
   }
 
   body {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
     background-color: var(--color-milktea-bg);
     color: var(--color-milktea-text-dark);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans TC", sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  /*
+   * Two declarations on purpose: the fixed body already gives a sane height
+   * everywhere, and browsers that understand `dvh` refine it to the area
+   * actually visible while the toolbars slide in and out. Older ones simply
+   * ignore the second line.
+   */
+  #root {
+    height: 100%;
+    height: 100dvh;
   }
 }
 
