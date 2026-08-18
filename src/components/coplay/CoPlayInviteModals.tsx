@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Gamepad2, X, ThumbsUp, Clock, XCircle, Target, Sparkles, Dices, Shuffle, Edit3 } from 'lucide-react';
 import { FAQItem } from '../../types';
 
@@ -81,6 +81,20 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
   playedFaqIds,
   availableCategories,
 }) => {
+  /*
+   * Questions for the picker: this category only, unplayed first.
+   *
+   * Played ones stay in the list — replaying on purpose is allowed — but they
+   * sink to the bottom so the ones worth asking are the ones in reach. The
+   * sort is stable, so the library's own order survives within each group.
+   */
+  const pickableFaqs = useMemo(() => {
+    const inCategory = faqs.filter((f) => !f.category || f.category === questionCategory);
+    const fresh = inCategory.filter((f) => !playedFaqIds.has(f.id));
+    const played = inCategory.filter((f) => playedFaqIds.has(f.id));
+    return [...fresh, ...played];
+  }, [faqs, questionCategory, playedFaqIds]);
+
   return (
     <>
       {/* Modal Popup 1 - Challenge Invitation Request */}
@@ -325,12 +339,10 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <label className="text-[11px] font-bold text-[#7A6C5E] block">從題庫選擇</label>
-                      <span className="text-[10px] text-[#A69684]">淡色 = 玩過了</span>
+                      <span className="text-[10px] text-[#A69684]">淡色 = 玩過了，排在後面</span>
                     </div>
                     <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
-                      {faqs
-                        .filter((f) => !f.category || f.category === questionCategory)
-                        .map((f) => {
+                      {pickableFaqs.map((f) => {
                           const isPlayed = playedFaqIds.has(f.id);
                           return (
                             <button

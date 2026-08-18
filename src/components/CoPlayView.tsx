@@ -87,17 +87,27 @@ const RECENT_ACTIVITY_MS = 3 * 60 * 60 * 1000;
  * Invite / decline / cancel notices are no longer recorded — they cluttered the
  * transcript. Rooms created earlier still contain them, so they are filtered out
  * of the stream instead of being migrated away.
+ *
+ * The patterns are whole sentences on purpose. An earlier version matched the
+ * bare word 「婉拒」, which also swallowed any reveal card whose answer option
+ * happened to contain it — the round was recorded, but the result never
+ * appeared in the conversation.
  */
 const RETIRED_NOTICE_PATTERNS = [
   '發起考驗，等待回應',
   '發起了猜心考驗',
-  '婉拒',
+  '婉拒了這次考驗',
+  '婉拒了考驗',
   '取消了邀請',
   '取消了猜心考驗發起',
 ];
 
-const isRetiredNotice = (m: RoomMessage) =>
-  m.type === 'invite' || RETIRED_NOTICE_PATTERNS.some((pattern) => m.text.includes(pattern));
+const isRetiredNotice = (m: RoomMessage) => {
+  if (m.type === 'invite') return true;
+  // Only the old system notices are candidates; never a reveal or a chat line
+  if (m.type !== 'system' || m.author === REVEAL_AUTHOR) return false;
+  return RETIRED_NOTICE_PATTERNS.some((pattern) => m.text.includes(pattern));
+};
 
 /** Builds a message with both the display label and the Firestore ordering key. */
 const buildMessage = (
