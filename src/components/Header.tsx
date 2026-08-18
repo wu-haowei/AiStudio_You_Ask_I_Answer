@@ -102,7 +102,18 @@ export const Header: React.FC<HeaderProps> = ({
     }`;
 
   return (
-    <header className="shrink-0 sticky top-0 z-40 bg-[#FAF7F2]/95 backdrop-blur-md border-b border-[#D9C5B2]">
+    <header
+      /*
+       * Installed on an iPhone there is no browser chrome, and the viewport is
+       * declared `viewport-fit=cover` — so the page starts at the very top of
+       * the screen, behind the status bar. Padding the header by the safe-area
+       * inset pushes its contents clear while its own background fills the
+       * strip, which is what makes it read as part of the app rather than a
+       * gap above it.
+       */
+      style={{ paddingTop: 'env(safe-area-inset-top)' }}
+      className="shrink-0 sticky top-0 z-40 bg-[#FAF7F2]/95 backdrop-blur-md border-b border-[#D9C5B2]"
+    >
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between gap-2 h-14">
           {/* Brand */}

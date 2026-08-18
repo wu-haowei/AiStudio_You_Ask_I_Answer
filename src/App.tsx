@@ -382,7 +382,14 @@ export default function App() {
   const currentTab: ActiveTab = activeRoom ? activeTab : 'co_play';
 
   return (
-    <div className="h-screen h-dvh bg-[#F5E6D3] flex flex-col font-sans text-[#4A3F35] selection:bg-[#E8D8C4] overflow-hidden">
+    <div
+      style={{
+        paddingBottom: 'env(safe-area-inset-bottom)',
+        paddingLeft: 'env(safe-area-inset-left)',
+        paddingRight: 'env(safe-area-inset-right)',
+      }}
+      className="h-screen h-dvh bg-[#F5E6D3] flex flex-col font-sans text-[#4A3F35] selection:bg-[#E8D8C4] overflow-hidden"
+    >
       <Header
         activeTab={currentTab}
         setActiveTab={setActiveTab}
