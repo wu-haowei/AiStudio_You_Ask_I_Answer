@@ -54,7 +54,13 @@ export default function App() {
   /** Allowlist state for this device. */
   const [access, setAccess] = useState<'checking' | 'blocked' | 'granted' | 'offline'>('checking');
   const [uid, setUid] = useState('');
-  const [roomStatus, setRoomStatus] = useState({ onlineCount: 0, isRoundActive: false });
+  /** Live state reported by the open conversation, including how to start a round. */
+  const [roomStatus, setRoomStatus] = useState<{
+    onlineCount: number;
+    isRoundActive: boolean;
+    canInvite: boolean;
+    onInvite?: () => void;
+  }>({ onlineCount: 0, isRoundActive: false, canInvite: false });
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFERENCES);
   const [isBackgroundModalOpen, setIsBackgroundModalOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -185,7 +191,7 @@ export default function App() {
     sessionStorage.removeItem(ACTIVE_ROOM_KEY);
     setActiveTab('co_play');
     // Otherwise the header keeps showing the last room's presence
-    setRoomStatus({ onlineCount: 0, isRoundActive: false });
+    setRoomStatus({ onlineCount: 0, isRoundActive: false, canInvite: false });
   };
 
   const handleSignOut = () => {
@@ -383,6 +389,8 @@ export default function App() {
         onlineCount={roomStatus.onlineCount}
         partnerName={activeRoom?.partner}
         onLeaveRoom={activeRoom ? leaveRoom : undefined}
+        onStartChallenge={currentTab === 'co_play' ? roomStatus.onInvite : undefined}
+        canStartChallenge={roomStatus.canInvite}
         onOpenBackgroundSettings={() => setIsBackgroundModalOpen(true)}
         onImportDefaults={handleImportDefaults}
         onSignOut={handleSignOut}

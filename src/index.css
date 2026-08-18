@@ -14,6 +14,23 @@
     --color-milktea-text-muted: #7A6C5E;
   }
 
+  /*
+   * The app is a fixed shell, not a scrolling page.
+   *
+   * On phones the address bar collapses as you scroll, so a 100vh layout is
+   * taller than the visible viewport and the document itself starts to
+   * scroll — taking the header with it, however sticky it is. Pinning the
+   * document height and moving all scrolling inside the message list is what
+   * actually keeps the top bar in place.
+   */
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
   body {
     background-color: var(--color-milktea-bg);
     color: var(--color-milktea-text-dark);

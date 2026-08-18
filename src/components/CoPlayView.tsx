@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   Send,
   Sparkles,
@@ -51,8 +51,17 @@ interface CoPlayViewProps {
   partnerName: string;
   faqs: FAQItem[];
   showToast: (title: string, description?: string, type?: 'success' | 'info' | 'warning' | 'error') => void;
-  /** Reports presence and round state up to the header. */
-  onStatusChange?: (status: { onlineCount: number; isRoundActive: boolean }) => void;
+  /**
+   * Reports presence and round state up to the header, along with the way to
+   * start a round — on phones that button lives in the top bar, where there is
+   * no second row for it.
+   */
+  onStatusChange?: (status: {
+    onlineCount: number;
+    isRoundActive: boolean;
+    canInvite: boolean;
+    onInvite: () => void;
+  }) => void;
   /** Personal chat background; empty image means the plain milk-tea surface. */
   background?: { chatBackground: string; backgroundFade: number };
 }
@@ -944,10 +953,25 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     (isAcceptedWaitingInitiator || (isQuestionModalOpen && inviteState?.status === 'accepted')) &&
     !isQuestionModalDismissed;
 
-  // Report presence + round state to the header
+  /*
+   * Report presence + round state to the header.
+   *
+   * The invite handler is handed over through a ref so the callback identity
+   * stays put — passing the handler itself would rebuild it every render and
+   * turn this effect into an update loop.
+   */
+  const inviteHandlerRef = useRef<() => void>(() => {});
+  inviteHandlerRef.current = handleSendGameInvite;
+  const stableInvite = useCallback(() => inviteHandlerRef.current(), []);
+
   useEffect(() => {
-    onStatusChange?.({ onlineCount: onlinePlayerCount, isRoundActive });
-  }, [onlinePlayerCount, isRoundActive, onStatusChange]);
+    onStatusChange?.({
+      onlineCount: onlinePlayerCount,
+      isRoundActive,
+      canInvite: hasPartner,
+      onInvite: stableInvite,
+    });
+  }, [onlinePlayerCount, isRoundActive, hasPartner, onStatusChange, stableInvite]);
 
   /*
    * Fill the form each time it opens: a fresh unplayed question for a normal
@@ -1128,8 +1152,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
           </div>
         )}
 
-        {/* Dialogue Header */}
-        <div className="relative flex items-center justify-between border-b border-[#D9C5B2] pb-2.5 mb-2.5 shrink-0">
+        {/*
+         * Dialogue header — desktop only. On phones the same controls live in
+         * the app header, so repeating them here would cost a whole row of an
+         * already short screen.
+         */}
+        <div className="relative hidden sm:flex items-center justify-between border-b border-[#D9C5B2] pb-2.5 mb-2.5 shrink-0">
           <div className="flex items-center gap-2">
             <div className="hidden sm:flex w-8 h-8 rounded-xl bg-[#E8D8C4] text-[#5C4B3A] items-center justify-center font-bold">
               <MessageSquare className="w-4 h-4 text-[#A68B6D]" />
@@ -1179,6 +1207,13 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
           }}
           className="flex-1 min-h-0 overflow-y-auto space-y-3.5 pr-1.5 scrollbar-thin relative"
         >
+          {/* Phone-sized screens get the counts here instead of in a fixed row */}
+          <div className="sm:hidden flex justify-center pb-1.5 text-[10px] text-[#7A6C5E]">
+            {isLoadingHistory
+              ? '載入中…'
+              : `${visibleMessages.length} 則訊息 ‧ 3 小時內 ${recentRoundCount} 題`}
+          </div>
+
           {currentRoom && !isLoadingHistory && visibleMessages.length > 0 && (
             <div className="flex justify-center pb-1">
               {isLoadingMore ? (

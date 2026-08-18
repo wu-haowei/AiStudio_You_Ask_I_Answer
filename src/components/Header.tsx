@@ -1,5 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Settings, Users, Coffee, ChevronDown, LogOut, Image, ArrowLeft } from 'lucide-react';
+import {
+  Settings,
+  Users,
+  Coffee,
+  ChevronDown,
+  LogOut,
+  Image,
+  ArrowLeft,
+  PlusCircle,
+} from 'lucide-react';
 import { ActiveTab } from '../types';
 import { useIdentity } from '../lib/identity';
 
@@ -15,6 +24,12 @@ interface HeaderProps {
   /** Present only while a conversation is open. */
   partnerName?: string;
   onLeaveRoom?: () => void;
+  /**
+   * Starting a round. On phones this button lives up here — the conversation
+   * card's own header row is hidden to save vertical space.
+   */
+  onStartChallenge?: () => void;
+  canStartChallenge?: boolean;
   showToast: (
     title: string,
     description?: string,
@@ -31,6 +46,8 @@ export const Header: React.FC<HeaderProps> = ({
   onSignOut,
   partnerName,
   onLeaveRoom,
+  onStartChallenge,
+  canStartChallenge = false,
   showToast,
 }) => {
   const { name, isSignedIn } = useIdentity();
@@ -117,10 +134,24 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {isSignedIn && (
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+              {/* Phone-only: the challenge button, since the card header is hidden */}
+              {onStartChallenge && (
+                <button
+                  type="button"
+                  onClick={onStartChallenge}
+                  disabled={!canStartChallenge}
+                  title={canStartChallenge ? undefined : '等待對方進入房間'}
+                  className="sm:hidden px-2.5 py-1.5 rounded-xl bg-[#E8D8C4] hover:bg-[#D9C5B2] disabled:opacity-40 text-[#4A3F35] text-xs font-bold inline-flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                >
+                  <PlusCircle className="w-3.5 h-3.5" />
+                  考驗
+                </button>
+              )}
+
               {/* Tabs — only meaningful once a conversation is open */}
               {partnerName && (
-              <nav className="flex items-center gap-1 bg-[#E8D8C4]/60 p-1 rounded-2xl border border-[#D9C5B2]">
+              <nav className="hidden sm:flex items-center gap-1 bg-[#E8D8C4]/60 p-1 rounded-2xl border border-[#D9C5B2]">
                 <button
                   onClick={() => setActiveTab('co_play')}
                   className={tabClass(activeTab === 'co_play')}
@@ -162,6 +193,42 @@ export const Header: React.FC<HeaderProps> = ({
                         線上 {onlineCount || 1} 人
                       </div>
                     </div>
+
+                    {/* Phone-only: the tabs moved in here when they left the bar */}
+                    {partnerName && (
+                      <div className="py-1 sm:hidden border-b border-[#EFE5D8]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setActiveTab('co_play');
+                          }}
+                          className={`w-full px-4 py-2.5 text-left text-xs font-semibold transition-colors flex items-center gap-2.5 cursor-pointer ${
+                            activeTab === 'co_play'
+                              ? 'text-[#4A3F35] bg-[#F5EFE6]'
+                              : 'text-[#7A6C5E] hover:bg-[#F5EFE6]'
+                          }`}
+                        >
+                          <Users className="w-4 h-4 text-[#A68B6D]" />
+                          對話
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsMenuOpen(false);
+                            setActiveTab('admin_manage');
+                          }}
+                          className={`w-full px-4 py-2.5 text-left text-xs font-semibold transition-colors flex items-center gap-2.5 cursor-pointer ${
+                            activeTab === 'admin_manage'
+                              ? 'text-[#4A3F35] bg-[#F5EFE6]'
+                              : 'text-[#7A6C5E] hover:bg-[#F5EFE6]'
+                          }`}
+                        >
+                          <Settings className="w-4 h-4 text-[#A68B6D]" />
+                          後台
+                        </button>
+                      </div>
+                    )}
 
                     <div className="py-1">
                       <button
