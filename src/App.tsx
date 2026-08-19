@@ -7,6 +7,8 @@ import {
   deleteRoomFaq,
   deleteRoomFaqs,
   ensureSignedIn,
+  forgetPlayedFaqIds,
+  loadPlayedFaqIds,
   isInviteRequired,
   isMember,
   saveRoomFaq,
@@ -49,6 +51,8 @@ export default function App() {
   });
 
   const [roomFaqs, setRoomFaqs] = useState<FAQItem[]>([]);
+  /** Questions this pair has already answered, for the admin clean-up button. */
+  const [playedFaqIds, setPlayedFaqIds] = useState<Set<string>>(new Set());
   const [isLoadingContent, setIsLoadingContent] = useState(true);
 
   /** Allowlist state for this device. */
@@ -243,6 +247,56 @@ export default function App() {
 
   const handleDeleteFAQs = (ids: string[]) => deleteRoomFaqs(requireRoom(), ids);
 
+  /*
+   * The played list lives on the room document, which only the conversation
+   * view listens to — and that view is unmounted while the admin tab is open.
+   * Reading it once when the tab opens costs a single read and avoids keeping
+   * a second listener alive for a number that barely changes.
+   */
+  useEffect(() => {
+    if (!activeRoom || activeTab !== 'admin_manage') return;
+
+    let cancelled = false;
+    loadPlayedFaqIds(activeRoom.id).then((ids) => {
+      if (!cancelled) setPlayedFaqIds(new Set(ids));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoom?.id, activeTab]);
+
+  const answeredFaqs = useMemo(
+    () => faqs.filter((f) => playedFaqIds.has(f.id)),
+    [faqs, playedFaqIds]
+  );
+
+  /**
+   * Clears out everything the pair has already answered.
+   *
+   * While a pair is still on the built-in set there is nothing in Firestore to
+   * delete, so the questions worth keeping are written into their own library
+   * first — after which "delete" means the same thing in both cases.
+   */
+  const handleDeleteAnswered = async () => {
+    const roomId = requireRoom();
+    if (answeredFaqs.length === 0) return;
+
+    const ids = answeredFaqs.map((f) => f.id);
+
+    if (isUsingDefaultFaqs) {
+      await saveRoomFaqs(
+        roomId,
+        faqs.filter((f) => !playedFaqIds.has(f.id))
+      );
+    } else {
+      await deleteRoomFaqs(roomId, ids);
+    }
+
+    await forgetPlayedFaqIds(roomId, ids);
+    setPlayedFaqIds(new Set());
+    showToast('已刪除答過的題目', `共 ${ids.length} 題`, 'success');
+  };
+
   const handleExportData = () => {
     const jsonStr = JSON.stringify(
       { version: CURRENT_APP_VERSION, exportDate: new Date().toISOString(), faqs, categories },
@@ -427,7 +481,9 @@ export default function App() {
             isLoading={isLoadingContent}
             isUsingDefaults={isUsingDefaultFaqs}
             partnerName={activeRoom.partner}
-            myName={userName}
+            answeredFaqs={answeredFaqs}
+            onDeleteAnswered={handleDeleteAnswered}
+            roomId={activeRoom.id}
             onAddFAQ={handleAddFAQ}
             onUpdateFAQ={handleUpdateFAQ}
             onDeleteFAQ={handleDeleteFAQ}

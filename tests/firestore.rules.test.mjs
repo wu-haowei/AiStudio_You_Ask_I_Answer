@@ -17,8 +17,12 @@ import {
 } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'node:fs';
 import {
-  doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where,
+  doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where, setLogLevel,
 } from 'firebase/firestore';
+
+// Denied writes are the point of most of these tests; the SDK logging each one
+// as an error buries the actual results.
+setLogLevel('silent');
 
 const env = await initializeTestEnvironment({
   projectId: 'rules-test',
@@ -26,10 +30,14 @@ const env = await initializeTestEnvironment({
 });
 
 const HASH_A = 'hash-a', HASH_B = 'hash-b';
-let passed = 0, failed = 0;
+let passed = 0;
+const failures = [];
 const test = async (name, fn) => {
   try { await fn(); passed++; console.log('  ok  ', name); }
-  catch (e) { failed++; console.log('  FAIL', name, '\n       ', e.message.slice(0, 200)); }
+  catch (e) {
+    failures.push({ name, reason: e.message.split('\n')[0].slice(0, 160) });
+    console.log('  FAIL', name, '\n       ', e.message.slice(0, 200));
+  }
 };
 
 // Seed accounts and sessions the way the app does
@@ -54,6 +62,16 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'rooms/pair__amy__old'), {
     code: 'pair__amy__old',
     participants: ['Amy', 'old'],
+  });
+  /*
+   * Somebody else's conversation. Without one of these in the database an
+   * unfiltered list of rooms would succeed simply because every room happened
+   * to be readable — the rule would look stricter than it is.
+   */
+  await setDoc(doc(db, 'rooms/pair__bob__eve'), {
+    code: 'pair__bob__eve',
+    participants: ['bob', 'eve'],
+    participantKeys: ['bob', 'eve'],
   });
   await setDoc(doc(db, 'rooms/pair__amy__bob/messages/m1'), { text: 'hi', author: 'amy' });
   await setDoc(doc(db, 'rooms/pair__amy__bob/faqs/f1'), { question: 'q' });
@@ -111,10 +129,12 @@ await test('listing every room is refused', () =>
 await test('participants cannot be rewritten', () =>
   assertFails(setDoc(doc(amy, 'rooms/pair__amy__bob'), { participants: ['Amy', 'eve'] }, { merge: true })));
 await test('a new room must include me', () =>
-  assertFails(setDoc(doc(amy, 'rooms/pair__bob__eve'), {
-    participants: ['bob', 'eve'],
-    participantKeys: ['bob', 'eve'],
+  assertFails(setDoc(doc(amy, 'rooms/pair__bob__zoe'), {
+    participants: ['bob', 'zoe'],
+    participantKeys: ['bob', 'zoe'],
   })));
+await test('someone else\'s room stays shut', () =>
+  assertFails(getDoc(doc(amy, 'rooms/pair__bob__eve'))));
 await test('a new room with me is allowed', () =>
   assertSucceeds(setDoc(doc(amy, 'rooms/pair__amy__eve'), {
     participants: ['Amy', 'eve'],
@@ -157,5 +177,12 @@ await test('a signed-out visitor sees nothing', () =>
   assertFails(getDoc(doc(anon, 'rooms/pair__amy__bob'))));
 
 await env.cleanup();
-console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+
+// Repeat the failures at the end — the emulator's own output scrolls the
+// individual lines away, and the summary alone does not say which one broke.
+if (failures.length > 0) {
+  console.log('\nFailures:');
+  for (const f of failures) console.log(`  · ${f.name}\n      ${f.reason}`);
+}
+console.log(`\n${passed} passed, ${failures.length} failed`);
+process.exit(failures.length ? 1 : 0);

@@ -129,30 +129,49 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
 
   const card = 'rounded-2xl border border-[#D9C5B2] bg-white';
 
+  /*
+   * The list is capped in width: it is a short column of names, and letting it
+   * run the full width of a desktop monitor strands the buttons at the far
+   * edge. Phones are narrower than the cap, so nothing changes there.
+   */
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pb-4 animate-fade-in">
+    <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pb-4 animate-fade-in w-full max-w-xl mx-auto">
       {/* Invitations addressed to me come first — they are time-sensitive */}
       {incoming.map((invite) => (
+        /*
+         * White card like the rest of the list, with a solid accent rail.
+         * The old beige fill sat a hair away from the page colour, so the
+         * card that most needs to be noticed was the hardest one to see.
+         */
         <div
           key={invite.id}
-          className="p-4 rounded-2xl bg-[#EFE2D2] border-l-[3px] border-[#8E7256] space-y-3"
+          className={`${card} p-4 border-l-4 border-l-[#8E7256] space-y-3 shadow-sm`}
         >
-          <p className="text-sm font-bold text-[#4A3F35]">
-            {invite.from} 想跟你聊天
-          </p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
+            <span className="w-9 h-9 rounded-2xl bg-[#8E7256] text-white flex items-center justify-center shrink-0">
+              <MessageSquare className="w-4 h-4" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-[#4A3F35] truncate">
+                {invite.from} 想跟你聊天
+              </p>
+              <p className="text-[11px] text-[#7A6C5E]">同意後就會開一間你們兩個的房間</p>
+            </div>
+          </div>
+          <div className="flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={() => handleRespond(invite, false)}
-              className="px-4 py-2 rounded-xl bg-white text-[#7A6C5E] text-xs font-bold hover:bg-[#F5EFE6] transition-colors cursor-pointer inline-flex items-center gap-1.5"
+              className="px-4 py-2 rounded-xl border border-[#D9C5B2] bg-white text-[#7A6C5E] text-xs font-bold hover:bg-[#F5EFE6] transition-colors cursor-pointer inline-flex items-center gap-1.5"
             >
               <X className="w-3.5 h-3.5" />
               婉拒
             </button>
+            {/* Full width on a phone, sized to its label on anything wider */}
             <button
               type="button"
               onClick={() => handleRespond(invite, true)}
-              className="flex-1 milk-tea-btn-primary py-2 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer"
+              className="flex-1 sm:flex-none sm:px-6 milk-tea-btn-primary py-2 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Check className="w-3.5 h-3.5" />
               同意並開始

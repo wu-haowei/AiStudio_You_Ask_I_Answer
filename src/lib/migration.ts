@@ -1,4 +1,12 @@
-import { collection, doc, getDoc, getDocs, setDoc, writeBatch } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  Timestamp,
+  writeBatch,
+} from 'firebase/firestore';
 import { db } from './firebase';
 
 /**
@@ -21,6 +29,23 @@ export interface MigrationReport {
   playedFaqIds: number;
 }
 
+/**
+ * Gives an old message a server timestamp if it never had one.
+ *
+ * The thread is ordered by `serverTime`, and Firestore drops documents that do
+ * not carry the field being ordered by — so a message written before that
+ * field existed would be copied across and then be invisible. Its `createdAt`
+ * is the sender's own clock, which is close enough for history.
+ */
+const withSortableTime = (data: Record<string, any>): Record<string, any> => {
+  if (data.serverTime) return data;
+
+  const created = Date.parse(data.createdAt || '');
+  if (Number.isNaN(created)) return data;
+
+  return { ...data, serverTime: Timestamp.fromMillis(created) };
+};
+
 /** Copies documents from one subcollection to another, keeping their ids. */
 const copySubcollection = async (
   from: string[],
@@ -29,12 +54,14 @@ const copySubcollection = async (
 ): Promise<number> => {
   const snap = await getDocs(collection(db, from[0], from[1], from[2]));
   const pending = snap.docs.filter((d) => !existing.has(d.id));
+  const isMessages = from[2] === 'messages';
 
   let written = 0;
   for (let i = 0; i < pending.length; i += BATCH_LIMIT) {
     const batch = writeBatch(db);
     for (const d of pending.slice(i, i + BATCH_LIMIT)) {
-      batch.set(doc(db, to[0], to[1], to[2], d.id), d.data());
+      const data = d.data();
+      batch.set(doc(db, to[0], to[1], to[2], d.id), isMessages ? withSortableTime(data) : data);
       written += 1;
     }
     await batch.commit();

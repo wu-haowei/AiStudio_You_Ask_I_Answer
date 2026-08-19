@@ -1,25 +1,25 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
-  query,
   setDoc,
-  where,
   writeBatch,
   Timestamp,
   type CollectionReference,
   type DocumentReference,
   type Firestore,
-  type Query,
 } from 'firebase/firestore';
 import { DATA_SCHEMA_VERSION } from '../types';
 
 /**
- * Whole-database backup for the admin download button.
+ * Backup and restore for one conversation.
  *
  * Firestore's managed export needs a paid plan, so this walks the tree with the
- * ordinary SDK instead: every root collection, every document, and recursively
- * every subcollection.
+ * ordinary SDK instead. The scope is deliberately a single pair room: it is
+ * what the admin screen is about, it is all the security rules would hand over
+ * anyway, and — most importantly — it means a restore can never reach into
+ * somebody else's conversation.
  *
  * Timestamps are written in a tagged shape so they survive the JSON round trip
  * and are decoded again on restore.
@@ -36,6 +36,10 @@ export interface BackupFile {
   exportedAt: string;
   schemaVersion: number;
   documentCount: number;
+  /** Present on room backups; older whole-database files do not have it. */
+  scope?: 'room';
+  roomId?: string;
+  participants?: string[];
   collections: Record<string, BackupCollection>;
 }
 
@@ -44,23 +48,7 @@ export interface BackupFile {
  * is admin-only — so the ones this app creates are named explicitly. Anything
  * added later needs a line here to be included in backups.
  */
-const KNOWN_SUBCOLLECTIONS: Record<string, string[]> = {
-  // `faqs` here is the pair's own question library, stored under its room
-  rooms: ['messages', 'rounds', 'faqs'],
-};
-
-const ROOT_COLLECTIONS = ['faqs', 'categories', 'rooms', 'userPrefs'];
-
-/**
- * Rooms belong to a pair, and the rules only let you read the ones you are in.
- * Listing the whole collection would therefore be rejected, so when a name is
- * given the rooms are fetched with a participant filter instead — the backup
- * covers your own conversations, which is all anyone is allowed to see.
- */
-const roomsFor = (db: Firestore, scopeName?: string) =>
-  scopeName
-    ? query(collection(db, 'rooms'), where('participants', 'array-contains', scopeName.trim()))
-    : collection(db, 'rooms');
+const ROOM_SUBCOLLECTIONS = ['messages', 'rounds', 'faqs'] as const;
 
 /** Timestamps must survive the JSON round trip; store them in a tagged shape. */
 const encodeValue = (value: unknown): unknown => {
@@ -76,69 +64,6 @@ const encodeValue = (value: unknown): unknown => {
   return value;
 };
 
-const dumpCollection = async (
-  ref: CollectionReference | Query,
-  subcollectionNames: string[],
-  onProgress?: (count: number) => void
-): Promise<{ collection: BackupCollection; count: number }> => {
-  const snap = await getDocs(ref);
-  const out: BackupCollection = {};
-  let count = 0;
-
-  for (const document of snap.docs) {
-    const entry: BackupDocument = {
-      data: encodeValue(document.data()) as Record<string, unknown>,
-      subcollections: {},
-    };
-    count += 1;
-
-    for (const name of subcollectionNames) {
-      const nested = await dumpCollection(
-        collection(document.ref, name),
-        KNOWN_SUBCOLLECTIONS[name] || [],
-        onProgress
-      );
-      // Skip empty subcollections so the file stays readable
-      if (Object.keys(nested.collection).length > 0) {
-        entry.subcollections[name] = nested.collection;
-        count += nested.count;
-      }
-    }
-
-    out[document.id] = entry;
-    onProgress?.(count);
-  }
-
-  return { collection: out, count };
-};
-
-/** Reads everything and returns a self-contained snapshot object. */
-export const createBackup = async (
-  db: Firestore,
-  onProgress?: (count: number) => void,
-  scopeName?: string
-): Promise<BackupFile> => {
-  const collections: Record<string, BackupCollection> = {};
-  let documentCount = 0;
-
-  for (const name of ROOT_COLLECTIONS) {
-    const result = await dumpCollection(
-      name === 'rooms' ? roomsFor(db, scopeName) : collection(db, name),
-      KNOWN_SUBCOLLECTIONS[name] || [],
-      onProgress
-    );
-    collections[name] = result.collection;
-    documentCount += result.count;
-  }
-
-  return {
-    exportedAt: new Date().toISOString(),
-    schemaVersion: DATA_SCHEMA_VERSION,
-    documentCount,
-    collections,
-  };
-};
-
 /** Reverses encodeValue when reading a backup file. */
 const decodeValue = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(decodeValue);
@@ -152,11 +77,66 @@ const decodeValue = (value: unknown): unknown => {
   return value;
 };
 
-/** Deletes documents in chunks; Firestore caps a batch at 500 operations. */
-const deleteInBatches = async (
+const dumpCollection = async (
+  ref: CollectionReference,
+  onProgress?: (count: number) => void
+): Promise<{ collection: BackupCollection; count: number }> => {
+  const snap = await getDocs(ref);
+  const out: BackupCollection = {};
+  let count = 0;
+
+  for (const document of snap.docs) {
+    out[document.id] = {
+      data: encodeValue(document.data()) as Record<string, unknown>,
+      subcollections: {},
+    };
+    count += 1;
+    onProgress?.(count);
+  }
+
+  return { collection: out, count };
+};
+
+/** Reads one conversation — the room document and everything under it. */
+export const createRoomBackup = async (
   db: Firestore,
-  refs: DocumentReference[]
-): Promise<number> => {
+  roomId: string,
+  onProgress?: (count: number) => void
+): Promise<BackupFile> => {
+  const roomSnap = await getDoc(doc(db, 'rooms', roomId));
+  if (!roomSnap.exists()) throw new Error('找不到這個對話');
+
+  const roomData = roomSnap.data();
+  const entry: BackupDocument = {
+    data: encodeValue(roomData) as Record<string, unknown>,
+    subcollections: {},
+  };
+
+  let documentCount = 1;
+  for (const sub of ROOM_SUBCOLLECTIONS) {
+    const nested = await dumpCollection(collection(db, 'rooms', roomId, sub), (n) =>
+      onProgress?.(documentCount + n)
+    );
+    // Skip empty subcollections so the file stays readable
+    if (Object.keys(nested.collection).length > 0) {
+      entry.subcollections[sub] = nested.collection;
+      documentCount += nested.count;
+    }
+  }
+
+  return {
+    exportedAt: new Date().toISOString(),
+    schemaVersion: DATA_SCHEMA_VERSION,
+    scope: 'room',
+    roomId,
+    participants: (roomData.participants as string[]) || [],
+    documentCount,
+    collections: { rooms: { [roomId]: entry } },
+  };
+};
+
+/** Deletes documents in chunks; Firestore caps a batch at 500 operations. */
+const deleteInBatches = async (db: Firestore, refs: DocumentReference[]): Promise<number> => {
   for (let i = 0; i < refs.length; i += 400) {
     const batch = writeBatch(db);
     for (const ref of refs.slice(i, i + 400)) batch.delete(ref);
@@ -166,29 +146,21 @@ const deleteInBatches = async (
 };
 
 /**
- * Empties the whole database, subcollections included.
+ * Empties one conversation: chat history, round log and question library.
  *
- * Deleting a document does not remove documents beneath it, so chat history and
- * round logs have to be cleared explicitly before their room document goes.
+ * The room document itself is left in place. Deleting it would strip the
+ * participant list the security rules read, and every following write —
+ * including the restore about to happen — would be refused.
  */
-export const wipeDatabase = async (
+export const wipeRoom = async (
   db: Firestore,
-  onProgress?: (removed: number) => void,
-  scopeName?: string
+  roomId: string,
+  onProgress?: (removed: number) => void
 ): Promise<number> => {
   let removed = 0;
 
-  for (const name of ROOT_COLLECTIONS) {
-    const snap = await getDocs(name === 'rooms' ? roomsFor(db, scopeName) : collection(db, name));
-
-    for (const document of snap.docs) {
-      for (const sub of KNOWN_SUBCOLLECTIONS[name] || []) {
-        const nested = await getDocs(collection(document.ref, sub));
-        removed += await deleteInBatches(db, nested.docs.map((d) => d.ref));
-        onProgress?.(removed);
-      }
-    }
-
+  for (const sub of ROOM_SUBCOLLECTIONS) {
+    const snap = await getDocs(collection(db, 'rooms', roomId, sub));
     removed += await deleteInBatches(db, snap.docs.map((d) => d.ref));
     onProgress?.(removed);
   }
@@ -201,32 +173,66 @@ export interface RestoreReport {
   failed: number;
 }
 
-const restoreCollection = async (
-  ref: CollectionReference,
-  docs: BackupCollection,
-  report: RestoreReport
-): Promise<void> => {
-  for (const [id, entry] of Object.entries(docs)) {
-    try {
-      await setDoc(doc(ref, id), decodeValue(entry.data) as Record<string, unknown>);
-      report.written += 1;
-    } catch (err) {
-      console.warn(`restore failed for ${ref.path}/${id}:`, err);
-      report.failed += 1;
-    }
+/** The room ids a backup file carries, whatever version wrote it. */
+export const roomIdsIn = (backup: BackupFile): string[] =>
+  Object.keys(backup.collections?.rooms || {});
 
-    for (const [name, nested] of Object.entries(entry.subcollections || {})) {
-      await restoreCollection(collection(doc(ref, id), name), nested, report);
-    }
+/** Human-readable "this file belongs to …", for the mismatch message. */
+export const describeBackup = (backup: BackupFile): string => {
+  if (backup.participants && backup.participants.length > 0) {
+    return backup.participants.join(' 與 ');
   }
+  const ids = roomIdsIn(backup);
+  return ids.length > 0 ? ids.join('、') : '未知的對話';
 };
 
-/** Writes a backup back into Firestore. Call wipeDatabase first for a clean slate. */
-export const restoreBackup = async (db: Firestore, backup: BackupFile): Promise<RestoreReport> => {
-  const report: RestoreReport = { written: 0, failed: 0 };
-  for (const [name, docs] of Object.entries(backup.collections || {})) {
-    await restoreCollection(collection(db, name), docs, report);
+/** True when the file carries data for this room — the restore guard. */
+export const backupMatchesRoom = (backup: BackupFile, roomId: string): boolean =>
+  roomIdsIn(backup).includes(roomId);
+
+/**
+ * Writes a conversation back into Firestore.
+ *
+ * The room's own document is merged rather than replaced wholesale: the live
+ * participant list wins, so restoring a file taken before that field existed
+ * cannot lock the pair out of their own room.
+ */
+export const restoreRoomBackup = async (
+  db: Firestore,
+  roomId: string,
+  backup: BackupFile
+): Promise<RestoreReport> => {
+  const entry = (backup.collections?.rooms || {})[roomId];
+  if (!entry) {
+    throw new Error(`這份備份是【${describeBackup(backup)}】的資料，不是目前這一組對話`);
   }
+
+  const report: RestoreReport = { written: 0, failed: 0 };
+  const liveRoom = await getDoc(doc(db, 'rooms', roomId));
+  const live = liveRoom.data() || {};
+
+  const roomData = decodeValue(entry.data) as Record<string, unknown>;
+  if (live.participants) roomData.participants = live.participants;
+  if (live.participantKeys) roomData.participantKeys = live.participantKeys;
+
+  await setDoc(doc(db, 'rooms', roomId), roomData, { merge: true });
+  report.written += 1;
+
+  for (const [sub, docs] of Object.entries(entry.subcollections || {})) {
+    for (const [id, nested] of Object.entries(docs)) {
+      try {
+        await setDoc(
+          doc(db, 'rooms', roomId, sub, id),
+          decodeValue(nested.data) as Record<string, unknown>
+        );
+        report.written += 1;
+      } catch (err) {
+        console.warn(`restore failed for rooms/${roomId}/${sub}/${id}:`, err);
+        report.failed += 1;
+      }
+    }
+  }
+
   return report;
 };
 
@@ -240,5 +246,8 @@ export const parseBackupFile = (raw: string): BackupFile => {
 };
 
 /** Filename for the downloaded snapshot. */
-export const backupFileName = (date = new Date()) =>
-  `youaskianswer-backup-${date.toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+export const backupFileName = (partner = '', date = new Date()) => {
+  const stamp = date.toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  const who = partner.trim() ? `-${partner.trim().replace(/[\\/:*?"<>|\s]/g, '_')}` : '';
+  return `youaskianswer${who}-${stamp}.json`;
+};

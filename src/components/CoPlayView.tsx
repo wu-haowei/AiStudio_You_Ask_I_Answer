@@ -205,6 +205,14 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
 
   // Scroll & New Messages Pill State
   const [hasNewMessages, setHasNewMessages] = useState(false);
+  /**
+   * Whether the reader is parked at the end of the thread.
+   *
+   * Kept in a ref, not state: it changes on every scroll frame and nothing on
+   * screen depends on it directly — re-rendering the whole thread for it would
+   * be a waste.
+   */
+  const isAtBottomRef = useRef(true);
   const isInitialLoadRef = useRef(true);
   const lastSeenMessageIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -224,6 +232,31 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     setHasNewMessages(false);
+  };
+
+  /**
+   * Jump — not glide — to the newest message.
+   *
+   * Used when the thread first appears. Smooth scrolling animates from the top
+   * of a list that is still being laid out, so it either takes a visible second
+   * or gets cancelled halfway and leaves the reader stranded in last week's
+   * conversation. Setting `scrollTop` directly puts them at the bottom before
+   * the first paint, the way opening a chat app should feel.
+   */
+  const jumpToBottom = () => {
+    const el = streamRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    isAtBottomRef.current = true;
+    // Returning the same value lets React skip the render entirely
+    setHasNewMessages((v) => (v ? false : v));
+  };
+
+  /** A little slack, so "almost at the end" counts as being at the end. */
+  const BOTTOM_SLACK_PX = 80;
+
+  const updateAtBottom = (el: HTMLDivElement) => {
+    isAtBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_SLACK_PX;
   };
 
   /** Starts a reply and focuses the composer. */
@@ -285,8 +318,15 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
    * The live window only holds the newest page. When a new message pushes an
    * older one out of it, keep that one on screen by moving it into the paged
    * history — otherwise it would silently vanish from the top of the thread.
+   *
+   * A layout effect, not an ordinary one, and that distinction is the whole
+   * point: for one render the evicted message belongs to neither list, so the
+   * thread is briefly a row shorter. As a plain effect that intermediate state
+   * reached the screen and everything above the viewport jumped up and back —
+   * the flicker you see when a message arrives while scrolled up. Running
+   * before paint means both halves land in the same frame.
    */
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = prevLiveMessagesRef.current;
     prevLiveMessagesRef.current = messages;
     if (previous.length === 0) return;
@@ -302,6 +342,38 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       return [...prev, ...evicted.filter((m) => !known.has(m.id))];
     });
   }, [messages]);
+
+  /*
+   * Land at the newest message when a conversation opens.
+   *
+   * A layout effect so it happens after the rows exist but before the browser
+   * paints — the reader never sees the top of the history flash past. It also
+   * owns the "first load" flag rather than reading one set elsewhere: layout
+   * effects run before ordinary ones, so a flag set in a plain effect would
+   * always arrive a beat too late, and nothing re-renders to give it a second
+   * chance.
+   */
+  useLayoutEffect(() => {
+    if (visibleMessages.length === 0) return;
+
+    if (isInitialLoadRef.current) {
+      isInitialLoadRef.current = false;
+      lastSeenMessageIdRef.current = visibleMessages[visibleMessages.length - 1]?.id ?? null;
+      jumpToBottom();
+      return;
+    }
+
+    /*
+     * Stay pinned while the reader is at the end.
+     *
+     * Re-pinning on every change rather than once per new message is what
+     * makes this reliable: a new arrival pushes the oldest message out of the
+     * live window and into the paged history, which renders a second time with
+     * more content above. A single scroll fired before that second render
+     * would be undone by it, leaving the newest message just below the fold.
+     */
+    if (isAtBottomRef.current) jumpToBottom();
+  }, [visibleMessages]);
 
   // Keep the reading position stable after a page is prepended
   useLayoutEffect(() => {
@@ -324,6 +396,14 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       setMyPlayerId('');
       return;
     }
+
+    /*
+     * Opening another conversation is a fresh thread: without this the "first
+     * load" flag would still be spent from the previous room and the new one
+     * would open wherever the scrollbar happened to be.
+     */
+    isInitialLoadRef.current = true;
+    lastSeenMessageIdRef.current = null;
     enterRoom(passcode);
   }, [passcode, roomId]);
 
@@ -335,22 +415,30 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     const lastMsg = messages[messages.length - 1];
     if (!lastMsg) return;
 
+    // The opening jump is handled by the layout effect above; until it has
+    // run there is nothing to announce.
     if (isInitialLoadRef.current) {
-      isInitialLoadRef.current = false;
       lastSeenMessageIdRef.current = lastMsg.id;
-      scrollToBottom();
       return;
     }
 
     if (lastSeenMessageIdRef.current === lastMsg.id) return;
     lastSeenMessageIdRef.current = lastMsg.id;
 
-    if (lastMsg.author === passcode || lastMsg.author === displayName) {
-      // Our own message — follow it down
+    /*
+     * Follow the conversation down when the reader is already at the end —
+     * their own message, or anyone's. The pill is only for someone who has
+     * scrolled up to read something older and would otherwise not notice.
+     */
+    const isMine = lastMsg.author === passcode || lastMsg.author === displayName;
+    if (isMine) {
+      // Sending always follows, even after scrolling up to re-read something
       scrollToBottom();
-    } else {
+    } else if (!isAtBottomRef.current) {
       setHasNewMessages(true);
     }
+    // Someone else's message while already at the end: the layout effect above
+    // has kept the view pinned, so there is nothing to announce.
   }, [messages]);
 
   // Toast alert when new invitation or question arrives via polling
@@ -1184,9 +1272,17 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
           </button>
         </div>
 
-        {/* Issue 1: Floating Scroll Down Notification Pill */}
+        {/*
+         * New-message pill.
+         *
+         * Positioned over the thread rather than inside it: as a sticky child
+         * it took up a row of its own, so every arrival nudged the messages
+         * down and back up again — read as a flicker. Absolute placement keeps
+         * the layout still, and the bouncing animation is gone for the same
+         * reason.
+         */}
         {hasNewMessages && (
-          <div className="sticky top-2 z-30 flex justify-center pointer-events-none animate-bounce mb-2">
+          <div className="absolute left-0 right-0 top-16 z-30 flex justify-center pointer-events-none">
             <button
               type="button"
               onClick={scrollToBottom}
@@ -1198,22 +1294,29 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
           </div>
         )}
 
+        {/*
+         * Counts, phone only. Deliberately outside the scroll container: it
+         * used to ride along with the messages and disappeared the moment you
+         * scrolled, which is the opposite of what a status line is for.
+         */}
+        <div className="sm:hidden shrink-0 flex justify-center pb-1.5 mb-1 border-b border-[#D9C5B2]/60 text-[10px] text-[#7A6C5E]">
+          {isLoadingHistory
+            ? '載入中…'
+            : `${visibleMessages.length} 則訊息 ‧ 3 小時內 ${recentRoundCount} 題`}
+        </div>
+
         {/* Embedded Dialogue Stream */}
         <div
           ref={streamRef}
           onScroll={(e) => {
+            updateAtBottom(e.currentTarget);
+            // Back at the end: whatever arrived while scrolled up has been seen
+            if (isAtBottomRef.current && hasNewMessages) setHasNewMessages(false);
             // Near the top and more history exists -> pull the next page
             if (e.currentTarget.scrollTop < 80) handleLoadOlder();
           }}
           className="flex-1 min-h-0 overflow-y-auto space-y-3.5 pr-1.5 scrollbar-thin relative"
         >
-          {/* Phone-sized screens get the counts here instead of in a fixed row */}
-          <div className="sm:hidden flex justify-center pb-1.5 text-[10px] text-[#7A6C5E]">
-            {isLoadingHistory
-              ? '載入中…'
-              : `${visibleMessages.length} 則訊息 ‧ 3 小時內 ${recentRoundCount} 題`}
-          </div>
-
           {currentRoom && !isLoadingHistory && visibleMessages.length > 0 && (
             <div className="flex justify-center pb-1">
               {isLoadingMore ? (

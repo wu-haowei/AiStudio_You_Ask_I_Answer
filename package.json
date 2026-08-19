@@ -11,7 +11,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test:rules": "npx --yes firebase-tools@14 emulators:exec --project rules-test --only firestore \"node tests/firestore.rules.test.mjs\""
+    "test:rules": "npx --yes firebase-tools@14 emulators:exec --project rules-test --only firestore \"node tests/firestore.rules.test.mjs\"",
+    "emulators": "npx --yes firebase-tools@14 emulators:start --project demo-youaskianswer --only firestore,auth",
+    "dev:local": "vite --mode emulator"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
+  connectFirestoreEmulator,
   getFirestore,
   doc,
   collection,
@@ -19,7 +20,13 @@ import {
   serverTimestamp,
   type QueryDocumentSnapshot,
 } from 'firebase/firestore';
-import { getAuth, signInAnonymously, onAuthStateChanged, type User } from 'firebase/auth';
+import {
+  connectAuthEmulator,
+  getAuth,
+  signInAnonymously,
+  onAuthStateChanged,
+  type User,
+} from 'firebase/auth';
 import {
   Category,
   CoPlayRoom,
@@ -46,6 +53,20 @@ export const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+
+/*
+ * Local emulator, opt-in only.
+ *
+ * Started with `npm run dev:local`, which runs Vite in the `emulator` mode and
+ * therefore loads `.env.emulator`. Anything else — including the production
+ * build — talks to the real project, so there is no way to ship this by
+ * accident.
+ */
+if (env.VITE_USE_EMULATOR === 'true') {
+  connectFirestoreEmulator(db, '127.0.0.1', 8080);
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  console.info('[firebase] using the local emulator — no production data is touched');
+}
 
 /** Collection names — single source of truth. */
 export const COLLECTIONS = {
@@ -187,10 +208,33 @@ const messagesRef = (code: string) =>
 const roundsRef = (code: string) => collection(db, COLLECTIONS.ROOMS, code, COLLECTIONS.ROUNDS);
 
 /** Firestore stores players as a map (safe concurrent merges); the UI wants an array. */
+/*
+ * Player rows, with the fields the UI relies on always present.
+ *
+ * A restored backup — or a room written by an older version — can contain
+ * entries missing `name` or `lastActive`, and every consumer downstream
+ * assumes they are there. Filling them in once here is cheaper than guarding
+ * at each use, and a nameless row is dropped outright since it cannot be
+ * matched to anybody.
+ */
 const playersMapToArray = (players: any): RoomPlayer[] => {
   if (!players) return [];
-  if (Array.isArray(players)) return players;
-  return Object.entries(players).map(([id, p]: [string, any]) => ({ ...p, id }));
+
+  const rows: any[] = Array.isArray(players)
+    ? players
+    : Object.entries(players).map(([id, p]: [string, any]) => ({ ...(p || {}), id }));
+
+  return rows
+    .filter((p) => p && typeof p === 'object')
+    .map((p) => ({
+      ...p,
+      id: String(p.id || ''),
+      name: typeof p.name === 'string' ? p.name : '',
+      score: Number(p.score) || 0,
+      isHost: !!p.isHost,
+      lastActive: typeof p.lastActive === 'string' ? p.lastActive : '',
+    }))
+    .filter((p) => p.id);
 };
 
 const normalizeRoom = (code: string, data: any): CoPlayRoom => ({
@@ -427,6 +471,27 @@ export interface MessagePage {
 const toMessage = (d: QueryDocumentSnapshot): RoomMessage =>
   d.data({ serverTimestamps: 'estimate' }) as RoomMessage;
 
+/**
+ * When a message happened, in milliseconds.
+ *
+ * A message you have just sent carries no server timestamp yet — Firestore
+ * fills it in when the write lands — so the local snapshot sorts it as if it
+ * had no time at all and it surfaces at the wrong end of the thread. Falling
+ * back to the sender's own `createdAt` keeps it where it belongs until the
+ * server's value arrives.
+ */
+const messageTime = (m: RoomMessage): number => {
+  const server = (m as any).serverTime;
+  if (server?.toMillis) return server.toMillis();
+  if (server?.seconds) return server.seconds * 1000;
+  const created = Date.parse(m.createdAt || '');
+  return Number.isNaN(created) ? 0 : created;
+};
+
+/** Oldest first — the order the thread is read in. */
+const inReadingOrder = (messages: RoomMessage[]): RoomMessage[] =>
+  [...messages].sort((a, b) => messageTime(a) - messageTime(b));
+
 /** Fetches the page of messages immediately older than `cursor`, oldest-first. */
 export const loadOlderMessages = async (
   code: string,
@@ -438,7 +503,7 @@ export const loadOlderMessages = async (
       query(messagesRef(code), orderBy('serverTime', 'desc'), startAfter(cursor), fsLimit(max))
     );
     return {
-      messages: snap.docs.map(toMessage).reverse(),
+      messages: inReadingOrder(snap.docs.map(toMessage)),
       cursor: snap.docs[snap.docs.length - 1] ?? null,
       hasMore: snap.docs.length === max,
     };
@@ -464,7 +529,7 @@ export const subscribeToMessages = (
     query(messagesRef(code), orderBy('serverTime', 'desc'), fsLimit(max)),
     (snap) =>
       onUpdate({
-        messages: snap.docs.map(toMessage).reverse(),
+        messages: inReadingOrder(snap.docs.map(toMessage)),
         // Ordered newest-first, so the last document is the oldest of the page
         cursor: snap.docs[snap.docs.length - 1] ?? null,
         hasMore: snap.docs.length === max,
@@ -589,6 +654,43 @@ export const recordRound = async (
   } catch (err) {
     console.warn('[firestore] failed to record round:', err);
   }
+};
+
+/** Every question this pair has already played, flattened across categories. */
+export const loadPlayedFaqIds = async (code: string): Promise<string[]> => {
+  try {
+    const snap = await getDoc(roomRef(code));
+    const played = (snap.data()?.playedFaqIds || {}) as Record<string, string[]>;
+    return Array.from(new Set(Object.values(played).flat().filter(Boolean)));
+  } catch (err) {
+    console.warn('[firestore] failed to read played questions:', err);
+    return [];
+  }
+};
+
+/**
+ * Drops ids from every category's played list.
+ *
+ * Called after those questions are deleted — leaving them behind would keep
+ * counting them against a library they are no longer part of.
+ */
+export const forgetPlayedFaqIds = async (code: string, ids: string[]) => {
+  if (ids.length === 0) return;
+
+  const snap = await getDoc(roomRef(code));
+  const played = (snap.data()?.playedFaqIds || {}) as Record<string, string[]>;
+  const removed = new Set(ids);
+  const next: Record<string, string[]> = {};
+
+  for (const [category, list] of Object.entries(played)) {
+    next[category] = (list || []).filter((id) => !removed.has(id));
+  }
+
+  await setDoc(
+    roomRef(code),
+    { playedFaqIds: next, updatedAt: new Date().toISOString() },
+    { merge: true }
+  );
 };
 
 /**

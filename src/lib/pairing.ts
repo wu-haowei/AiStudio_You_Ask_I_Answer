@@ -41,11 +41,19 @@ export interface ChatInvite {
 }
 
 /** Names are case-insensitive, so ids are built from the lowercased form. */
-const keyOf = (name: string) => encodeURIComponent(name.trim().toLowerCase());
+/**
+ * Normalised name.
+ *
+ * Tolerant of missing values on purpose: restored backups and rooms written by
+ * older versions can carry player rows with no name at all, and a comparison
+ * helper is the wrong place to blow up over it.
+ */
+const normalise = (name: unknown) => String(name ?? '').trim().toLowerCase();
+
+const keyOf = (name: string) => encodeURIComponent(normalise(name));
 
 /** True when two names refer to the same person. */
-export const sameName = (a: string, b: string) =>
-  a.trim().toLowerCase() === b.trim().toLowerCase();
+export const sameName = (a: unknown, b: unknown) => normalise(a) === normalise(b);
 
 /**
  * Room id for a pair, derived from both names so each side computes the same

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Plus,
   Search,
@@ -12,6 +12,7 @@ import {
   Upload,
   RotateCcw,
   History,
+  CheckCheck,
   DatabaseBackup,
   ArchiveRestore,
   AlertTriangle,
@@ -22,10 +23,12 @@ import { Category, FAQItem } from '../types';
 import { db } from '../lib/firebase';
 import {
   backupFileName,
-  createBackup,
+  backupMatchesRoom,
+  createRoomBackup,
+  describeBackup,
   parseBackupFile,
-  restoreBackup,
-  wipeDatabase,
+  restoreRoomBackup,
+  wipeRoom,
   type BackupFile,
 } from '../lib/backup';
 import { clearAllStorageAndSession, CURRENT_APP_VERSION } from '../utils/storage';
@@ -46,8 +49,11 @@ interface AdminManageViewProps {
   /** True while this pair has no library of its own and is playing the built-in set. */
   isUsingDefaults?: boolean;
   partnerName?: string;
-  /** Signed-in name — backup and restore are limited to this person's rooms. */
-  myName: string;
+  /** Backup and restore are scoped to this one conversation. */
+  roomId: string;
+  /** Questions this pair has already answered, offered for clean-up. */
+  answeredFaqs?: FAQItem[];
+  onDeleteAnswered?: () => void | Promise<void>;
   isLoading?: boolean;
   onExportData: () => void;
   showToast: (title: string, description?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
@@ -65,7 +71,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   onImportData,
   isUsingDefaults = false,
   partnerName,
-  myName,
+  roomId,
+  answeredFaqs = [],
+  onDeleteAnswered,
   onExportData,
   isLoading = false,
   showToast,
@@ -99,6 +107,30 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
 
   // Whole-database backup
   const [isBackingUp, setIsBackingUp] = useState(false);
+
+  /** Answered ids, for dimming rows the pair has already played. */
+  const answeredIds = useMemo(
+    () => new Set(answeredFaqs.map((f) => f.id)),
+    [answeredFaqs]
+  );
+
+  // Deleting answered questions is confirmed first — it cannot be undone
+  const [isConfirmingAnswered, setIsConfirmingAnswered] = useState(false);
+  const [isDeletingAnswered, setIsDeletingAnswered] = useState(false);
+
+  const handleDeleteAnswered = async () => {
+    if (!onDeleteAnswered || isDeletingAnswered) return;
+    setIsDeletingAnswered(true);
+    try {
+      await onDeleteAnswered();
+      setIsConfirmingAnswered(false);
+    } catch (err: any) {
+      console.error('Delete answered failed:', err);
+      showToast('刪除失敗', err?.message || '請稍後再試', 'error');
+    } finally {
+      setIsDeletingAnswered(false);
+    }
+  };
 
   // Restore: a file is staged first so it can be confirmed before anything runs
   const [pendingRestore, setPendingRestore] = useState<BackupFile | null>(null);
@@ -155,22 +187,21 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   };
 
   /**
-   * Downloads a JSON snapshot of everything this account can see: the shared
-   * library plus every conversation it takes part in, chat history included.
-   * Firestore's managed export needs a paid plan, so it is assembled
-   * client-side — and the rules only hand over your own rooms anyway.
+   * Downloads a JSON snapshot of this one conversation — its state, chat
+   * history, round log and question library. Firestore's managed export needs
+   * a paid plan, so the file is assembled client-side.
    */
   const handleFullBackup = async () => {
     if (isBackingUp) return;
     setIsBackingUp(true);
 
     try {
-      const backup = await createBackup(db, undefined, myName);
+      const backup = await createRoomBackup(db, roomId);
       const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = backupFileName();
+      link.download = backupFileName(partnerName);
       link.click();
       URL.revokeObjectURL(url);
 
@@ -191,6 +222,22 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
 
     try {
       const backup = parseBackupFile(await file.text());
+
+      /*
+       * Refuse a file from a different pair before anything is staged. The
+       * check is on the room id rather than the names, so a renamed file — or
+       * a whole-database backup from an older version — is judged by what is
+       * actually inside it.
+       */
+      if (!backupMatchesRoom(backup, roomId)) {
+        showToast(
+          '這份備份不屬於這個對話',
+          `檔案裡是【${describeBackup(backup)}】的資料，請切換到那組對話再還原`,
+          'error'
+        );
+        return;
+      }
+
       setPendingRestore(backup);
     } catch (err: any) {
       showToast('無法讀取備份檔', err?.message || '檔案格式不正確', 'error');
@@ -203,15 +250,13 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
 
     setIsRestoring(true);
     try {
-      setRestoreStatus('清空資料庫…');
-      const removed = await wipeDatabase(
-        db,
-        (count) => setRestoreStatus(`清空資料庫… 已刪除 ${count} 筆`),
-        myName
+      setRestoreStatus('清空這組對話…');
+      const removed = await wipeRoom(db, roomId, (count) =>
+        setRestoreStatus(`清空這組對話… 已刪除 ${count} 筆`)
       );
 
       setRestoreStatus('寫回備份資料…');
-      const report = await restoreBackup(db, pendingRestore);
+      const report = await restoreRoomBackup(db, roomId, pendingRestore);
 
       setPendingRestore(null);
       showToast(
@@ -339,6 +384,22 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             <span>新增題目</span>
           </button>
 
+          {onDeleteAnswered && (
+            <button
+              onClick={() => setIsConfirmingAnswered(true)}
+              disabled={answeredFaqs.length === 0}
+              title={
+                answeredFaqs.length === 0
+                  ? '這組還沒有答過的題目'
+                  : '刪除這組已經答過的題目'
+              }
+              className="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-white text-[#7A6C65] border border-[#D0BFAC] hover:text-rose-700 hover:border-rose-300 hover:bg-rose-50 disabled:opacity-40 disabled:hover:text-[#7A6C65] disabled:hover:border-[#D0BFAC] disabled:hover:bg-white transition-all inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <CheckCheck className="w-4 h-4" />
+              <span>刪除答過的 ({answeredFaqs.length})</span>
+            </button>
+          )}
+
           {/* Backup Tools */}
           <div className="flex items-center gap-1 border-l border-[#E8DFD3] pl-2">
             <button
@@ -351,13 +412,13 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             <button
               onClick={handleFullBackup}
               disabled={isBackingUp}
-              title="下載完整備份 (含對話紀錄與出題歷史)"
+              title="下載這組對話的備份 (含對話紀錄與出題歷史)"
               className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors disabled:opacity-50"
             >
               <DatabaseBackup className={`w-4 h-4 ${isBackingUp ? 'animate-pulse' : ''}`} />
             </button>
             <label
-              title="從備份還原 (會先清空整個資料庫)"
+              title="從備份還原 (只清空並還原這組對話)"
               className="p-2 rounded-xl text-[#7A6C65] hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
             >
               <ArchiveRestore className="w-4 h-4" />
@@ -480,11 +541,17 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             沒有符合條件的題目。
           </div>
         ) : (
-          filteredFaqs.map((faq) => (
+          filteredFaqs.map((faq) => {
+            const isAnswered = answeredIds.has(faq.id);
+            return (
             <div
               key={faq.id}
               className={`milk-tea-card rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
                 faq.isHidden ? 'opacity-60 bg-[#F5F2EB]' : ''
+              } ${
+                /* Answered questions stay editable — just quieter, so the
+                   unplayed ones are what the eye lands on first. */
+                isAnswered && !faq.isHidden ? 'opacity-70 bg-[#F7F4EE]' : ''
               } ${selectedIds.has(faq.id) ? 'ring-2 ring-[#8C6D53]' : ''}`}
             >
               <input
@@ -508,6 +575,11 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                   {faq.isHidden && (
                     <span className="text-[10px] font-bold text-gray-600 bg-gray-200 px-2 py-0.5 rounded-md">
                       已隱藏
+                    </span>
+                  )}
+                  {isAnswered && (
+                    <span className="text-[10px] font-bold text-[#7A6C65] bg-[#EFE7DC] px-2 py-0.5 rounded-md inline-flex items-center gap-0.5">
+                      <CheckCheck className="w-3 h-3" /> 答過了
                     </span>
                   )}
                   {faq.options && faq.options.length > 0 && (
@@ -568,7 +640,8 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 </button>
               </div>
             </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -711,6 +784,67 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         showToast={showToast}
       />
 
+      {/* Answered clean-up confirmation */}
+      {isConfirmingAnswered && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-fade-in">
+          <div className="bg-[#FCFAF6] rounded-3xl border border-[#E8DFD3] p-6 max-w-md w-full space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-[#3A2E2B]">刪除答過的題目？</h3>
+                <p className="text-xs text-[#7A6C65] mt-1 leading-relaxed">
+                  這組已經答過
+                  <span className="font-bold text-[#3A2E2B]"> {answeredFaqs.length} </span>
+                  題，刪除後<span className="font-bold text-rose-700">無法復原</span>
+                  。已經聊過的對話紀錄不受影響。
+                </p>
+              </div>
+            </div>
+
+            {isUsingDefaults && (
+              <p className="text-[11px] text-[#7A6C65] leading-relaxed rounded-2xl bg-[#F5EFE6] border border-[#E8DFD3] p-3">
+                目前用的是內建預設題庫。刪除會先把剩下的
+                {' '}{faqs.length - answeredFaqs.length}{' '}
+                題存成你們專屬的題庫，之後就跟其他對話互不影響。
+              </p>
+            )}
+
+            <div className="rounded-2xl bg-[#F5EFE6] border border-[#E8DFD3] p-3.5 space-y-1.5 max-h-40 overflow-y-auto">
+              {answeredFaqs.slice(0, 8).map((f) => (
+                <p key={f.id} className="text-xs text-[#3A2E2B] truncate">
+                  · {f.question}
+                </p>
+              ))}
+              {answeredFaqs.length > 8 && (
+                <p className="text-[11px] text-[#7A6C65]">
+                  …還有 {answeredFaqs.length - 8} 題
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                onClick={() => setIsConfirmingAnswered(false)}
+                disabled={isDeletingAnswered}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold bg-white border border-[#D0BFAC] text-[#7A6C65] hover:bg-[#F4ECE1] disabled:opacity-50 transition-colors cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleDeleteAnswered}
+                disabled={isDeletingAnswered}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold bg-rose-600 hover:bg-rose-700 text-white disabled:opacity-50 transition-colors inline-flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4" />
+                {isDeletingAnswered ? '刪除中…' : `刪除 ${answeredFaqs.length} 題`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Restore Confirmation */}
       {pendingRestore && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-fade-in">
@@ -723,7 +857,8 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 <h3 className="text-base font-bold text-[#3A2E2B]">確認從備份還原？</h3>
                 <p className="text-xs text-[#7A6C65] mt-1 leading-relaxed">
                   這會<span className="font-bold text-rose-700">先刪除</span>
-                  目前雲端的所有資料，再寫入備份內容。無法復原。
+                  你與 {partnerName || '對方'} 這一組的對話、出題紀錄與題庫，
+                  再寫入備份內容。無法復原。
                 </p>
               </div>
             </div>
@@ -742,6 +877,12 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 </span>
               </div>
               <div className="flex justify-between">
+                <span className="text-[#7A6C65]">備份對象</span>
+                <span className="font-semibold text-[#3A2E2B]">
+                  {describeBackup(pendingRestore)}
+                </span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-[#7A6C65]">結構版本</span>
                 <span className="font-semibold text-[#3A2E2B]">
                   v{pendingRestore.schemaVersion ?? '?'}
@@ -750,8 +891,8 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             </div>
 
             <p className="text-[11px] text-[#7A6C65] leading-relaxed">
-              清空與寫入範圍：題庫、分類、房間狀態、對話紀錄、出題歷史。
-              建議先按左邊的備份鈕保存一份目前的狀態。
+              範圍只限這一組對話：房間狀態、對話紀錄、出題歷史、題庫。
+              其他對話完全不受影響。建議先按左邊的備份鈕保存一份目前的狀態。
             </p>
 
             {restoreStatus && (

@@ -186,15 +186,25 @@ service cloud.firestore {
 
     match /rooms/{roomId} {
       /*
-       * `resource == null` covers a room that does not exist yet: the app looks
-       * before it creates, and a denied lookup would surface as an error rather
-       * than as "not there".
+       * `get` and `list` are split on purpose.
+       *
+       * A single lookup has to tolerate a room that does not exist yet — the
+       * app looks before it creates, and a denied lookup surfaces as an error
+       * rather than as "not there". But that same `resource == null` clause is
+       * trivially true while a query is being authorised, which would let
+       * anyone list every room in the database. Queries therefore get their own
+       * rule, evaluated against each document they would return.
        */
-      allow read: if hasSession()
+      allow get: if hasSession()
         && (resource == null
             || isLegacyRoom(roomId)
             || !('participants' in resource.data)
             || isIn(resource.data));
+
+      allow list: if hasSession()
+        && resource != null
+        && ('participants' in resource.data)
+        && isIn(resource.data);
 
       // A room may only be created with yourself in it
       allow create: if hasSession()
