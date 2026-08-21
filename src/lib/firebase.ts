@@ -364,6 +364,65 @@ export const setGameInvitation = (code: string, invitation: GameInvitation | nul
 export const setActiveGameQuestion = (code: string, question: RoomQuestion | null) =>
   updateRoom(code, { activeGameQuestion: question });
 
+/** Why a round could not be started; drives the message shown to the player. */
+export type ClaimInviteFailure = 'invited' | 'playing' | 'missing' | 'error';
+
+/**
+ * Deliberately one flat shape rather than a discriminated union: this project
+ * compiles without `strict`, and without it a `ok: true | false` discriminant
+ * does not narrow, so callers could not reach `reason`.
+ */
+export interface ClaimInviteResult {
+  ok: boolean;
+  reason?: ClaimInviteFailure;
+}
+
+/**
+ * Starts a round, but only when none is already under way.
+ *
+ * The check has to happen inside the transaction. Reading the room first and
+ * then writing would leave a window where both devices see an idle room and
+ * both write an invitation — the second one wins, and the player who lost
+ * watches their own dialog turn into the other person's invite without ever
+ * being told why.
+ *
+ * A declined invitation is spent, and a revealed question is finished; neither
+ * blocks a new round.
+ */
+export const claimGameInvitation = async (
+  code: string,
+  invitation: GameInvitation
+): Promise<ClaimInviteResult> => {
+  try {
+    return await runTransaction<ClaimInviteResult>(db, async (tx) => {
+      const snap = await tx.get(roomRef(code));
+      if (!snap.exists()) return { ok: false, reason: 'missing' };
+
+      const data = snap.data() || {};
+      const current = data.gameInvitation as GameInvitation | null | undefined;
+      const active = data.activeGameQuestion as RoomQuestion | null | undefined;
+
+      if (current && current.status !== 'declined') return { ok: false, reason: 'invited' };
+      if (active && !active.isRevealed) return { ok: false, reason: 'playing' };
+
+      tx.set(
+        roomRef(code),
+        {
+          gameInvitation: sanitizeForFirestore(invitation, false),
+          // Clears whatever the previous round left behind.
+          activeGameQuestion: deleteField(),
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+      return { ok: true };
+    });
+  } catch (err) {
+    console.warn('[firestore] failed to claim invitation:', err);
+    return { ok: false, reason: 'error' };
+  }
+};
+
 /**
  * Reads a side's picks, tolerating rounds stored before multi-select existed.
  */

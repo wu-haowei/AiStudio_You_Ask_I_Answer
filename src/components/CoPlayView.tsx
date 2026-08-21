@@ -8,7 +8,6 @@ import {
   Clock,
   Target,
   ArrowDown,
-  Award,
   ChevronUp,
   Reply,
   X,
@@ -17,6 +16,7 @@ import {
   CoPlayRoom,
   DATA_SCHEMA_VERSION,
   FAQItem,
+  GameInvitation,
   MessageReplyRef,
   RoomMessage,
   RoomQuestion,
@@ -29,6 +29,7 @@ import {
   type MessageCursor,
   setActiveGameQuestion,
   setGameInvitation,
+  claimGameInvitation,
   prunePlayers,
   readPicks,
   recordRound,
@@ -43,6 +44,7 @@ import { useIdentity } from '../lib/identity';
 import { sameName } from '../lib/pairing';
 import { CoPlayInviteModals } from './coplay/CoPlayInviteModals';
 import { CoPlayActiveQuestionModal } from './coplay/CoPlayActiveQuestionModal';
+import { RevealResultCard } from './coplay/RevealResultCard';
 
 interface CoPlayViewProps {
   /** The pair room this conversation belongs to. */
@@ -60,6 +62,8 @@ interface CoPlayViewProps {
     onlineCount: number;
     isRoundActive: boolean;
     canInvite: boolean;
+    /** Why the challenge button is unavailable, for its tooltip. */
+    inviteHint?: string;
     onInvite: () => void;
   }) => void;
   /** Personal chat background; empty image means the plain milk-tea surface. */
@@ -142,6 +146,17 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   const { name: passcode } = useIdentity();
   const displayName = passcode;
 
+  /*
+   * The opponent is fixed by the pairing, so it comes from the prop rather than
+   * from whoever happens to be in the players list. Two windows of my own
+   * account are two player rows with my name on them, and picking "the other
+   * row" used to make me my own opponent.
+   *
+   * Declared up here because the notification effects below name the partner.
+   */
+  const partnerPasscode = partnerName.trim();
+  const partnerDisplayName = partnerPasscode || '對方';
+
   // Tab-unique session id so two windows on one device are separate players
   const [tabSessionId] = useState<string>(() => {
     let id = sessionStorage.getItem(TAB_SESSION_ID_KEY);
@@ -221,6 +236,11 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   const prevInviteIdRef = useRef<string | null>(null);
   const prevInviteAcceptedRef = useRef<string | null>(null);
   const prevQuestionIdRef = useRef<string | null>(null);
+  /** Last invitation seen, so its disappearance can be noticed and explained. */
+  const prevInviteRef = useRef<GameInvitation | null>(null);
+  /** Invitation id this device cancelled — it needs no "partner cancelled" toast. */
+  const cancelledByMeRef = useRef<string | null>(null);
+  const prevDeclinedRef = useRef<string | null>(null);
 
   // Keep currentRoomRef in sync to avoid effect dependency re-subscribe loops
   const currentRoomRef = useRef<CoPlayRoom | null>(currentRoom);
@@ -476,6 +496,45 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     }
   }, [currentRoom, passcode]);
 
+  /*
+   * A round that ends without a question being published.
+   *
+   * Whoever pressed cancel already knows; this is for the other side, whose
+   * dialog or banner disappears with no explanation otherwise. Publishing a
+   * question also clears the invitation, so that case is filtered out by
+   * checking whether a question turned up in its place.
+   */
+  useEffect(() => {
+    if (!currentRoom) return;
+    const previous = prevInviteRef.current;
+    const invite = currentRoom.gameInvitation || null;
+    prevInviteRef.current = invite;
+
+    if (!previous || invite) return;
+    if (previous.status === 'declined') return; // announced by the decline path
+    if (currentRoom.activeGameQuestion) return; // the question was published
+    if (cancelledByMeRef.current === previous.id) {
+      cancelledByMeRef.current = null;
+      return;
+    }
+    showToast('這一輪取消了', `${partnerDisplayName} 取消了這次考驗`, 'info');
+  }, [currentRoom, partnerDisplayName]);
+
+  /*
+   * A decline is only ever written by the person declining, so the sender is
+   * the one who has to notice it and clear it. Left in place it would count as
+   * a round still in flight and lock the challenge button for good.
+   */
+  useEffect(() => {
+    if (!currentRoom) return;
+    const invite = currentRoom.gameInvitation;
+    if (!invite || invite.status !== 'declined' || invite.sender !== passcode) return;
+    if (prevDeclinedRef.current === invite.id) return;
+    prevDeclinedRef.current = invite.id;
+    showToast('對方婉拒了考驗', `${partnerDisplayName} 這次不想玩`, 'info');
+    setGameInvitation(currentRoom.code, null);
+  }, [currentRoom, passcode, partnerDisplayName]);
+
   // Auto reset modal dismiss states when invite or question ID changes
   useEffect(() => {
     if (currentRoom?.gameInvitation?.id) {
@@ -577,15 +636,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   // Names are the identity, so no lookup table is needed
   const getNameByPasscode = (code: string) => code || '';
 
-  /*
-   * The opponent is fixed by the pairing, so it comes from the prop rather than
-   * from whoever happens to be in the players list. Two windows of my own
-   * account are two player rows with my name on them, and picking "the other
-   * row" used to make me my own opponent.
-   */
-  const partnerPasscode = partnerName.trim();
-  const partnerDisplayName = partnerPasscode || '對方';
-
+  /** The partner's live player row, for presence. See partnerPasscode above. */
   const partnerPlayer = (currentRoom?.players || [])
     .filter((p) => sameName(p.name, partnerPasscode))
     .sort((a, b) => (b.lastActive || '').localeCompare(a.lastActive || ''))[0];
@@ -628,15 +679,31 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     setIsQuestionModalOpen(false);
 
     try {
-      // Clear any leftover question from the previous round before inviting again
-      await setActiveGameQuestion(currentRoom.code, null);
-      await setGameInvitation(currentRoom.code, {
+      /*
+       * The button is disabled while a round is in flight, but the guard has to
+       * exist on the write too: both devices can be looking at an idle room in
+       * the instant before either snapshot arrives. The transaction also clears
+       * the previous round's leftover question.
+       */
+      const claimed = await claimGameInvitation(currentRoom.code, {
         id: `inv-${Date.now()}`,
         sender: passcode,
         target: partnerPasscode,
         status: 'pending',
         createdAt: new Date().toISOString(),
       });
+
+      if (!claimed.ok) {
+        const reasons: Record<string, string> = {
+          invited: `${partnerDisplayName} 剛好也發起了考驗，先回應那一則吧`,
+          playing: '這一輪還沒結束，先完成或取消它',
+          missing: '找不到這個對話',
+          error: '請稍後再試',
+        };
+        showToast('現在無法發起考驗', reasons[claimed.reason || 'error'], 'warning');
+        return;
+      }
+
       showToast('已發出邀請', `等待 ${partnerDisplayName} 回應`, 'info');
     } catch (err: any) {
       showToast('邀請失敗', err?.message || '請稍後再試', 'error');
@@ -679,13 +746,33 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     }
   };
 
-  // Cancel Game Invitation
+  /*
+   * Cancel Game Invitation.
+   *
+   * The other side may be staring at the accept dialog or the "waiting for the
+   * question" banner; both vanish the moment this write lands. Leaving that
+   * unexplained reads as a glitch, so the cancellation is announced twice — a
+   * transcript line that survives, and a toast that gets noticed.
+   */
   const handleCancelInvite = async () => {
-    if (!currentRoom) return;
+    if (!currentRoom?.gameInvitation) return;
+    const invite = currentRoom.gameInvitation;
+    // Suppresses the "partner cancelled" toast for whoever pressed the button.
+    cancelledByMeRef.current = invite.id;
     try {
       await setGameInvitation(currentRoom.code, null);
+      await appendMessage(
+        currentRoom.code,
+        buildMessage({
+          id: `msg-cancel-inv-${Date.now()}`,
+          author: '系統',
+          text: `${getNameByPasscode(passcode)} 取消了這一輪考驗。`,
+          type: 'system',
+        })
+      );
       showToast('已取消邀請', undefined, 'info');
     } catch (err: any) {
+      cancelledByMeRef.current = null;
       showToast('取消失敗', err?.message || '請稍後再試', 'error');
     }
   };
@@ -987,6 +1074,10 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
             author: REVEAL_AUTHOR,
             text: resultText,
             type: 'system',
+            // Carried so the reveal card can list every option, not just the
+            // picked ones. Reveals written before this are missing it, which
+            // the card falls back on.
+            gameQuestion: updatedQ,
           })
         );
         scrollToBottom();
@@ -1035,7 +1126,24 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       .map((p) => p.name.trim().toLowerCase())
   ).size;
 
-  const isRoundActive = !!activeQ || !!inviteState;
+  /*
+   * A round is "in flight" only while it can still go somewhere.
+   *
+   * Both halves need the qualifier. A declined invitation is never cleared by
+   * the person who declined, and a revealed question stays on the room document
+   * until the next round starts — so treating either as active would disable
+   * the challenge button for good after the first decline or the first
+   * completed round.
+   */
+  const isInviteLive = !!inviteState && inviteState.status !== 'declined';
+  const isRoundActive = isInviteLive || (!!activeQ && !activeQ.isRevealed);
+
+  /** Shared by the in-card button and the phone header button. */
+  const inviteHint = !hasPartner
+    ? '等待對方進入房間'
+    : isRoundActive
+      ? '這一輪還沒結束，先完成或取消它'
+      : undefined;
 
   const showQuestionModal =
     (isAcceptedWaitingInitiator || (isQuestionModalOpen && inviteState?.status === 'accepted')) &&
@@ -1056,10 +1164,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     onStatusChange?.({
       onlineCount: onlinePlayerCount,
       isRoundActive,
-      canInvite: hasPartner,
+      // The phone header shows the same button; it must obey the same guard.
+      canInvite: hasPartner && !isRoundActive,
+      inviteHint,
       onInvite: stableInvite,
     });
-  }, [onlinePlayerCount, isRoundActive, hasPartner, onStatusChange, stableInvite]);
+  }, [onlinePlayerCount, isRoundActive, hasPartner, inviteHint, onStatusChange, stableInvite]);
 
   /*
    * Fill the form each time it opens: a fresh unplayed question for a normal
@@ -1263,8 +1373,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
           <button
             type="button"
             onClick={handleSendGameInvite}
-            disabled={!hasPartner}
-            title={hasPartner ? undefined : '等待對方進入房間'}
+            disabled={!hasPartner || isRoundActive}
+            title={inviteHint}
             className="px-3 py-2 rounded-xl bg-[#E8D8C4] hover:bg-[#D9C5B2] disabled:opacity-40 disabled:cursor-not-allowed text-[#4A3F35] text-xs font-bold flex items-center gap-1 transition-colors shrink-0"
           >
             <PlusCircle className="w-3.5 h-3.5" />
@@ -1373,29 +1483,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
                       highlightedId === m.id ? 'ring-2 ring-[#A68B6D]' : ''
                     }`}
                   >
-                    <div className={`w-full max-w-xl p-4 sm:p-5 rounded-3xl border-2 ${
-                      isCorrect
-                        ? 'bg-emerald-50/90 border-emerald-300 text-emerald-900'
-                        : 'bg-amber-50/90 border-amber-300 text-amber-900'
-                    } shadow-md space-y-2`}>
-                      <div className="flex items-center justify-between border-b border-black/10 pb-2">
-                        <div className="flex items-center gap-2 font-bold text-xs">
-                          <Award className="w-4 h-4" />
-                          <span>揭曉結果</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleStartReply(m)}
-                          aria-label="回覆這則結果"
-                          className="p-1.5 rounded-lg hover:bg-black/5 transition-colors cursor-pointer"
-                        >
-                          <Reply className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                      <div className="text-xs sm:text-sm font-black whitespace-pre-line leading-relaxed pt-1">
-                        {m.text}
-                      </div>
-                    </div>
+                    <RevealResultCard
+                      text={m.text}
+                      isCorrect={isCorrect}
+                      question={m.gameQuestion}
+                      onReply={() => handleStartReply(m)}
+                    />
                   </div>
                 );
               }

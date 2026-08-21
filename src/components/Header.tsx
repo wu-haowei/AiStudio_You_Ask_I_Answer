@@ -30,6 +30,8 @@ interface HeaderProps {
    */
   onStartChallenge?: () => void;
   canStartChallenge?: boolean;
+  /** Shown on the disabled button so the reason is not left to guesswork. */
+  challengeHint?: string;
   showToast: (
     title: string,
     description?: string,
@@ -48,6 +50,7 @@ export const Header: React.FC<HeaderProps> = ({
   onLeaveRoom,
   onStartChallenge,
   canStartChallenge = false,
+  challengeHint,
   showToast,
 }) => {
   const { name, isSignedIn } = useIdentity();
@@ -152,7 +155,7 @@ export const Header: React.FC<HeaderProps> = ({
                   type="button"
                   onClick={onStartChallenge}
                   disabled={!canStartChallenge}
-                  title={canStartChallenge ? undefined : '等待對方進入房間'}
+                  title={canStartChallenge ? undefined : challengeHint || '等待對方進入房間'}
                   className="sm:hidden px-2.5 py-1.5 rounded-xl bg-[#E8D8C4] hover:bg-[#D9C5B2] disabled:opacity-40 text-[#4A3F35] text-xs font-bold inline-flex items-center gap-1 transition-colors cursor-pointer shrink-0"
                 >
                   <PlusCircle className="w-3.5 h-3.5" />

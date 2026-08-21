@@ -33,6 +33,7 @@ import {
 } from '../lib/backup';
 import { clearAllStorageAndSession, CURRENT_APP_VERSION } from '../utils/storage';
 import { AdminJsonImportModal } from './admin/AdminJsonImportModal';
+import { ConfirmDialog, type ConfirmRequest } from './admin/ConfirmDialog';
 
 interface AdminManageViewProps {
   faqs: FAQItem[];
@@ -107,6 +108,29 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
 
   // Whole-database backup
   const [isBackingUp, setIsBackingUp] = useState(false);
+
+  /*
+   * Every toolbar action confirms first. The buttons are icon-only and sit
+   * shoulder to shoulder, so a mis-tap on a phone is easy — and two of them
+   * (匯入預設題目, 搬移舊版資料) write to Firestore straight away.
+   */
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmRequest | null>(null);
+  const [isConfirmRunning, setIsConfirmRunning] = useState(false);
+
+  const runPendingConfirm = async () => {
+    if (!pendingConfirm || isConfirmRunning) return;
+    setIsConfirmRunning(true);
+    try {
+      await pendingConfirm.run();
+      setPendingConfirm(null);
+    } catch (err: any) {
+      console.error('Toolbar action failed:', err);
+      showToast('操作失敗', err?.message || '請稍後再試', 'error');
+      setPendingConfirm(null);
+    } finally {
+      setIsConfirmRunning(false);
+    }
+  };
 
   /** Answered ids, for dimming rows the pair has already played. */
   const answeredIds = useMemo(
@@ -403,17 +427,42 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
           {/* Backup Tools */}
           <div className="flex items-center gap-1 border-l border-[#E8DFD3] pl-2">
             <button
-              onClick={onExportData}
+              onClick={() =>
+                setPendingConfirm({
+                  title: '匯出題庫？',
+                  description: (
+                    <>
+                      會下載一個 JSON 檔，內含目前的
+                      <span className="font-bold text-[#3A2E2B]"> {faqs.length} </span>
+                      題與 {categories.length} 個分類。
+                    </>
+                  ),
+                  note: '只有題目與分類，不含對話紀錄與出題歷史——那些請用旁邊的備份鈕。',
+                  confirmLabel: '下載題庫',
+                  icon: Download,
+                  run: onExportData,
+                })
+              }
               title="匯出題庫 (只含題目與分類)"
-              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors"
+              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors cursor-pointer"
             >
               <Download className="w-4 h-4" />
             </button>
             <button
-              onClick={handleFullBackup}
+              onClick={() =>
+                setPendingConfirm({
+                  title: '下載完整備份？',
+                  description:
+                    '會走訪整組資料庫再打包成 JSON：房間狀態、對話紀錄、出題歷史與題庫。資料多的話要等一下。',
+                  note: `範圍只限你與 ${partnerName || '對方'} 這一組，其他人的對話不會在裡面。`,
+                  confirmLabel: '開始備份',
+                  icon: DatabaseBackup,
+                  run: handleFullBackup,
+                })
+              }
               disabled={isBackingUp}
               title="下載這組對話的備份 (含對話紀錄與出題歷史)"
-              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors disabled:opacity-50"
+              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors disabled:opacity-50 cursor-pointer"
             >
               <DatabaseBackup className={`w-4 h-4 ${isBackingUp ? 'animate-pulse' : ''}`} />
             </button>
@@ -430,40 +479,57 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
               />
             </label>
             <button
-              onClick={() => {
-                if (confirm('要把內建預設題目匯入這組的題庫嗎？重複的題目會自動略過。')) {
-                  onImportDefaults();
-                }
-              }}
+              onClick={() =>
+                setPendingConfirm({
+                  title: '匯入內建預設題目？',
+                  description: '會把內建的預設題目寫進這一組的題庫，已經存在的題目自動略過。',
+                  note: isUsingDefaults
+                    ? '這組目前還沒有自己的題庫，用的是內建預設題目。匯入之後就會變成你們專屬的題庫，跟其他對話互不影響。'
+                    : undefined,
+                  confirmLabel: '匯入',
+                  icon: RotateCcw,
+                  run: onImportDefaults,
+                })
+              }
               title="匯入內建預設題目"
-              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors"
+              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors cursor-pointer"
             >
               <RotateCcw className="w-4 h-4" />
             </button>
             <button
-              onClick={() => {
-                if (
-                  confirm(
-                    '要把舊版共用房間 (MAIN-ROOM) 的對話與題目搬到這組對話嗎？舊資料會保留不刪除。'
-                  )
-                ) {
-                  onMigrateLegacy();
-                }
-              }}
+              onClick={() =>
+                setPendingConfirm({
+                  title: '搬移舊版共用房間的資料？',
+                  description:
+                    '會把舊的共用房間 (MAIN-ROOM) 的對話紀錄、出題紀錄、題庫與已玩過的題目複製到這一組。',
+                  note: '是複製不是搬移，舊資料原封不動保留。重複執行不會產生重複資料，兩個人其中一個做一次就好。',
+                  confirmLabel: '開始搬移',
+                  icon: History,
+                  run: onMigrateLegacy,
+                })
+              }
               title="搬移舊版共用房間的資料"
-              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors"
+              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors cursor-pointer"
             >
               <History className="w-4 h-4" />
             </button>
             <button
-              onClick={() => {
-                if (confirm('確定要清除本機快取嗎？雲端題庫與對話紀錄不受影響，頁面將重新載入。')) {
-                  clearAllStorageAndSession();
-                  window.location.reload();
-                }
-              }}
+              onClick={() =>
+                setPendingConfirm({
+                  title: '清除本機快取？',
+                  description: '會清掉這台裝置上存的本機資料，然後重新載入頁面。',
+                  note: `雲端題庫與對話紀錄完全不受影響，重新載入後照常使用。目前版本 v${CURRENT_APP_VERSION}。`,
+                  confirmLabel: '清除並重新載入',
+                  tone: 'danger',
+                  icon: Trash2,
+                  run: () => {
+                    clearAllStorageAndSession();
+                    window.location.reload();
+                  },
+                })
+              }
               title={`一鍵清除本機快取（不影響雲端題庫，目前版本 v${CURRENT_APP_VERSION}）`}
-              className="p-2 rounded-xl text-amber-700 hover:bg-amber-100 transition-colors"
+              className="p-2 rounded-xl text-amber-700 hover:bg-amber-100 transition-colors cursor-pointer"
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -782,6 +848,14 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         onClose={() => setIsJsonModalOpen(false)}
         onImportData={onImportData}
         showToast={showToast}
+      />
+
+      {/* Shared confirmation for every toolbar action */}
+      <ConfirmDialog
+        request={pendingConfirm}
+        isBusy={isConfirmRunning}
+        onConfirm={runPendingConfirm}
+        onCancel={() => setPendingConfirm(null)}
       />
 
       {/* Answered clean-up confirmation */}

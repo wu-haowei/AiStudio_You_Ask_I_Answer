@@ -63,6 +63,8 @@ export default function App() {
     onlineCount: number;
     isRoundActive: boolean;
     canInvite: boolean;
+    /** Why the challenge button is unavailable, for its tooltip. */
+    inviteHint?: string;
     onInvite?: () => void;
   }>({ onlineCount: 0, isRoundActive: false, canInvite: false });
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFERENCES);
@@ -452,6 +454,7 @@ export default function App() {
         onLeaveRoom={activeRoom ? leaveRoom : undefined}
         onStartChallenge={currentTab === 'co_play' ? roomStatus.onInvite : undefined}
         canStartChallenge={roomStatus.canInvite}
+        challengeHint={roomStatus.inviteHint}
         onOpenBackgroundSettings={() => setIsBackgroundModalOpen(true)}
         onImportDefaults={handleImportDefaults}
         onSignOut={handleSignOut}
