@@ -1,7 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { Target, Sparkles, X, Check, CheckCircle2 } from 'lucide-react';
-import { RoomQuestion } from '../../types';
+import { OTHER_PICK_INDEX, RoomQuestion } from '../../types';
 
 /** A player may rank at most this many options. */
 const MAX_PICKS = 2;
@@ -71,7 +71,7 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
 
   const rankOf = (idx: number) => selectedOptIndexes.indexOf(idx);
   const hasPicks = selectedOptIndexes.length > 0;
-  const isOtherPicked = selectedOptIndexes.includes(4);
+  const isOtherPicked = selectedOptIndexes.includes(OTHER_PICK_INDEX);
 
   if (!activeQ || activeQ.isRevealed || (!isTarget && !isInitiator) || isAnswerModalDismissed) {
     return null;
@@ -145,10 +145,10 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
 
                   <OptionButton
                     label="其他 (自訂選項)"
-                    rank={rankOf(4)}
+                    rank={rankOf(OTHER_PICK_INDEX)}
                     accent="#A68B6D"
                     fullWidth
-                    onClick={() => togglePick(4)}
+                    onClick={() => togglePick(OTHER_PICK_INDEX)}
                   />
                 </div>
 
@@ -233,10 +233,10 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
 
                   <OptionButton
                     label="其他 (自訂猜測)"
-                    rank={rankOf(4)}
+                    rank={rankOf(OTHER_PICK_INDEX)}
                     accent="#8C6D53"
                     fullWidth
-                    onClick={() => togglePick(4)}
+                    onClick={() => togglePick(OTHER_PICK_INDEX)}
                   />
                 </div>
 

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Award, ListChecks, Reply } from 'lucide-react';
 import { RoomQuestion } from '../../types';
-import { readPicks } from '../../lib/firebase';
+import { isOtherPick, readPicks } from '../../lib/firebase';
 
 /**
  * The reveal message is stored as plain text so rounds written by older builds
@@ -14,9 +14,6 @@ import { readPicks } from '../../lib/firebase';
  *   真心話：1. 在家追劇 ／ 2. 出門喝咖啡 (說明: 天氣太熱)
  *   猜測：1. 在家追劇
  */
-
-/** The "其他 (自訂猜測)" slot, fixed at index 4 by the answer modal. */
-const OTHER_INDEX = 4;
 
 /** One ranked option inside a reveal line. */
 interface RevealPick {
@@ -77,6 +74,8 @@ export const parseRevealText = (text: string): RevealLine[] =>
 interface OptionRow {
   index: number;
   label: string;
+  /** True for the "其他" row, which is a free-text answer, not a listed option. */
+  isOther?: boolean;
   /** 1-based preference order, when that side picked this option. */
   targetRank?: number;
   guessRank?: number;
@@ -106,10 +105,14 @@ export const buildOptionRows = (question: RoomQuestion): OptionRow[] => {
 
   const rows: OptionRow[] = (question.options || []).map((label, index) => ({ index, label }));
 
-  // Only a question with fewer than five options leaves index 4 free for "其他".
-  const hasOther = targetPicks.includes(OTHER_INDEX) || guessPicks.includes(OTHER_INDEX);
-  if (rows.length <= OTHER_INDEX && hasOther) {
-    rows.push({ index: OTHER_INDEX, label: customLabels.get(OTHER_INDEX) || '其他' });
+  /*
+   * "其他" is appended only if somebody actually picked it. Which number stands
+   * for it depends on when the round was written, so isOtherPick decides rather
+   * than a constant — see its note about the old value of 4.
+   */
+  const otherIndex = [...targetPicks, ...guessPicks].find((idx) => isOtherPick(question, idx));
+  if (otherIndex !== undefined) {
+    rows.push({ index: otherIndex, isOther: true, label: customLabels.get(otherIndex) || '其他' });
   }
 
   return rows.map((row) => {
@@ -231,7 +234,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = ({ question, rows, activeIndex
           }`}
         >
           <span className="mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-md bg-black/10 text-[9px] font-bold">
-            {row.index === OTHER_INDEX && rows.length <= OTHER_INDEX + 1 ? '他' : row.index + 1}
+            {row.isOther ? '他' : row.index + 1}
           </span>
           <span className="min-w-0 flex-1 break-words">{row.label}</span>
           <span className="flex shrink-0 flex-wrap justify-end gap-1">

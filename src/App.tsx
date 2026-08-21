@@ -1,15 +1,22 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActiveTab, Category, FAQItem, ToastMessage } from './types';
+import { ActiveTab, Category, FAQItem, ToastMessage, UNFILED_CATEGORY } from './types';
 import { checkAndMigrateStorageVersion, CURRENT_APP_VERSION } from './utils/storage';
-import { INITIAL_CATEGORIES, INITIAL_FAQS } from './data/initialData';
 import {
   claimMembership,
   deleteRoomFaq,
   deleteRoomFaqs,
   ensureSignedIn,
   forgetPlayedFaqIds,
+  loadDefaultFaqs,
   loadPlayedFaqIds,
   markFaqPlayed,
+  deleteDefaultFaq,
+  deleteDefaultFaqs,
+  clearPlayedFaqIds,
+  replaceRoomFaqs,
+  saveDefaultFaq,
+  saveDefaultFaqs,
+  subscribeToDefaultFaqs,
   isInviteRequired,
   isMember,
   saveRoomFaq,
@@ -52,6 +59,24 @@ export default function App() {
   });
 
   const [roomFaqs, setRoomFaqs] = useState<FAQItem[]>([]);
+  /**
+   * The library a pair falls back on. It lives in Firestore rather than in the
+   * bundle so it can be edited from the admin screen, and it is fetched only
+   * when something actually needs it — a pair with a library of its own never
+   * pays for it.
+   */
+  const [defaultFaqs, setDefaultFaqs] = useState<FAQItem[]>([]);
+  /** Which library the admin screen is editing. */
+  const [libraryTarget, setLibraryTarget] = useState<'room' | 'default'>('room');
+  /*
+   * Whether the admin screen offers the default library at all.
+   *
+   * Hidden behind a triple tap on the logo, and not remembered: the default
+   * library is shared by every pair, so an accidental edit there is the one
+   * mistake that reaches beyond the conversation it was made in. Reloading puts
+   * it away again.
+   */
+  const [canEditDefaults, setCanEditDefaults] = useState(false);
   /** Questions this pair has already answered, for the admin clean-up button. */
   const [playedFaqIds, setPlayedFaqIds] = useState<Set<string>>(new Set());
   const [isLoadingContent, setIsLoadingContent] = useState(true);
@@ -133,33 +158,73 @@ export default function App() {
     });
   }, [activeRoom?.id]);
 
+  /*
+   * Fetch the default library only when it is about to matter: this pair has
+   * nothing of its own, or the admin screen has been switched over to edit it.
+   * While the admin screen is on it, a live listener replaces the snapshot so
+   * edits appear as they are made.
+   */
+  const isEditingDefaults = libraryTarget === 'default';
+  /*
+   * The `activeRoom` test earns its place: on the conversation list there is no
+   * room, so roomFaqs is empty and loading has finished — which looks exactly
+   * like a pair that needs the defaults, and would fetch them for a screen that
+   * never shows a question.
+   */
+  const needsDefaults = !!activeRoom && roomFaqs.length === 0 && !isLoadingContent;
+
+  useEffect(() => {
+    if (!isEditingDefaults) return;
+    return subscribeToDefaultFaqs(setDefaultFaqs);
+  }, [isEditingDefaults]);
+
+  useEffect(() => {
+    if (isEditingDefaults || !needsDefaults) return;
+    let cancelled = false;
+    loadDefaultFaqs().then((items) => {
+      if (!cancelled) setDefaultFaqs(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditingDefaults, needsDefaults, activeRoom?.id]);
+
   /**
    * Questions actually offered. A pair that has never imported anything plays
-   * with the built-in set; once they import, that becomes their own library and
+   * with the default library; once they import, that becomes their own and
    * emptying it is a deliberate, respected choice.
    */
   const faqs = useMemo(
-    () => (roomFaqs.length > 0 ? roomFaqs : INITIAL_FAQS),
-    [roomFaqs]
+    () => (roomFaqs.length > 0 ? roomFaqs : defaultFaqs),
+    [roomFaqs, defaultFaqs]
   );
   const isUsingDefaultFaqs = roomFaqs.length === 0;
 
+  /**
+   * What the admin screen shows and writes to, which is not always the library
+   * being played with.
+   *
+   * "Answered" is a fact about a pair, not about a question, so it is withheld
+   * entirely while the shared default library is the one on screen — there is
+   * no pair for it to be true of.
+   */
+  const editedFaqs = isEditingDefaults ? defaultFaqs : faqs;
+
+  /**
+   * The categories on offer are exactly the ones the questions use — there is
+   * no separate list to keep in step. Import a set of questions and its
+   * categories arrive with it; a category no question is filed under stops
+   * appearing, without anything having to delete it.
+   *
+   * Order follows first appearance in the library rather than being sorted, so
+   * the picker reads in the order the questions were written.
+   */
   const categories: Category[] = useMemo(() => {
-    const names: string[] = Array.from(
-      new Set(faqs.map((f) => f.category).filter((c): c is string => !!c))
-    );
-    const known = new Map<string, Category>(
-      INITIAL_CATEGORIES.map((c) => [c.name, c] as const)
-    );
-    return names.map(
-      (name) =>
-        known.get(name) || {
-          id: `cat-${encodeURIComponent(name)}`,
-          name,
-          slug: encodeURIComponent(name),
-          colorClass: 'badge-milktea' as const,
-        }
-    );
+    const names: string[] = [];
+    for (const faq of faqs) {
+      if (faq.category && !names.includes(faq.category)) names.push(faq.category);
+    }
+    return names.map((name) => ({ id: `cat-${encodeURIComponent(name)}`, name }));
   }, [faqs]);
 
   // Display preferences follow the signed-in name, not the device
@@ -201,6 +266,28 @@ export default function App() {
     setRoomStatus({ onlineCount: 0, isRoundActive: false, canInvite: false });
   };
 
+  /**
+   * The logo's triple tap.
+   *
+   * Revealing also opens the admin tab, since the switch it reveals lives
+   * there and the gesture is only ever made to reach it. Putting it away steps
+   * back off the default library too, so the screen is not left editing
+   * something it no longer offers a way back from.
+   */
+  const handleToggleDefaultLibrary = () => {
+    const next = !canEditDefaults;
+    setCanEditDefaults(next);
+
+    if (next) setActiveTab('admin_manage');
+    else setLibraryTarget('room');
+
+    showToast(
+      next ? '預設題庫已解鎖' : '預設題庫已收起',
+      next ? '後台管理標題下方多了一個切換' : undefined,
+      'info'
+    );
+  };
+
   const handleSignOut = () => {
     clearPresence(userName);
     endSession();
@@ -232,23 +319,33 @@ export default function App() {
     return activeRoom.id;
   };
 
+  /*
+   * Every edit below goes to whichever library is being edited. Only the target
+   * differs; a question is a question in either collection.
+   */
   const handleAddFAQ = (newFaqData: Omit<FAQItem, 'id' | 'updatedAt'>) => {
-    saveRoomFaq(requireRoom(), {
+    const faq: FAQItem = {
       ...newFaqData,
       id: `faq-${Date.now()}`,
       updatedAt: new Date().toISOString(),
-    });
+    };
+    if (isEditingDefaults) saveDefaultFaq(faq);
+    else saveRoomFaq(requireRoom(), faq);
   };
 
   const handleUpdateFAQ = (updatedFaq: FAQItem) => {
-    saveRoomFaq(requireRoom(), { ...updatedFaq, updatedAt: new Date().toISOString() });
+    const faq: FAQItem = { ...updatedFaq, updatedAt: new Date().toISOString() };
+    if (isEditingDefaults) saveDefaultFaq(faq);
+    else saveRoomFaq(requireRoom(), faq);
   };
 
   const handleDeleteFAQ = (id: string) => {
-    deleteRoomFaq(requireRoom(), id);
+    if (isEditingDefaults) deleteDefaultFaq(id);
+    else deleteRoomFaq(requireRoom(), id);
   };
 
-  const handleDeleteFAQs = (ids: string[]) => deleteRoomFaqs(requireRoom(), ids);
+  const handleDeleteFAQs = (ids: string[]) =>
+    isEditingDefaults ? deleteDefaultFaqs(ids) : deleteRoomFaqs(requireRoom(), ids);
 
   /*
    * The played list lives on the room document, which only the conversation
@@ -348,7 +445,12 @@ export default function App() {
 
   const handleExportData = () => {
     const jsonStr = JSON.stringify(
-      { version: CURRENT_APP_VERSION, exportDate: new Date().toISOString(), faqs, categories },
+      {
+        version: CURRENT_APP_VERSION,
+        exportDate: new Date().toISOString(),
+        faqs: editedFaqs,
+        categories,
+      },
       null,
       2
     );
@@ -363,18 +465,25 @@ export default function App() {
   };
 
   /** Shared by the JSON import and the logo shortcut. */
+  /**
+   * Merges questions into whichever library the admin screen is pointed at.
+   *
+   * The comparison is against what is actually stored — for a room that means
+   * `roomFaqs`, never the defaults it happens to be borrowing, or importing
+   * would look like a no-op to a pair who has not imported anything yet.
+   */
   const importQuestions = async (incoming: FAQItem[]) => {
-    const roomId = requireRoom();
+    const roomId = isEditingDefaults ? '' : requireRoom();
+    const stored = isEditingDefaults ? defaultFaqs : roomFaqs;
 
-    // Merge against what is actually stored, not the fallback defaults
-    const existingIds = new Set(roomFaqs.map((f) => f.id));
-    const existingQuestions = new Set(roomFaqs.map((f) => f.question.trim()));
+    const existingIds = new Set(stored.map((f) => f.id));
+    const existingQuestions = new Set(stored.map((f) => f.question.trim()));
     const toWrite: FAQItem[] = [];
 
     for (const item of incoming) {
       if (!item.question || !item.question.trim()) continue;
       if (existingIds.has(item.id)) {
-        const current = roomFaqs.find((f) => f.id === item.id)!;
+        const current = stored.find((f) => f.id === item.id)!;
         toWrite.push({ ...current, ...item, updatedAt: new Date().toISOString() });
       } else if (!existingQuestions.has(item.question.trim())) {
         toWrite.push({ ...item, updatedAt: item.updatedAt || new Date().toISOString() });
@@ -387,8 +496,14 @@ export default function App() {
       return;
     }
 
-    await saveRoomFaqs(roomId, toWrite);
-    showToast('已匯入題目', `共新增或更新 ${toWrite.length} 題`, 'success');
+    if (isEditingDefaults) await saveDefaultFaqs(toWrite);
+    else await saveRoomFaqs(roomId, toWrite);
+
+    showToast(
+      '已匯入題目',
+      `共新增或更新 ${toWrite.length} 題${isEditingDefaults ? '（預設題庫）' : ''}`,
+      'success'
+    );
   };
 
   const handleImportData = async (jsonStr: string) => {
@@ -405,7 +520,7 @@ export default function App() {
             id: item.id || `faq-imported-${idx}-${Date.now()}`,
             question: item.question,
             answer: item.answer || '對應真心話題目',
-            category: item.category || '習性與喜好',
+            category: item.category || UNFILED_CATEGORY,
             options: options.length > 0 ? options : undefined,
             updatedAt: new Date().toISOString(),
           };
@@ -448,12 +563,37 @@ export default function App() {
   };
 
   /** The logo shortcut writes the built-in questions into this pair's library. */
+  /**
+   * Resets this pair's library to the default one.
+   *
+   * A replacement, not a merge: whatever they had is deleted first, so the
+   * library afterwards is exactly the default set. The played record goes with
+   * it — its ids refer to questions that no longer exist, and nothing else ever
+   * removes them.
+   *
+   * An empty default library aborts before deleting anything. Wiping a real
+   * library to replace it with nothing is never what anybody meant.
+   */
   const handleImportDefaults = async () => {
-    if (!activeRoom) {
-      showToast('請先選擇一個對話', undefined, 'warning');
+    const roomId = requireRoom();
+
+    // Read it fresh rather than trusting a snapshot taken who knows when.
+    const defaults = await loadDefaultFaqs();
+    setDefaultFaqs(defaults);
+    if (defaults.length === 0) {
+      showToast('預設題庫是空的', '沒有東西可以還原，這組的題庫原封不動', 'warning');
       return;
     }
-    await importQuestions(INITIAL_FAQS);
+
+    const removed = await replaceRoomFaqs(roomId, defaults);
+    await clearPlayedFaqIds(roomId);
+    setPlayedFaqIds(new Set());
+
+    showToast(
+      '已還原成預設題庫',
+      `刪除 ${removed} 題，寫入 ${defaults.length} 題`,
+      'success'
+    );
   };
 
   if (access === 'checking') {
@@ -503,7 +643,7 @@ export default function App() {
         canStartChallenge={roomStatus.canInvite}
         challengeHint={roomStatus.inviteHint}
         onOpenBackgroundSettings={() => setIsBackgroundModalOpen(true)}
-        onImportDefaults={handleImportDefaults}
+        onToggleDefaultLibrary={handleToggleDefaultLibrary}
         onSignOut={handleSignOut}
         showToast={showToast}
       />
@@ -537,15 +677,18 @@ export default function App() {
 
             {currentTab === 'admin_manage' && (
               <AdminManageView
-                faqs={faqs}
+                faqs={editedFaqs}
                 categories={categories}
                 isLoading={isLoadingContent}
-                isUsingDefaults={isUsingDefaultFaqs}
+                isUsingDefaults={isUsingDefaultFaqs && !isEditingDefaults}
+                libraryTarget={libraryTarget}
+                onChangeLibraryTarget={setLibraryTarget}
+                canEditDefaults={canEditDefaults}
                 partnerName={activeRoom.partner}
-                answeredFaqs={answeredFaqs}
-                onDeleteAnswered={handleDeleteAnswered}
-                onToggleAnswered={handleToggleAnswered}
-                onRestoreAnswered={handleRestoreAnswered}
+                answeredFaqs={isEditingDefaults ? [] : answeredFaqs}
+                onDeleteAnswered={isEditingDefaults ? undefined : handleDeleteAnswered}
+                onToggleAnswered={isEditingDefaults ? undefined : handleToggleAnswered}
+                onRestoreAnswered={isEditingDefaults ? undefined : handleRestoreAnswered}
                 roomId={activeRoom.id}
                 onAddFAQ={handleAddFAQ}
                 onUpdateFAQ={handleUpdateFAQ}

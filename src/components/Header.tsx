@@ -12,14 +12,23 @@ import {
 import { ActiveTab } from '../types';
 import { useIdentity } from '../lib/identity';
 
+/**
+ * How long after a tap the burst is considered over. Restarted by every tap, so
+ * this is the gap between taps, not the total time allowed for three.
+ */
+const LOGO_TAP_WINDOW_MS = 320;
+
+/** Taps that reveal the default-library switch. */
+const LOGO_TAPS_FOR_DEFAULTS = 3;
+
 interface HeaderProps {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
   /** Players seen in the room within the presence window. */
   onlineCount: number;
   onOpenBackgroundSettings: () => void;
-  /** Writes the built-in questions into this pair's library. */
-  onImportDefaults: () => Promise<void> | void;
+  /** Shows or hides the admin screen's default-library switch. */
+  onToggleDefaultLibrary: () => void;
   onSignOut: () => void;
   /** Present only while a conversation is open. */
   partnerName?: string;
@@ -44,7 +53,7 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveTab,
   onlineCount,
   onOpenBackgroundSettings,
-  onImportDefaults,
+  onToggleDefaultLibrary,
   onSignOut,
   partnerName,
   onLeaveRoom,
@@ -56,8 +65,9 @@ export const Header: React.FC<HeaderProps> = ({
   const { name, isSignedIn } = useIdentity();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  /** Counts taps on the logo so a double tap can trigger the import. */
+  /** Taps counted so far in the current burst, and the timer that ends it. */
   const logoTapRef = useRef(0);
+  const logoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Close the menu when clicking anywhere else
   useEffect(() => {
@@ -71,31 +81,47 @@ export const Header: React.FC<HeaderProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isMenuOpen]);
 
-  /**
-   * Double-tapping the logo loads the built-in questions into this pair's
-   * library — a deliberate shortcut rather than a visible button, since it is
-   * only needed once per conversation.
+  /*
+   * The logo is a gesture target as well as a button:
+   *
+   *   one tap     back to the conversation
+   *   three taps  show or hide the default-library switch in the admin screen
+   *
+   * Both act the moment they can. The first tap navigates straight away and the
+   * counter keeps running underneath in case two more follow; the third fires
+   * as it lands rather than waiting out a timer, because nothing is listening
+   * for a fourth. The counter simply forgets itself after a quiet moment.
    */
   const handleLogoTap = () => {
     logoTapRef.current += 1;
-    if (logoTapRef.current === 1) {
-      window.setTimeout(() => {
-        if (logoTapRef.current === 1) setActiveTab('co_play');
-        logoTapRef.current = 0;
-      }, 300);
+    if (logoTimerRef.current) clearTimeout(logoTimerRef.current);
+
+    if (logoTapRef.current >= LOGO_TAPS_FOR_DEFAULTS) {
+      logoTapRef.current = 0;
+      logoTimerRef.current = null;
+      if (!partnerName) {
+        showToast('請先選擇一個對話', '題庫是每組對話各自獨立的', 'warning');
+        return;
+      }
+      onToggleDefaultLibrary();
       return;
     }
 
-    logoTapRef.current = 0;
-    if (!partnerName) {
-      showToast('請先選擇一個對話', '題庫是每組對話各自獨立的', 'warning');
-      return;
-    }
-    if (!confirm('要把預設題目匯入這組的題庫嗎？')) return;
-    Promise.resolve(onImportDefaults()).catch((err) =>
-      showToast('匯入失敗', err?.message || '請稍後再試', 'error')
-    );
+    if (logoTapRef.current === 1) setActiveTab('co_play');
+
+    logoTimerRef.current = setTimeout(() => {
+      logoTapRef.current = 0;
+      logoTimerRef.current = null;
+    }, LOGO_TAP_WINDOW_MS);
   };
+
+  // A burst left half-finished must not outlive the header
+  useEffect(
+    () => () => {
+      if (logoTimerRef.current) clearTimeout(logoTimerRef.current);
+    },
+    []
+  );
 
   const tabClass = (isActive: boolean) =>
     `flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs sm:text-sm font-medium transition-all ${
@@ -135,7 +161,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={handleLogoTap}
-              title="連點兩下可匯入預設題目"
+              title="連點三下可顯示／收起預設題庫切換"
               className="flex items-center gap-2 shrink-0 cursor-pointer select-none"
             >
               <div className="w-9 h-9 rounded-2xl bg-[#A68B6D] flex items-center justify-center text-white">

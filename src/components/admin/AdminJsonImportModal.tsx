@@ -8,13 +8,18 @@ interface AdminJsonImportModalProps {
   showToast: (title: string, description?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
 }
 
+/*
+ * Deliberately generic. Categories are whatever the imported questions say they
+ * are, so naming a real one here would imply the list is fixed — it is not, and
+ * typing a new name into that field is all it takes to create one.
+ */
 const sampleJsonTemplate = JSON.stringify(
   [
     {
-      question: '假日最喜歡的放鬆度過方式是什麼？',
-      answer: '考驗對方的日常習性與放鬆偏好。',
-      category: '習性與喜好',
-      options: ['在家躺平追劇', '約朋友喝咖啡', '戶外運動踏青'],
+      question: '題目寫在這裡？',
+      answer: '這句只有後台清單看得到，寫出題用意就好。',
+      category: '分類名稱自己取',
+      options: ['選項一', '選項二', '選項三'],
     },
   ],
   null,

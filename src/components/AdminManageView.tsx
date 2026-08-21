@@ -17,7 +17,7 @@ import {
   X,
   Check,
 } from 'lucide-react';
-import { Category, FAQItem } from '../types';
+import { Category, FAQItem, UNFILED_CATEGORY } from '../types';
 import { db } from '../lib/firebase';
 import {
   backupFileName,
@@ -46,8 +46,19 @@ interface AdminManageViewProps {
   /** Copies the old shared MAIN-ROOM content into this pair's room. */
   onMigrateLegacy: () => void | Promise<void>;
   onImportData: (jsonStr: string) => void | Promise<void>;
-  /** True while this pair has no library of its own and is playing the built-in set. */
+  /** True while this pair has no library of its own and is borrowing the default one. */
   isUsingDefaults?: boolean;
+  /**
+   * Which library is on screen. The default one is shared by every pair, so the
+   * tools that only make sense for a conversation are hidden while it is open.
+   */
+  libraryTarget: 'room' | 'default';
+  onChangeLibraryTarget: (target: 'room' | 'default') => void;
+  /**
+   * Whether to offer the default library at all. It is shared by every pair, so
+   * it stays out of sight until the logo's triple tap asks for it.
+   */
+  canEditDefaults?: boolean;
   partnerName?: string;
   /** Backup and restore are scoped to this one conversation. */
   roomId: string;
@@ -78,6 +89,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   onMigrateLegacy,
   onImportData,
   isUsingDefaults = false,
+  libraryTarget,
+  onChangeLibraryTarget,
+  canEditDefaults = false,
   partnerName,
   roomId,
   answeredFaqs = [],
@@ -88,6 +102,8 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   isLoading = false,
   showToast,
 }) => {
+  const isEditingDefaults = libraryTarget === 'default';
+
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
 
@@ -320,7 +336,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     setEditingFaq(null);
     setFormQuestion('');
     setFormAnswer('');
-    setFormCategory(categories[0]?.name || '習性與喜好');
+    setFormCategory(categories[0]?.name || UNFILED_CATEGORY);
     setFormOptions(['', '']);
     setIsEditModalOpen(true);
   };
@@ -393,10 +409,33 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
               {isLoading ? '雲端載入中…' : `共 ${faqs.length} 題`}
             </span>
           </h1>
-          <p className="text-xs sm:text-sm text-[#7A6C65] mt-1">
-            {isUsingDefaults
-              ? '目前使用內建預設題庫，新增或匯入後就會變成你們專屬的題庫。'
-              : `這是你與${partnerName || '對方'}專屬的題庫，不會影響其他對話。`}
+
+          {/* Which library is being edited — revealed by tapping the logo three times */}
+          {canEditDefaults && (
+            <div className="mt-2 inline-flex rounded-2xl border border-[#D0BFAC] bg-[#F5EFE6] p-1">
+              {(['room', 'default'] as const).map((target) => (
+                <button
+                  key={target}
+                  type="button"
+                  onClick={() => onChangeLibraryTarget(target)}
+                  className={`cursor-pointer rounded-xl px-3 py-1.5 text-xs font-bold transition-colors ${
+                    libraryTarget === target
+                      ? 'bg-white text-[#3A2E2B] shadow-xs'
+                      : 'text-[#7A6C65] hover:text-[#3A2E2B]'
+                  }`}
+                >
+                  {target === 'room' ? '這組的題庫' : '預設題庫'}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <p className="text-xs sm:text-sm text-[#7A6C65] mt-2">
+            {isEditingDefaults
+              ? '所有對話共用這一份。新的一組還沒有自己的題庫時就用它，改動立即生效，不用重新部署網站。'
+              : isUsingDefaults
+                ? '這組還沒有自己的題庫，目前借用預設題庫。新增或匯入之後就會變成你們專屬的。'
+                : `這是你與${partnerName || '對方'}專屬的題庫，不會影響其他對話。`}
           </p>
         </div>
 
@@ -458,71 +497,86 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             >
               <Download className="w-4 h-4" />
             </button>
-            <button
-              onClick={() =>
-                setPendingConfirm({
-                  title: '下載完整備份？',
-                  description:
-                    '會走訪整組資料庫再打包成 JSON：房間狀態、對話紀錄、出題歷史與題庫。資料多的話要等一下。',
-                  note: `範圍只限你與 ${partnerName || '對方'} 這一組，其他人的對話不會在裡面。`,
-                  confirmLabel: '開始備份',
-                  icon: DatabaseBackup,
-                  run: handleFullBackup,
-                })
-              }
-              disabled={isBackingUp}
-              title="下載這組對話的備份 (含對話紀錄與出題歷史)"
-              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              <DatabaseBackup className={`w-4 h-4 ${isBackingUp ? 'animate-pulse' : ''}`} />
-            </button>
-            <label
-              title="從備份還原 (只清空並還原這組對話)"
-              className="p-2 rounded-xl text-[#7A6C65] hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
-            >
-              <ArchiveRestore className="w-4 h-4" />
-              <input
-                type="file"
-                accept=".json,application/json"
-                onChange={handleRestoreFileChosen}
-                className="hidden"
-              />
-            </label>
-            <button
-              onClick={() =>
-                setPendingConfirm({
-                  title: '匯入內建預設題目？',
-                  description: '會把內建的預設題目寫進這一組的題庫，已經存在的題目自動略過。',
-                  note: isUsingDefaults
-                    ? '這組目前還沒有自己的題庫，用的是內建預設題目。匯入之後就會變成你們專屬的題庫，跟其他對話互不影響。'
-                    : undefined,
-                  confirmLabel: '匯入',
-                  icon: RotateCcw,
-                  run: onImportDefaults,
-                })
-              }
-              title="匯入內建預設題目"
-              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors cursor-pointer"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() =>
-                setPendingConfirm({
-                  title: '搬移舊版共用房間的資料？',
-                  description:
-                    '會把舊的共用房間 (MAIN-ROOM) 的對話紀錄、出題紀錄、題庫與已玩過的題目複製到這一組。',
-                  note: '是複製不是搬移，舊資料原封不動保留。重複執行不會產生重複資料，兩個人其中一個做一次就好。',
-                  confirmLabel: '開始搬移',
-                  icon: History,
-                  run: onMigrateLegacy,
-                })
-              }
-              title="搬移舊版共用房間的資料"
-              className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors cursor-pointer"
-            >
-              <History className="w-4 h-4" />
-            </button>
+            {/* Conversation-only tools. The default library is shared by every
+                pair, so it has no backup of its own, nothing to restore into,
+                and no older room to migrate from. */}
+            {!isEditingDefaults && (
+              <>
+              <button
+                onClick={() =>
+                  setPendingConfirm({
+                    title: '下載完整備份？',
+                    description:
+                      '會走訪整組資料庫再打包成 JSON：房間狀態、對話紀錄、出題歷史與題庫。資料多的話要等一下。',
+                    note: `範圍只限你與 ${partnerName || '對方'} 這一組，其他人的對話不會在裡面。`,
+                    confirmLabel: '開始備份',
+                    icon: DatabaseBackup,
+                    run: handleFullBackup,
+                  })
+                }
+                disabled={isBackingUp}
+                title="下載這組對話的備份 (含對話紀錄與出題歷史)"
+                className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                <DatabaseBackup className={`w-4 h-4 ${isBackingUp ? 'animate-pulse' : ''}`} />
+              </button>
+              <label
+                title="從備份還原 (只清空並還原這組對話)"
+                className="p-2 rounded-xl text-[#7A6C65] hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
+              >
+                <ArchiveRestore className="w-4 h-4" />
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleRestoreFileChosen}
+                  className="hidden"
+                />
+              </label>
+              <button
+                onClick={() =>
+                  setPendingConfirm({
+                    title: '還原成預設題庫？',
+                    description: (
+                      <>
+                        會<span className="font-bold text-rose-700">先刪除</span>
+                        這一組現在的
+                        <span className="font-bold text-[#3A2E2B]"> {faqs.length} </span>
+                        題，再整份寫入預設題庫。不是合併，是取代。
+                      </>
+                    ),
+                    note: isUsingDefaults
+                      ? '這組還沒有自己的題庫，所以沒有東西會被刪掉——還原之後就會有一份專屬的，跟其他對話互不影響。'
+                      : '「答過了」的紀錄也會一起清空，因為那些題目已經不存在了。對話紀錄與出題歷史不受影響。',
+                    confirmLabel: '清空並還原',
+                    tone: isUsingDefaults ? 'neutral' : 'danger',
+                    icon: RotateCcw,
+                    run: onImportDefaults,
+                  })
+                }
+                title="還原成預設題庫（會先清空這組現有的題目）"
+                className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors cursor-pointer"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() =>
+                  setPendingConfirm({
+                    title: '搬移舊版共用房間的資料？',
+                    description:
+                      '會把舊的共用房間 (MAIN-ROOM) 的對話紀錄、出題紀錄、題庫與已玩過的題目複製到這一組。',
+                    note: '是複製不是搬移，舊資料原封不動保留。重複執行不會產生重複資料，兩個人其中一個做一次就好。',
+                    confirmLabel: '開始搬移',
+                    icon: History,
+                    run: onMigrateLegacy,
+                  })
+                }
+                title="搬移舊版共用房間的資料"
+                className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors cursor-pointer"
+              >
+                <History className="w-4 h-4" />
+              </button>
+              </>
+            )}
             <button
               onClick={() =>
                 setPendingConfirm({

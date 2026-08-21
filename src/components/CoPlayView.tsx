@@ -19,6 +19,8 @@ import {
   FAQItem,
   GameInvitation,
   MessageReplyRef,
+  MIN_OPTIONS,
+  OTHER_PICK_INDEX,
   RANDOM_CATEGORY_KEY,
   RoomMessage,
   RoomQuestion,
@@ -238,12 +240,19 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   const [isAnswerModalDismissed, setIsAnswerModalDismissed] = useState(false);
   const [questionText, setQuestionText] = useState('');
   const [questionCategory, setQuestionCategory] = useState('');
-  // Left blank on purpose — a question is drawn when the form opens, so
-  // placeholder options can never sit under an empty question.
-  const [optA, setOptA] = useState('');
-  const [optB, setOptB] = useState('');
-  const [optC, setOptC] = useState('');
-  const [optD, setOptD] = useState('');
+  /*
+   * The options being published, as a list rather than four fixed slots.
+   *
+   * Four named slots quietly capped every question at four choices: the admin
+   * editor has always allowed more, and a fifth option survived being saved
+   * only to vanish when the question was actually published.
+   *
+   * Blank to start on purpose — a question is drawn when the form opens, so
+   * placeholder options can never sit under an empty question.
+   */
+  const [questionOptions, setQuestionOptions] = useState<string[]>(
+    Array(MIN_OPTIONS).fill('')
+  );
   const [isEditingPreset, setIsEditingPreset] = useState(false);
 
   /** Ordered picks for the active question — first entry is the top preference. */
@@ -891,11 +900,10 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
    * later filtered out when the question is published.
    */
   const applyOptionsToForm = (options?: string[]) => {
-    const list = options || [];
-    setOptA(list[0] || '');
-    setOptB(list[1] || '');
-    setOptC(list[2] || '');
-    setOptD(list[3] || '');
+    const list = (options || []).map((o) => o || '');
+    // Always leave at least the minimum number of boxes to type into.
+    while (list.length < MIN_OPTIONS) list.push('');
+    setQuestionOptions(list);
   };
 
   /**
@@ -1085,9 +1093,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       return;
     }
 
-    const options = [optA, optB, optC, optD].map((o) => o.trim()).filter(Boolean);
-    if (options.length < 2) {
-      showToast('選項至少要兩個', undefined, 'warning');
+    const options = questionOptions.map((o) => o.trim()).filter(Boolean);
+    if (options.length < MIN_OPTIONS) {
+      showToast(`選項至少要 ${MIN_OPTIONS} 個`, undefined, 'warning');
       return;
     }
 
@@ -1174,14 +1182,16 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     if (!currentRoom) return;
 
     const labelFor = (idx: number) =>
-      idx === 4 ? answerExplanation.trim() || '其他' : q.options[idx] || `選項 ${idx + 1}`;
+      idx === OTHER_PICK_INDEX
+        ? answerExplanation.trim() || '其他'
+        : q.options[idx] || `選項 ${idx + 1}`;
 
     // "1. 在家追劇 ／ 2. 出門喝咖啡" — order carries the preference
     const picksText = selectedOptIndexes
       .map((idx, rank) => `${rank + 1}. ${labelFor(idx)}`)
       .join(' ／ ');
     const note = answerExplanation.trim();
-    const includeNote = note && !selectedOptIndexes.includes(4);
+    const includeNote = note && !selectedOptIndexes.includes(OTHER_PICK_INDEX);
     const selectedText = includeNote ? `${picksText} (說明: ${note})` : picksText;
 
     const isTargetSubmitting = passcode === q.target;
@@ -1380,14 +1390,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
         questionCategory={questionCategory}
         questionText={questionText}
         setQuestionText={setQuestionText}
-        optA={optA}
-        setOptA={setOptA}
-        optB={optB}
-        setOptB={setOptB}
-        optC={optC}
-        setOptC={setOptC}
-        optD={optD}
-        setOptD={setOptD}
+        options={questionOptions}
+        setOptions={setQuestionOptions}
         isEditingPreset={isEditingPreset}
         setIsEditingPreset={setIsEditingPreset}
         handleCategoryChange={handleCategoryChange}

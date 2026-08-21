@@ -28,7 +28,6 @@ import {
   type User,
 } from 'firebase/auth';
 import {
-  Category,
   CoPlayRoom,
   FAQItem,
   GameInvitation,
@@ -37,6 +36,7 @@ import {
   RoomQuestion,
   RoundRecord,
   DATA_SCHEMA_VERSION,
+  OTHER_PICK_INDEX,
 } from '../types';
 
 const env = (import.meta as any).env || {};
@@ -74,9 +74,11 @@ export const COLLECTIONS = {
   MESSAGES: 'messages',
   /** Completed rounds; drives replay filtering and recent-activity counts. */
   ROUNDS: 'rounds',
-  /** Per-pair question library, stored under each room. */
+  /**
+   * Question library. Under a room it is that pair's own; at the root it is the
+   * default library a pair starts with before they have one.
+   */
   FAQS: 'faqs',
-  CATEGORIES: 'categories',
   /** Allowlist of anonymous UIDs permitted to use the app. */
   MEMBERS: 'members',
   CONFIG: 'config',
@@ -476,6 +478,17 @@ export const readPicks = (q: RoomQuestion, side: 'target' | 'initiator'): number
 };
 
 /**
+ * Is this pick the "其他" slot rather than one of the listed options?
+ *
+ * New rounds store OTHER_PICK_INDEX. Older ones stored `4`, which was safe back
+ * when four options were the maximum — index 4 could only ever mean "其他". That
+ * stopped being true once questions could carry five or more, so the old value
+ * is honoured only for questions short enough that it cannot mean anything else.
+ */
+export const isOtherPick = (q: RoomQuestion, index: number): boolean =>
+  index === OTHER_PICK_INDEX || (index === 4 && (q.options?.length ?? 0) <= 4);
+
+/**
  * Records one player's option for the active question inside a transaction, so
  * two devices submitting at the same time cannot clobber each other. Returns the
  * merged question — `isRevealed` is true only for the call that completed the
@@ -708,6 +721,48 @@ export const deleteRoomFaqs = async (code: string, ids: string[]) => {
   }
 };
 
+/**
+ * Swaps a pair's library out for a different set of questions.
+ *
+ * Deliberately a replacement rather than a merge: "restore the defaults" has to
+ * mean the library afterwards *is* the defaults, not the defaults plus whatever
+ * was already lying around.
+ *
+ * The delete reads the collection rather than trusting a list from the caller —
+ * a client-side snapshot can be a question behind, and anything it had not seen
+ * yet would survive the wipe and reappear as a stray.
+ */
+export const replaceRoomFaqs = async (code: string, items: FAQItem[]) => {
+  const existing = await getDocs(roomFaqsRef(code));
+
+  for (let i = 0; i < existing.docs.length; i += 400) {
+    const batch = writeBatch(db);
+    for (const d of existing.docs.slice(i, i + 400)) batch.delete(d.ref);
+    await batch.commit();
+  }
+
+  await saveRoomFaqs(code, items);
+  return existing.docs.length;
+};
+
+/**
+ * Forgets every question this pair has played.
+ *
+ * Used when the library itself is replaced: the ids in the played list point at
+ * questions that no longer exist, and the list has no other way of shrinking.
+ */
+export const clearPlayedFaqIds = async (code: string) => {
+  try {
+    await setDoc(
+      roomRef(code),
+      { playedFaqIds: {}, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn('[firestore] failed to clear played questions:', err);
+  }
+};
+
 /* ------------------------------------------------------------------ *
  * Round history
  * ------------------------------------------------------------------ */
@@ -917,24 +972,36 @@ export const replaceCollection = async <T extends { id: string }>(name: string, 
   await saveItems(name, items);
 };
 
-/** Seeds default content the first time the app runs against an empty database. */
-export const seedCollectionIfEmpty = async <T extends { id: string }>(
-  name: string,
-  defaults: T[]
-): Promise<boolean> => {
+/* ------------------------------------------------------------------ *
+ * The default question library
+ * ------------------------------------------------------------------ *
+ *
+ * A pair with no library of its own plays with this one, and the admin screen
+ * can edit it like any other library. It lives in the root `faqs` collection —
+ * the one the app used back when every pair shared a single library — which is
+ * why the security rules already allow any signed-in user to read and write it.
+ *
+ * It used to be a constant compiled into the bundle, which meant changing a
+ * question meant editing code and redeploying the site.
+ */
+
+/** One-shot read. The default library changes rarely; a live listener would
+ *  bill every device for a collection almost nobody is looking at. */
+export const loadDefaultFaqs = async (): Promise<FAQItem[]> => {
   try {
-    const snap = await getDocs(query(contentRef(name), fsLimit(1)));
-    if (!snap.empty) return false;
-    await saveItems(name, defaults);
-    return true;
+    const snap = await getDocs(contentRef(COLLECTIONS.FAQS));
+    return snap.docs.map((d) => ({ ...(d.data() as FAQItem), id: d.id }));
   } catch (err) {
-    console.warn(`[firestore] failed to seed ${name}:`, err);
-    return false;
+    console.warn('[firestore] failed to load the default library:', err);
+    return [];
   }
 };
 
-/* Convenience wrappers with concrete types */
-export const subscribeToFAQs = (cb: (items: FAQItem[]) => void) =>
+/** Live view, for the admin screen while it is actually editing this library. */
+export const subscribeToDefaultFaqs = (cb: (items: FAQItem[]) => void) =>
   subscribeToCollection<FAQItem>(COLLECTIONS.FAQS, cb);
-export const subscribeToCategories = (cb: (items: Category[]) => void) =>
-  subscribeToCollection<Category>(COLLECTIONS.CATEGORIES, cb);
+
+export const saveDefaultFaq = (item: FAQItem) => saveItem(COLLECTIONS.FAQS, item);
+export const saveDefaultFaqs = (items: FAQItem[]) => saveItems(COLLECTIONS.FAQS, items);
+export const deleteDefaultFaq = (id: string) => deleteItem(COLLECTIONS.FAQS, id);
+export const deleteDefaultFaqs = (ids: string[]) => deleteItems(COLLECTIONS.FAQS, ids);

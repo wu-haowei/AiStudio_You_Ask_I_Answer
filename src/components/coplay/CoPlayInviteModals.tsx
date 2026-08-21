@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { Gamepad2, X, ThumbsUp, Clock, XCircle, Target, Sparkles, Dices, Shuffle, Edit3 } from 'lucide-react';
-import { CUSTOM_CATEGORY_KEY, FAQItem, RANDOM_CATEGORY_KEY } from '../../types';
+import { Gamepad2, X, ThumbsUp, Clock, XCircle, Target, Sparkles, Dices, Shuffle, Edit3, Plus } from 'lucide-react';
+import { CUSTOM_CATEGORY_KEY, FAQItem, MIN_OPTIONS, RANDOM_CATEGORY_KEY } from '../../types';
 
 interface CoPlayInviteModalsProps {
   // Modal 1: Invitation Request for recipient
@@ -24,14 +24,9 @@ interface CoPlayInviteModalsProps {
   questionCategory: string;
   questionText: string;
   setQuestionText: (val: string) => void;
-  optA: string;
-  setOptA: (val: string) => void;
-  optB: string;
-  setOptB: (val: string) => void;
-  optC: string;
-  setOptC: (val: string) => void;
-  optD: string;
-  setOptD: (val: string) => void;
+  /** The options being published. Two or more, no upper bound. */
+  options: string[];
+  setOptions: React.Dispatch<React.SetStateAction<string[]>>;
   isEditingPreset: boolean;
   setIsEditingPreset: (val: boolean) => void;
 
@@ -66,14 +61,8 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
 
   questionText,
   setQuestionText,
-  optA,
-  setOptA,
-  optB,
-  setOptB,
-  optC,
-  setOptC,
-  optD,
-  setOptD,
+  options,
+  setOptions,
   isEditingPreset,
   setIsEditingPreset,
 
@@ -278,7 +267,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                     <div>
                       <span className="text-[11px] font-bold text-[#7A6C5E] block mb-1">選項</span>
                       <div className="grid grid-cols-2 gap-2 text-xs">
-                        {[optA, optB, optC, optD].map((opt, idx) =>
+                        {options.map((opt, idx) =>
                           opt.trim() ? (
                             <div
                               key={idx}
@@ -318,39 +307,11 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                           className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input font-bold"
                         />
                       </div>
-                      <div>
-                        <label className="text-xs font-bold text-[#4A3F35] mb-1 block">選項</label>
-                        <div className="grid grid-cols-2 gap-2">
-                          <input
-                            type="text"
-                            required
-                            value={optA}
-                            onChange={(e) => setOptA(e.target.value)}
-                            className="px-3 py-1.5 text-xs rounded-xl milk-tea-input"
-                          />
-                          <input
-                            type="text"
-                            required
-                            value={optB}
-                            onChange={(e) => setOptB(e.target.value)}
-                            className="px-3 py-1.5 text-xs rounded-xl milk-tea-input"
-                          />
-                          <input
-                            type="text"
-                            value={optC}
-                            onChange={(e) => setOptC(e.target.value)}
-                            placeholder="選項 C（可留白）"
-                            className="px-3 py-1.5 text-xs rounded-xl milk-tea-input"
-                          />
-                          <input
-                            type="text"
-                            value={optD}
-                            onChange={(e) => setOptD(e.target.value)}
-                            placeholder="選項 D（可留白）"
-                            className="px-3 py-1.5 text-xs rounded-xl milk-tea-input"
-                          />
-                        </div>
-                      </div>
+                      <OptionListEditor
+                        options={options}
+                        setOptions={setOptions}
+                        inputClassName="px-3 py-1.5 text-xs rounded-xl milk-tea-input"
+                      />
                     </div>
                   )}
 
@@ -397,41 +358,11 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                     />
                   </div>
 
-                  <div>
-                    <label className="text-xs font-bold text-[#4A3F35] mb-1 block">選項（至少兩個）</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="text"
-                        required
-                        value={optA}
-                        onChange={(e) => setOptA(e.target.value)}
-                        placeholder="選項 A"
-                        className="px-3 py-2 text-xs rounded-xl milk-tea-input"
-                      />
-                      <input
-                        type="text"
-                        required
-                        value={optB}
-                        onChange={(e) => setOptB(e.target.value)}
-                        placeholder="選項 B"
-                        className="px-3 py-2 text-xs rounded-xl milk-tea-input"
-                      />
-                      <input
-                        type="text"
-                        value={optC}
-                        onChange={(e) => setOptC(e.target.value)}
-                        placeholder="選項 C（可留白）"
-                        className="px-3 py-2 text-xs rounded-xl milk-tea-input"
-                      />
-                      <input
-                        type="text"
-                        value={optD}
-                        onChange={(e) => setOptD(e.target.value)}
-                        placeholder="選項 D（可留白）"
-                        className="px-3 py-2 text-xs rounded-xl milk-tea-input"
-                      />
-                    </div>
-                  </div>
+                  <OptionListEditor
+                    options={options}
+                    setOptions={setOptions}
+                    inputClassName="px-3 py-2 text-xs rounded-xl milk-tea-input"
+                  />
                 </div>
               )}
 
@@ -450,5 +381,73 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
       )}
     </>,
     document.body
+  );
+};
+
+/**
+ * A list of option boxes with add and remove, replacing the four fixed slots
+ * this form used to have.
+ *
+ * The last `MIN_OPTIONS` rows cannot be removed — a question with fewer than
+ * two choices is not answerable — and the first two stay `required` so the
+ * browser blocks an empty submission before it reaches the publisher.
+ */
+const OptionListEditor: React.FC<{
+  options: string[];
+  setOptions: React.Dispatch<React.SetStateAction<string[]>>;
+  inputClassName: string;
+}> = ({ options, setOptions, inputClassName }) => {
+  const setAt = (index: number, value: string) =>
+    setOptions((prev) => prev.map((opt, i) => (i === index ? value : opt)));
+
+  const removeAt = (index: number) =>
+    setOptions((prev) => (prev.length <= MIN_OPTIONS ? prev : prev.filter((_, i) => i !== index)));
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="block text-xs font-bold text-[#4A3F35]">
+          選項
+          <span className="ml-1 font-medium text-[#7A6C5E]">
+            （至少 {MIN_OPTIONS} 個，上不封頂）
+          </span>
+        </label>
+        <button
+          type="button"
+          onClick={() => setOptions((prev) => [...prev, ''])}
+          className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-[#D9C5B2] bg-white px-2.5 py-1 text-[11px] font-bold text-[#4A3F35] transition-colors hover:bg-[#F5EFE6]"
+        >
+          <Plus className="h-3 w-3" />
+          新增選項
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {options.map((opt, idx) => (
+          <div key={idx} className="flex items-center gap-1.5">
+            <span className="w-4 shrink-0 text-[11px] font-bold text-[#A68B6D]">
+              {String.fromCharCode(65 + idx)}
+            </span>
+            <input
+              type="text"
+              required={idx < MIN_OPTIONS}
+              value={opt}
+              onChange={(e) => setAt(idx, e.target.value)}
+              placeholder={idx < MIN_OPTIONS ? `選項 ${idx + 1}` : '可留白'}
+              className={`min-w-0 flex-1 ${inputClassName}`}
+            />
+            <button
+              type="button"
+              onClick={() => removeAt(idx)}
+              disabled={options.length <= MIN_OPTIONS}
+              aria-label={`刪除選項 ${idx + 1}`}
+              className="shrink-0 cursor-pointer rounded-lg p-1 text-[#A69684] transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[#A69684]"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 };

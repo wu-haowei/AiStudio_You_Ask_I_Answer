@@ -17,12 +17,21 @@ export interface FAQItem {
   updatedAt: string;
 }
 
+/**
+ * A category is not stored anywhere — it is whatever the questions say it is.
+ * The list is derived from the library's `category` fields, so importing a set
+ * of questions replaces the categories along with them, and a category nothing
+ * is filed under simply stops existing.
+ *
+ * `slug`, `colorClass` and `description` used to live here. Nothing ever
+ * rendered any of them, and `colorClass` was a union of five class names that
+ * capped the number of categories at five — one of the built-in six was already
+ * escaping it with an `as any` and a class that was never defined in the CSS.
+ */
 export interface Category {
+  /** React key only; categories have no identity beyond their name. */
   id: string;
   name: string;
-  slug: string;
-  colorClass: 'badge-milktea' | 'badge-matcha' | 'badge-rosetea' | 'badge-taro' | 'badge-earlgrey';
-  description?: string;
 }
 
 export type ActiveTab = 'co_play' | 'admin_manage';
@@ -40,6 +49,21 @@ export const RANDOM_CATEGORY_KEY = 'RANDOM';
 
 /** Write a question by hand instead of drawing one. */
 export const CUSTOM_CATEGORY_KEY = 'CUSTOM';
+
+/** Where an imported question with no category of its own ends up. */
+export const UNFILED_CATEGORY = '未分類';
+
+/**
+ * The pick that means "none of these, here is my own answer".
+ *
+ * It is negative so it can never collide with a real option index, however many
+ * options a question has. Rounds written before questions could carry more than
+ * four options recorded it as `4` instead — see `isOtherPick`, which reads both.
+ */
+export const OTHER_PICK_INDEX = -1;
+
+/** How many options a question must have before it can be published. */
+export const MIN_OPTIONS = 2;
 
 /**
  * Firestore document schema version. Bumped whenever stored shapes change;

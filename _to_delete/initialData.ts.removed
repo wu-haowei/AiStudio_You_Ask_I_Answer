@@ -1,49 +1,4 @@
-import { Category, FAQItem } from '../types';
-
-export const INITIAL_CATEGORIES: Category[] = [
-  {
-    id: 'cat-1',
-    name: '習性與喜好',
-    slug: 'habits',
-    colorClass: 'badge-milktea',
-    description: '日常作息、飲食習慣、個人地雷與休閒喜好',
-  },
-  {
-    id: 'cat-2',
-    name: '人生規劃與經歷',
-    slug: 'life',
-    colorClass: 'badge-rosetea',
-    description: '職涯目標、金錢觀、過往難忘回億與未來願景',
-  },
-  {
-    id: 'cat-3',
-    name: '感情相關',
-    slug: 'romance',
-    colorClass: 'badge-taro',
-    description: '約會偏好、感情地雷、相處模式與浪漫幻想',
-  },
-  {
-    id: 'cat-4',
-    name: '狀況劇',
-    slug: 'scenarios',
-    colorClass: 'badge-[#A68B6D]' as any,
-    description: '各種突發臨場反應與極限二選一假設情境',
-  },
-  {
-    id: 'cat-5',
-    name: '敏感題',
-    slug: 'sensitive',
-    colorClass: 'badge-earlgrey',
-    description: '深層內心話、前任話題、手機隱私與地雷邊界',
-  },
-  {
-    id: 'cat-6',
-    name: '隨機',
-    slug: 'random',
-    colorClass: 'badge-matcha',
-    description: '趣味腦洞大開、奇特超能力與無釐頭問答',
-  },
-];
+import { FAQItem } from '../types';
 
 export const INITIAL_FAQS: FAQItem[] = [
   // 習性與喜好
@@ -154,9 +109,3 @@ export const INITIAL_FAQS: FAQItem[] = [
     options: ['讀心術 (知道別人在想什麼)', '瞬間移動 (隨時去任何地方)', '隱形能力 (不被任何人發現)', '時間暫停 (隨意掌控時間)'],
   },
 ];
-
-/**
- * Ids of the questions seeded on a fresh database. They are placeholder content,
- * so the first successful JSON import clears whichever of them are still present.
- */
-export const SEED_FAQ_IDS = INITIAL_FAQS.map((f) => f.id);
