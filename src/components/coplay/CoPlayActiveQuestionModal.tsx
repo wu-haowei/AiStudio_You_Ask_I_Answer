@@ -1,9 +1,25 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { Target, Sparkles, X, Check, CheckCircle2 } from 'lucide-react';
 import { RoomQuestion } from '../../types';
 
 /** A player may rank at most this many options. */
 const MAX_PICKS = 2;
+
+/**
+ * "The other one is waiting on you."
+ *
+ * This used to arrive as a stored system message in the transcript, one write
+ * per submission. The same fact is already on the room document — it records
+ * who has submitted — and that document is being listened to anyway, so saying
+ * it here costs nothing and puts it where the player is actually looking.
+ */
+const PartnerReadyNote: React.FC<{ text: string }> = ({ text }) => (
+  <p className="flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-800 animate-fade-in">
+    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+    {text}
+  </p>
+);
 
 interface CoPlayActiveQuestionModalProps {
   activeQ: RoomQuestion | undefined;
@@ -61,7 +77,12 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
     return null;
   }
 
-  return (
+  /*
+   * Portalled into <body> for the same reason as the invite dialogs: the
+   * conversation panel is hidden rather than unmounted while the admin tab is
+   * open, and `display: none` would hide a fixed-position child along with it.
+   */
+  return createPortal(
     <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in overflow-y-auto">
       <div className="bg-[#FAF7F2] border border-[#D9C5B2] rounded-3xl p-4 sm:p-6 max-w-lg w-full shadow-2xl space-y-4 my-auto max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between border-b border-[#D9C5B2] pb-3">
@@ -108,6 +129,9 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                   選擇你的真實答案
                   <span className="ml-1 font-medium text-[#7A6C5E]">（最多兩個，依順序）</span>
                 </p>
+                {hasInitiatorGuessed && (
+                  <PartnerReadyNote text={`${partnerDisplayName} 已經猜完了，等你作答`} />
+                )}
                 <div className="grid grid-cols-2 gap-2">
                   {activeQ.options.map((opt, idx) => (
                     <OptionButton
@@ -193,6 +217,9 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                   猜猜 {partnerDisplayName} 會選哪一個？
                   <span className="ml-1 font-medium text-[#7A6C5E]">（最多兩個，猜中一個就算對）</span>
                 </p>
+                {hasTargetAnswered && (
+                  <PartnerReadyNote text={`${partnerDisplayName} 已經作答了，等你猜`} />
+                )}
                 <div className="grid grid-cols-2 gap-2">
                   {activeQ.options.map((opt, idx) => (
                     <OptionButton
@@ -269,7 +296,8 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

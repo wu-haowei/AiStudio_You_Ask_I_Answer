@@ -9,6 +9,7 @@ import {
   ensureSignedIn,
   forgetPlayedFaqIds,
   loadPlayedFaqIds,
+  markFaqPlayed,
   isInviteRequired,
   isMember,
   saveRoomFaq,
@@ -299,6 +300,52 @@ export default function App() {
     showToast('已刪除答過的題目', `共 ${ids.length} 題`, 'success');
   };
 
+  /**
+   * Marks a question played, or puts it back into circulation.
+   *
+   * Local state is updated alongside the write because playedFaqIds is fetched
+   * once when the admin tab opens rather than being subscribed to — a listener
+   * on the room document for something only this screen reads would not pay for
+   * itself.
+   */
+  const handleToggleAnswered = async (faq: FAQItem, answered: boolean) => {
+    const roomId = requireRoom();
+    try {
+      if (answered) await markFaqPlayed(roomId, faq.category, faq.id);
+      else await forgetPlayedFaqIds(roomId, [faq.id]);
+
+      setPlayedFaqIds((prev) => {
+        const next = new Set(prev);
+        if (answered) next.add(faq.id);
+        else next.delete(faq.id);
+        return next;
+      });
+    } catch (err: any) {
+      console.error('Toggle answered failed:', err);
+      showToast('標記失敗', err?.message || '請稍後再試', 'error');
+    }
+  };
+
+  /**
+   * Puts a batch of questions back into circulation.
+   *
+   * The one-by-one toggle is fine for a stray question, but a pair who has been
+   * through most of the library wants the whole lot back without tapping thirty
+   * times. Errors are left to the caller, which reports them in its dialog.
+   */
+  const handleRestoreAnswered = async (ids: string[]) => {
+    const roomId = requireRoom();
+    if (ids.length === 0) return;
+
+    await forgetPlayedFaqIds(roomId, ids);
+    setPlayedFaqIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.delete(id));
+      return next;
+    });
+    showToast('已復原', `${ids.length} 題可以再抽到了`, 'success');
+  };
+
   const handleExportData = () => {
     const jsonStr = JSON.stringify(
       { version: CURRENT_APP_VERSION, exportDate: new Date().toISOString(), faqs, categories },
@@ -468,35 +515,50 @@ export default function App() {
       >
         {!activeRoom ? (
           <ConversationListView me={userName} onOpenRoom={openRoom} showToast={showToast} />
-        ) : currentTab === 'co_play' ? (
-          <CoPlayView
-            roomId={activeRoom.id}
-            partnerName={activeRoom.partner}
-            faqs={faqs}
-            showToast={showToast}
-            onStatusChange={setRoomStatus}
-            background={preferences}
-          />
         ) : (
-          <AdminManageView
-            faqs={faqs}
-            categories={categories}
-            isLoading={isLoadingContent}
-            isUsingDefaults={isUsingDefaultFaqs}
-            partnerName={activeRoom.partner}
-            answeredFaqs={answeredFaqs}
-            onDeleteAnswered={handleDeleteAnswered}
-            roomId={activeRoom.id}
-            onAddFAQ={handleAddFAQ}
-            onUpdateFAQ={handleUpdateFAQ}
-            onDeleteFAQ={handleDeleteFAQ}
-            onDeleteFAQs={handleDeleteFAQs}
-            onImportDefaults={handleImportDefaults}
-            onMigrateLegacy={handleMigrateLegacy}
-            onImportData={handleImportData}
-            onExportData={handleExportData}
-            showToast={showToast}
-          />
+          <>
+            {/*
+              * The conversation stays mounted while the admin tab is in front.
+              * Unmounting it used to drop the room listener and the heartbeat,
+              * so an invitation sent while somebody was editing questions never
+              * arrived — and this tab's player row was removed on the way out,
+              * which made them look offline to their partner. It hides itself
+              * instead; its dialogs are portalled to <body> so they still show.
+              */}
+            <CoPlayView
+              roomId={activeRoom.id}
+              partnerName={activeRoom.partner}
+              faqs={faqs}
+              showToast={showToast}
+              onStatusChange={setRoomStatus}
+              background={preferences}
+              isActive={currentTab === 'co_play'}
+            />
+
+            {currentTab === 'admin_manage' && (
+              <AdminManageView
+                faqs={faqs}
+                categories={categories}
+                isLoading={isLoadingContent}
+                isUsingDefaults={isUsingDefaultFaqs}
+                partnerName={activeRoom.partner}
+                answeredFaqs={answeredFaqs}
+                onDeleteAnswered={handleDeleteAnswered}
+                onToggleAnswered={handleToggleAnswered}
+                onRestoreAnswered={handleRestoreAnswered}
+                roomId={activeRoom.id}
+                onAddFAQ={handleAddFAQ}
+                onUpdateFAQ={handleUpdateFAQ}
+                onDeleteFAQ={handleDeleteFAQ}
+                onDeleteFAQs={handleDeleteFAQs}
+                onImportDefaults={handleImportDefaults}
+                onMigrateLegacy={handleMigrateLegacy}
+                onImportData={handleImportData}
+                onExportData={handleExportData}
+                showToast={showToast}
+              />
+            )}
+          </>
         )}
       </main>
 

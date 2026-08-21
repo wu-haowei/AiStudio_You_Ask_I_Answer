@@ -14,10 +14,12 @@ import {
 } from 'lucide-react';
 import {
   CoPlayRoom,
+  CUSTOM_CATEGORY_KEY,
   DATA_SCHEMA_VERSION,
   FAQItem,
   GameInvitation,
   MessageReplyRef,
+  RANDOM_CATEGORY_KEY,
   RoomMessage,
   RoomQuestion,
 } from '../types';
@@ -32,7 +34,8 @@ import {
   claimGameInvitation,
   prunePlayers,
   readPicks,
-  recordRound,
+  publishRound,
+  removePlayer,
   resetPlayedCategory,
   submitGameAnswer,
   subscribeToMessages,
@@ -68,12 +71,17 @@ interface CoPlayViewProps {
   }) => void;
   /** Personal chat background; empty image means the plain milk-tea surface. */
   background?: { chatBackground: string; backgroundFade: number };
+  /**
+   * False while the admin tab is in front. The view stays mounted and merely
+   * hides itself, so the room listener, the heartbeat and this tab's player row
+   * all survive the detour — an invitation sent while somebody is editing the
+   * question library still reaches them, and switching tabs no longer pays for
+   * a fresh page of messages.
+   */
+  isActive?: boolean;
 }
 
 const TAB_SESSION_ID_KEY = 'milktea_coplay_tab_id';
-
-/** Sentinel value for the "write my own" entry in the category dropdown. */
-const CUSTOM_CATEGORY_KEY = 'CUSTOM';
 
 /** Category label written on questions created with the custom option. */
 const CUSTOM_CATEGORY_LABEL = '自訂';
@@ -85,21 +93,43 @@ const REVEAL_AUTHOR = '揭曉結果';
  * Presence heartbeat.
  *
  * Every heartbeat writes the room document, and every write pushes a fresh
- * snapshot to all connected devices — one billed read each. A slow beat is
- * therefore the single biggest lever on read volume; the online window is
- * three beats wide so a missed one does not flap the indicator.
+ * snapshot to all connected devices — one billed read each. The cost is
+ * therefore quadratic in the number of open tabs (T writes a minute, each
+ * fanning out to T listeners), which makes the interval the single biggest
+ * lever on read volume.
+ *
+ * Leaving a room now removes the player row outright, so a normal departure
+ * shows up immediately and the beat only has to cover crashes and dropped
+ * connections. That is what buys the slow interval: the window is three beats
+ * wide — so a missed one does not flap the indicator — and a stale row can now
+ * only come from a device that vanished without saying goodbye.
  */
-const HEARTBEAT_MS = 60000;
+const HEARTBEAT_MS = 150000;
 const ONLINE_WINDOW_MS = 3 * HEARTBEAT_MS;
+
+/**
+ * How long the departure write waits, so React's development-mode remount can
+ * call it off before it fires. Long enough to outlast that, short enough that a
+ * real exit still looks instant.
+ */
+const LEAVE_GRACE_MS = 800;
+
+/**
+ * Kept outside the component on purpose: a StrictMode remount is a different
+ * component instance, and it has to be able to cancel the timer the unmount
+ * that preceded it scheduled.
+ */
+let pendingLeaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Window for the "recently played" counter in the dialogue header. */
 const RECENT_ACTIVITY_MS = 3 * 60 * 60 * 1000;
 
 
 /**
- * Invite / decline / cancel notices are no longer recorded — they cluttered the
- * transcript. Rooms created earlier still contain them, so they are filtered out
- * of the stream instead of being migrated away.
+ * Invite / decline / cancel notices, and the per-submission "已送出" notices,
+ * are no longer recorded — they cluttered the transcript and cost a stored
+ * message each. Rooms created earlier still contain them, so they are filtered
+ * out of the stream instead of being migrated away.
  *
  * The patterns are whole sentences on purpose. An earlier version matched the
  * bare word 「婉拒」, which also swallowed any reveal card whose answer option
@@ -113,6 +143,8 @@ const RETIRED_NOTICE_PATTERNS = [
   '婉拒了考驗',
   '取消了邀請',
   '取消了猜心考驗發起',
+  '已送出真心話。',
+  '已送出猜測。',
 ];
 
 const isRetiredNotice = (m: RoomMessage) => {
@@ -141,6 +173,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   showToast,
   onStatusChange,
   background,
+  isActive = true,
 }) => {
   // The signed-in name is the player's identity throughout the room.
   const { name: passcode } = useIdentity();
@@ -461,6 +494,18 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     // has kept the view pinned, so there is nothing to announce.
   }, [messages]);
 
+  /*
+   * Coming back from the admin tab.
+   *
+   * Hiding the panel with `display: none` takes the scroll container out of
+   * layout, and the browser resets its scrollTop to zero on the way. Without
+   * this the reader would return to the top of the thread — weeks back, in a
+   * long conversation — rather than to whatever was said while they were away.
+   */
+  useLayoutEffect(() => {
+    if (isActive) jumpToBottom();
+  }, [isActive]);
+
   // Toast alert when new invitation or question arrives via polling
   useEffect(() => {
     if (!currentRoom) return;
@@ -584,7 +629,10 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
      */
     const beat = () => {
       if (myPlayerId && document.visibilityState === 'visible') {
-        touchPlayer(roomCode, myPlayerId);
+        // The name rides along so a beat that lands after a goodbye — a tab
+        // restored from the back/forward cache, say — rebuilds a usable row
+        // rather than a nameless fragment.
+        touchPlayer(roomCode, myPlayerId, passcode);
       }
     };
 
@@ -599,6 +647,45 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       unsubscribeMessages();
     };
   }, [currentRoom?.code, myPlayerId, passcode]);
+
+  /*
+   * Say goodbye when this tab stops being in the room.
+   *
+   * Without it a departure only becomes visible once the heartbeat window
+   * lapses, which is the whole reason that window used to have to be short.
+   *
+   * The removal is deferred by a moment because React's StrictMode mounts,
+   * unmounts and remounts every component in development — running it
+   * immediately would delete the row this tab had just registered. The timer
+   * lives outside the component so the remount can cancel the one the unmount
+   * scheduled. `pagehide` covers the tab being closed outright; the write may
+   * not survive that, which is exactly what the heartbeat is still there for.
+   */
+  const exitRef = useRef({ code: '', playerId: '' });
+  exitRef.current = { code: currentRoom?.code || roomId, playerId: myPlayerId };
+
+  useEffect(() => {
+    if (pendingLeaveTimer) {
+      clearTimeout(pendingLeaveTimer);
+      pendingLeaveTimer = null;
+    }
+
+    const leaveNow = () => {
+      const { code, playerId } = exitRef.current;
+      if (code && playerId) removePlayer(code, playerId);
+    };
+
+    window.addEventListener('pagehide', leaveNow);
+    return () => {
+      window.removeEventListener('pagehide', leaveNow);
+      const { code, playerId } = exitRef.current;
+      if (!code || !playerId) return;
+      pendingLeaveTimer = setTimeout(() => {
+        pendingLeaveTimer = null;
+        removePlayer(code, playerId);
+      }, LEAVE_GRACE_MS);
+    };
+  }, []);
 
   /** Registers this tab as a player in the shared room. */
   const enterRoom = async (rawName: string) => {
@@ -841,7 +928,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   // Keep the selection pointing at a category that exists
   useEffect(() => {
     if (availableCategories.length === 0) return;
+    // Neither sentinel names a category, so neither one is ever "missing"
     if (questionCategory === CUSTOM_CATEGORY_KEY) return;
+    if (questionCategory === RANDOM_CATEGORY_KEY) return;
     if (!availableCategories.includes(questionCategory)) {
       setQuestionCategory(availableCategories[0]);
     }
@@ -868,23 +957,47 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   }, [currentRoom?.recentRounds]);
 
   /**
-   * Draws a question that has not been played yet. When a category runs out,
-   * the cycle restarts rather than leaving the picker with nothing to offer.
+   * Turns a picker selection into the category to draw from. Both sentinels
+   * mean "the whole library" — one because the player wants any category, the
+   * other because they are about to write their own question and the draw is
+   * only there to give them a starting point.
+   */
+  const drawScopeFor = (cat: string) =>
+    cat === CUSTOM_CATEGORY_KEY || cat === RANDOM_CATEGORY_KEY ? '' : cat;
+
+  /**
+   * Draws a question that has not been played yet. When a single category runs
+   * out, the cycle restarts rather than leaving the picker with nothing.
+   *
+   * An empty `cat` draws from everything, and then the played set has to be the
+   * union across categories — reading the per-category list with an empty key
+   * would find nothing and make every question look unplayed.
    */
   const pickUnplayedFaq = (cat: string): FAQItem | null => {
-    const inCategory = cat ? faqs.filter((f) => f.category === cat) : faqs;
+    const isWholeLibrary = !cat;
+    const inCategory = isWholeLibrary ? faqs : faqs.filter((f) => f.category === cat);
     const pool = inCategory.length > 0 ? inCategory : faqs;
     if (pool.length === 0) return null;
 
-    const played = playedFaqIdsByCategory.get(cat) || new Set<string>();
+    const played = isWholeLibrary
+      ? playedFaqIdSet
+      : playedFaqIdsByCategory.get(cat) || new Set<string>();
     const unplayed = pool.filter((f) => !played.has(f.id));
 
     if (unplayed.length > 0) {
       return unplayed[Math.floor(Math.random() * unplayed.length)];
     }
 
-    // Everything in this category has been used — start a new cycle.
-    if (cat && currentRoom) {
+    /*
+     * Nothing left. A single category restarts its own cycle, which only
+     * discards that one list. Drawing from the whole library does not — the
+     * equivalent would wipe every category at once, including anything marked
+     * by hand in the admin screen, and that is too much to do unasked. Say so
+     * instead and hand back a repeat.
+     */
+    if (isWholeLibrary) {
+      showToast('題目都玩過一輪了', '可以到後台復原作答紀錄', 'info');
+    } else if (currentRoom) {
       resetPlayedCategory(currentRoom.code, cat);
       showToast('題目已全部玩過一輪', `「${cat}」重新開始`, 'info');
     }
@@ -894,18 +1007,42 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   /** Remembers which library question the form currently holds. */
   const [sourceFaqId, setSourceFaqId] = useState<string | undefined>(undefined);
 
-  const applyFaqToForm = (faq: FAQItem) => {
+  /**
+   * `selection` is the picker entry this draw belongs to. It is passed in
+   * rather than read from state because the caller often changes the selection
+   * in the same handler, and that change has not landed yet.
+   */
+  const applyFaqToForm = (faq: FAQItem, selection: string = questionCategory) => {
     setQuestionText(faq.question);
-    if (faq.category) setQuestionCategory(faq.category);
+    /*
+     * Snapping the picker to the drawn question's category is right when the
+     * player chose a category, and wrong under 隨機 — it would drop them out of
+     * random mode after a single draw. The real category is recovered from
+     * sourceFaqId when the question is published.
+     */
+    if (faq.category && selection !== RANDOM_CATEGORY_KEY) {
+      setQuestionCategory(faq.category);
+    }
     applyOptionsToForm(faq.options);
     setSourceFaqId(faq.id);
   };
 
   // Helper to randomize a question given a category
   const randomizeQuestionForCategory = (cat: string) => {
-    const faq = pickUnplayedFaq(cat === CUSTOM_CATEGORY_KEY ? '' : cat);
-    if (faq) applyFaqToForm(faq);
+    const faq = pickUnplayedFaq(drawScopeFor(cat));
+    if (faq) applyFaqToForm(faq, cat);
   };
+
+  /**
+   * What the picker tells the player it is drawing from. Under 隨機 the picker
+   * stays on 隨機, so the drawn question's own category is named alongside it —
+   * otherwise there would be no way to tell where the question came from.
+   */
+  const libraryLabel = useMemo(() => {
+    if (questionCategory !== RANDOM_CATEGORY_KEY) return questionCategory;
+    const drawn = faqs.find((f) => f.id === sourceFaqId)?.category;
+    return drawn ? `全部類別 · ${drawn}` : '全部類別';
+  }, [questionCategory, faqs, sourceFaqId]);
 
   const handleCategoryChange = (cat: string) => {
     setQuestionCategory(cat);
@@ -930,7 +1067,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       return;
     }
 
-    const faq = pickUnplayedFaq(questionCategory === CUSTOM_CATEGORY_KEY ? '' : questionCategory);
+    const faq = pickUnplayedFaq(drawScopeFor(questionCategory));
     if (!faq) {
       showToast('題庫沒有題目', undefined, 'warning');
       return;
@@ -948,8 +1085,6 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       return;
     }
 
-    const finalCategory =
-      questionCategory === CUSTOM_CATEGORY_KEY ? CUSTOM_CATEGORY_LABEL : questionCategory;
     const options = [optA, optB, optC, optD].map((o) => o.trim()).filter(Boolean);
     if (options.length < 2) {
       showToast('選項至少要兩個', undefined, 'warning');
@@ -959,6 +1094,19 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     // A hand-edited question is no longer the library one it started from
     const usedFaq = faqs.find((f) => f.id === sourceFaqId);
     const faqId = usedFaq && usedFaq.question === questionText.trim() ? usedFaq.id : undefined;
+
+    /*
+     * 隨機 is a way of drawing, not a category to file the round under. The
+     * question keeps its own category so the replay filter and the "answered"
+     * list stay per category — recording it as "RANDOM" would quietly build a
+     * category nothing else knows about.
+     */
+    const finalCategory =
+      questionCategory === CUSTOM_CATEGORY_KEY
+        ? CUSTOM_CATEGORY_LABEL
+        : questionCategory === RANDOM_CATEGORY_KEY
+          ? usedFaq?.category || CUSTOM_CATEGORY_LABEL
+          : questionCategory;
 
     const gameQuestion: RoomQuestion = {
       id: `gq-${Date.now()}`,
@@ -973,10 +1121,10 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     };
 
     try {
-      await setActiveGameQuestion(currentRoom.code, gameQuestion);
-      await setGameInvitation(currentRoom.code, null);
-      await recordRound(
+      // One room write, not three — see publishRound.
+      await publishRound(
         currentRoom.code,
+        gameQuestion,
         {
           id: gameQuestion.id,
           ...(faqId ? { faqId } : {}),
@@ -1049,17 +1197,15 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       setSelectedOptIndexes([]);
       setAnswerExplanation('');
 
-      await appendMessage(
-        currentRoom.code,
-        buildMessage({
-          id: `msg-opt-${Date.now()}`,
-          author: '系統',
-          text: isTargetSubmitting
-            ? `${getNameByPasscode(passcode)} 已送出真心話。`
-            : `${getNameByPasscode(passcode)} 已送出猜測。`,
-          type: 'system',
-        })
-      );
+      /*
+       * "X 已送出真心話" used to be written to the transcript here. It was a
+       * stored message per submission — two a round, each one pushed to every
+       * connected tab — carrying something neither player needs to keep.
+       *
+       * Nothing is lost. The submitter gets the toast below, and the partner
+       * reads it off the room document, which already records who has answered
+       * and arrives in the same snapshot as the submission itself.
+       */
 
       // Only the submission that completed the pair publishes the reveal.
       if (updatedQ?.isRevealed) {
@@ -1206,7 +1352,16 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   if (!passcode || !roomId) return null;
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col h-full animate-fade-in overflow-hidden">
+    /*
+     * `flex` is applied only when active. Both `flex` and `hidden` set display,
+     * so leaving them both on would leave the outcome to whichever rule the
+     * stylesheet happens to emit last.
+     */
+    <div
+      className={`flex-1 min-h-0 h-full animate-fade-in overflow-hidden ${
+        isActive ? 'flex flex-col' : 'hidden'
+      }`}
+    >
       {/* Invite and Question Selection Modals */}
       <CoPlayInviteModals
         isPendingInviteForMe={isPendingInviteForMe}
@@ -1241,6 +1396,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
         faqs={faqs}
         playedFaqIds={playedFaqIdSet}
         availableCategories={availableCategories}
+        libraryLabel={libraryLabel}
       />
 
       {/* Waiting Indicator for Target when Initiator is selecting question */}

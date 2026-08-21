@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Gamepad2, X, ThumbsUp, Clock, XCircle, Target, Sparkles, Dices, Shuffle, Edit3 } from 'lucide-react';
-import { FAQItem } from '../../types';
+import { CUSTOM_CATEGORY_KEY, FAQItem, RANDOM_CATEGORY_KEY } from '../../types';
 
 interface CoPlayInviteModalsProps {
   // Modal 1: Invitation Request for recipient
@@ -43,6 +44,8 @@ interface CoPlayInviteModalsProps {
   playedFaqIds: Set<string>;
   /** Categories present in the library; the list is not hard-coded. */
   availableCategories: string[];
+  /** What the current selection is drawing from, spelled out for the header. */
+  libraryLabel: string;
 }
 
 export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
@@ -80,6 +83,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
   faqs,
   playedFaqIds,
   availableCategories,
+  libraryLabel,
 }) => {
   /*
    * Questions for the picker: this category only, unplayed first.
@@ -89,13 +93,25 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
    * sort is stable, so the library's own order survives within each group.
    */
   const pickableFaqs = useMemo(() => {
-    const inCategory = faqs.filter((f) => !f.category || f.category === questionCategory);
+    const inCategory =
+      questionCategory === RANDOM_CATEGORY_KEY
+        ? faqs
+        : faqs.filter((f) => !f.category || f.category === questionCategory);
     const fresh = inCategory.filter((f) => !playedFaqIds.has(f.id));
     const played = inCategory.filter((f) => playedFaqIds.has(f.id));
     return [...fresh, ...played];
   }, [faqs, questionCategory, playedFaqIds]);
 
-  return (
+  /*
+   * Rendered into <body> rather than in place.
+   *
+   * The conversation panel is hidden — not unmounted — while the admin tab is
+   * open, so that presence and the room listener keep running. `display: none`
+   * hides every descendant, fixed positioning included, which would have taken
+   * these dialogs down with it. A portal puts them outside that subtree, so an
+   * invitation still reaches the screen wherever the player happens to be.
+   */
+  return createPortal(
     <>
       {/* Modal Popup 1 - Challenge Invitation Request */}
       {isPendingInviteForMe && (
@@ -221,24 +237,26 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                     onChange={(e) => handleCategoryChange(e.target.value)}
                     className="text-xs px-3 py-1.5 rounded-xl bg-white border border-[#D9C5B2] text-[#4A3F35] font-bold cursor-pointer hover:border-[#A68B6D] transition-colors"
                   >
+                    {/* Not a category — a way of drawing from all of them */}
+                    <option value={RANDOM_CATEGORY_KEY}>隨機（全部類別）</option>
                     {availableCategories.map((cat) => (
                       <option key={cat} value={cat}>
                         {cat}
                       </option>
                     ))}
-                    <option value="CUSTOM">自訂種類</option>
+                    <option value={CUSTOM_CATEGORY_KEY}>自訂種類</option>
                   </select>
                 </div>
               </div>
 
               {/* Step 2: Category Randomization Preview OR Custom Text Input */}
-              {questionCategory !== 'CUSTOM' ? (
+              {questionCategory !== CUSTOM_CATEGORY_KEY ? (
                 <div className="space-y-3">
                   <div className="bg-white p-4 rounded-2xl border border-[#D9C5B2] space-y-3 shadow-2xs">
                     <div className="flex items-center justify-between border-b border-dashed border-[#D9C5B2] pb-2">
                       <span className="text-xs font-bold text-[#A68B6D] flex items-center gap-1">
                         <Dices className="w-4 h-4" />
-                        來自「{questionCategory}」題庫
+                        來自「{libraryLabel}」題庫
                       </span>
                       <button
                         type="button"
@@ -430,6 +448,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
           </div>
         </div>
       )}
-    </>
+    </>,
+    document.body
   );
 };

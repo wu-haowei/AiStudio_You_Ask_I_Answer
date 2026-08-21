@@ -82,8 +82,14 @@ export const COLLECTIONS = {
   CONFIG: 'config',
 } as const;
 
-/** Messages fetched on entry, and per "load older" page. */
-export const MESSAGE_PAGE_SIZE = 50;
+/**
+ * Messages fetched on entry, and per "load older" page.
+ *
+ * Paid in full every time a room is opened, so it is the price of walking in
+ * the door. A phone screen holds nowhere near this many; the rest is read on
+ * demand when someone actually scrolls back.
+ */
+export const MESSAGE_PAGE_SIZE = 25;
 
 /* ------------------------------------------------------------------ *
  * Access control
@@ -318,6 +324,26 @@ export const upsertPlayer = async (code: string, player: RoomPlayer) => {
 };
 
 /**
+ * Drops one tab's player entry on the way out.
+ *
+ * Saying goodbye explicitly is what lets the heartbeat run slowly: a normal
+ * departure is reflected at once, so the beat only has to cover the cases
+ * nobody can announce — a crash, a killed tab, a lost connection.
+ */
+export const removePlayer = async (code: string, playerId: string) => {
+  if (!code || !playerId) return;
+  try {
+    await setDoc(
+      roomRef(code),
+      { players: { [playerId]: deleteField() }, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn('[firestore] failed to remove player:', err);
+  }
+};
+
+/**
  * Removes player entries that have not sent a heartbeat recently. Each browser
  * tab registers its own player id, so without this the room document would grow
  * a new entry on every visit.
@@ -344,13 +370,27 @@ export const prunePlayers = async (code: string, maxAgeMs = 6 * 60 * 60 * 1000) 
   }
 };
 
-/** Lightweight presence heartbeat. */
-export const touchPlayer = async (code: string, playerId: string) => {
+/**
+ * Lightweight presence heartbeat.
+ *
+ * `name` is optional but worth passing: the merge only touches the keys listed
+ * here, so score and host status survive, while a row that was removed on the
+ * way out comes back complete instead of as a nameless fragment.
+ */
+export const touchPlayer = async (code: string, playerId: string, name?: string) => {
   if (!code || !playerId) return;
   try {
     await setDoc(
       roomRef(code),
-      { players: { [playerId]: { lastActive: new Date().toISOString() } } },
+      {
+        players: {
+          [playerId]: {
+            id: playerId,
+            ...(name ? { name } : {}),
+            lastActive: new Date().toISOString(),
+          },
+        },
+      },
       { merge: true }
     );
   } catch (err) {
@@ -673,46 +713,57 @@ export const deleteRoomFaqs = async (code: string, ids: string[]) => {
  * ------------------------------------------------------------------ */
 
 /**
- * Records a published question. The round document is the audit log; the id is
- * also appended to the room's played list so the replay filter costs no extra
- * reads (the room document is already being listened to).
+ * Publishes a question and records the round, in one write to the room.
+ *
+ * Everything here used to be three separate room writes — publish the question,
+ * clear the invitation, append to the played list — and each of them pushed the
+ * whole room document to every connected tab, one billed read apiece. They all
+ * belong to the same user action, so they travel together.
+ *
+ * The round document is the audit log and lives in its own subcollection.
+ * Nothing subscribes to it, so writing it separately costs no fan-out; a
+ * failure there must not stop the round from starting, which is why it is
+ * caught on its own.
  */
-export const recordRound = async (
+export const publishRound = async (
   code: string,
+  question: RoomQuestion,
   round: RoundRecord,
   /** Timestamps already on the room document, so they can be pruned in place. */
   knownRecentRounds: string[] = [],
   activityWindowMs = 3 * 60 * 60 * 1000
 ) => {
   try {
-    // The round document is the audit log; nothing reads it at runtime.
     await setDoc(doc(roundsRef(code), round.id), {
       ...sanitizeForFirestore(round, false),
       serverTime: serverTimestamp(),
     });
-
-    const cutoff = Date.now() - activityWindowMs;
-    const recentRounds = [
-      ...knownRecentRounds.filter((at) => new Date(at).getTime() >= cutoff),
-      round.createdAt,
-    ];
-
-    // arrayUnion must not pass through sanitizeForFirestore — it would treat
-    // the sentinel as a plain object and destroy it.
-    await setDoc(
-      roomRef(code),
-      {
-        ...(round.faqId
-          ? { playedFaqIds: { [round.category]: arrayUnion(round.faqId) } }
-          : {}),
-        recentRounds,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
   } catch (err) {
-    console.warn('[firestore] failed to record round:', err);
+    console.warn('[firestore] failed to write round audit record:', err);
   }
+
+  const cutoff = Date.now() - activityWindowMs;
+  const recentRounds = [
+    ...knownRecentRounds.filter((at) => new Date(at).getTime() >= cutoff),
+    round.createdAt,
+  ];
+
+  // arrayUnion must not pass through sanitizeForFirestore — it would treat
+  // the sentinel as a plain object and destroy it.
+  await setDoc(
+    roomRef(code),
+    {
+      activeGameQuestion: sanitizeForFirestore(question, false),
+      // The invitation has done its job the moment the question exists.
+      gameInvitation: deleteField(),
+      ...(round.faqId
+        ? { playedFaqIds: { [round.category]: arrayUnion(round.faqId) } }
+        : {}),
+      recentRounds,
+      updatedAt: new Date().toISOString(),
+    },
+    { merge: true }
+  );
 };
 
 /** Every question this pair has already played, flattened across categories. */
@@ -728,10 +779,33 @@ export const loadPlayedFaqIds = async (code: string): Promise<string[]> => {
 };
 
 /**
+ * Marks a question played without there having been a round.
+ *
+ * The admin list offers this as a manual toggle: a pair may have talked a
+ * question through out loud, or simply not want it coming up again. It writes
+ * the same field the game does, so the replay filter needs no special case —
+ * and `forgetPlayedFaqIds` is already the way back.
+ */
+export const markFaqPlayed = async (code: string, category: string, faqId: string) => {
+  if (!code || !faqId) return;
+  await setDoc(
+    roomRef(code),
+    {
+      // arrayUnion must be built inline; sanitizeForFirestore would flatten the
+      // sentinel into a plain object and destroy it.
+      playedFaqIds: { [category || '未分類']: arrayUnion(faqId) },
+      updatedAt: new Date().toISOString(),
+    },
+    { merge: true }
+  );
+};
+
+/**
  * Drops ids from every category's played list.
  *
  * Called after those questions are deleted — leaving them behind would keep
- * counting them against a library they are no longer part of.
+ * counting them against a library they are no longer part of — and by the
+ * admin list's played toggle, to put a question back into circulation.
  */
 export const forgetPlayedFaqIds = async (code: string, ids: string[]) => {
   if (ids.length === 0) return;

@@ -4,9 +4,7 @@ import {
   Search,
   Edit2,
   Trash2,
-  Pin,
-  Eye,
-  EyeOff,
+  Circle,
   Sparkles,
   Download,
   Upload,
@@ -34,6 +32,7 @@ import {
 import { clearAllStorageAndSession, CURRENT_APP_VERSION } from '../utils/storage';
 import { AdminJsonImportModal } from './admin/AdminJsonImportModal';
 import { ConfirmDialog, type ConfirmRequest } from './admin/ConfirmDialog';
+import { OptionsBadge } from './admin/OptionsBadge';
 
 interface AdminManageViewProps {
   faqs: FAQItem[];
@@ -55,6 +54,14 @@ interface AdminManageViewProps {
   /** Questions this pair has already answered, offered for clean-up. */
   answeredFaqs?: FAQItem[];
   onDeleteAnswered?: () => void | Promise<void>;
+  /**
+   * Marks a question played, or unplays it. The state lives on the room
+   * document rather than the question, because "answered" is true of a pair,
+   * not of the question itself — the same library is shared.
+   */
+  onToggleAnswered?: (faq: FAQItem, answered: boolean) => void | Promise<void>;
+  /** Clears the played record for a batch of questions at once. */
+  onRestoreAnswered?: (ids: string[]) => void | Promise<void>;
   isLoading?: boolean;
   onExportData: () => void;
   showToast: (title: string, description?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
@@ -75,6 +82,8 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   roomId,
   answeredFaqs = [],
   onDeleteAnswered,
+  onToggleAnswered,
+  onRestoreAnswered,
   onExportData,
   isLoading = false,
   showToast,
@@ -90,8 +99,6 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   const [formQuestion, setFormQuestion] = useState('');
   const [formAnswer, setFormAnswer] = useState('');
   const [formCategory, setFormCategory] = useState('');
-  const [formIsPinned, setFormIsPinned] = useState(false);
-  const [formIsHidden, setFormIsHidden] = useState(false);
   const [formOptions, setFormOptions] = useState<string[]>(['', '']);
 
 
@@ -173,6 +180,17 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   const selectedCount = selectedIds.size;
   const allFilteredSelected =
     filteredFaqs.length > 0 && filteredFaqs.every((f) => selectedIds.has(f.id));
+
+  /*
+   * Restoring only touches the ones that were actually played, so the count on
+   * the button is the number of questions that will change — not the number
+   * selected. Picking "select all" and pressing it therefore does the obvious
+   * thing without needing the selection to be curated first.
+   */
+  const selectedAnsweredIds = useMemo(
+    () => [...selectedIds].filter((id) => answeredIds.has(id)),
+    [selectedIds, answeredIds]
+  );
 
   const toggleSelected = (id: string) => {
     setSelectedIds((prev) => {
@@ -303,8 +321,6 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     setFormQuestion('');
     setFormAnswer('');
     setFormCategory(categories[0]?.name || '習性與喜好');
-    setFormIsPinned(false);
-    setFormIsHidden(false);
     setFormOptions(['', '']);
     setIsEditModalOpen(true);
   };
@@ -314,8 +330,6 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     setFormQuestion(faq.question);
     setFormAnswer(faq.answer);
     setFormCategory(faq.category);
-    setFormIsPinned(!!faq.isPinned);
-    setFormIsHidden(!!faq.isHidden);
     setFormOptions(faq.options?.length ? [...faq.options] : ['', '']);
     setIsEditModalOpen(true);
   };
@@ -351,8 +365,6 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         question: formQuestion.trim(),
         answer: formAnswer.trim(),
         category: formCategory,
-        isPinned: formIsPinned,
-        isHidden: formIsHidden,
         options: optionsArray.length > 0 ? optionsArray : undefined,
         updatedAt: new Date().toISOString(),
       });
@@ -362,8 +374,6 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         question: formQuestion.trim(),
         answer: formAnswer.trim(),
         category: formCategory,
-        isPinned: formIsPinned,
-        isHidden: formIsHidden,
         options: optionsArray.length > 0 ? optionsArray : undefined,
       });
       showToast('已新增題目', undefined, 'success');
@@ -587,6 +597,34 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
               >
                 取消選取
               </button>
+
+              {onRestoreAnswered && (
+                <button
+                  type="button"
+                  disabled={selectedAnsweredIds.length === 0}
+                  onClick={() =>
+                    setPendingConfirm({
+                      title: `復原 ${selectedAnsweredIds.length} 題的作答紀錄？`,
+                      description:
+                        '這些題目會從「答過了」變回沒答過，之後隨機抽題會再抽到它們。',
+                      note: '只清掉紀錄，題目本身不會被改動或刪除。做錯了再標記回去就好。',
+                      confirmLabel: `復原 ${selectedAnsweredIds.length} 題`,
+                      icon: RotateCcw,
+                      run: () => onRestoreAnswered(selectedAnsweredIds),
+                    })
+                  }
+                  title={
+                    selectedAnsweredIds.length === 0
+                      ? '選取的題目裡沒有答過的'
+                      : undefined
+                  }
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#E6D8C8] text-[#4A3F35] border border-[#D0BFAC] hover:bg-[#DBC9B5] disabled:opacity-40 disabled:hover:bg-[#E6D8C8] transition-colors cursor-pointer disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  復原答過 ({selectedAnsweredIds.length})
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => setIsBulkDeleteOpen(true)}
@@ -613,11 +651,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             <div
               key={faq.id}
               className={`milk-tea-card rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-                faq.isHidden ? 'opacity-60 bg-[#F5F2EB]' : ''
-              } ${
                 /* Answered questions stay editable — just quieter, so the
                    unplayed ones are what the eye lands on first. */
-                isAnswered && !faq.isHidden ? 'opacity-70 bg-[#F7F4EE]' : ''
+                isAnswered ? 'opacity-70 bg-[#F7F4EE]' : ''
               } ${selectedIds.has(faq.id) ? 'ring-2 ring-[#8C6D53]' : ''}`}
             >
               <input
@@ -633,25 +669,13 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#F3E8DC] text-[#7A5230] font-semibold border border-[#E6D4C2]">
                     {faq.category}
                   </span>
-                  {faq.isPinned && (
-                    <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md flex items-center gap-0.5">
-                      <Pin className="w-3 h-3" /> 置頂
-                    </span>
-                  )}
-                  {faq.isHidden && (
-                    <span className="text-[10px] font-bold text-gray-600 bg-gray-200 px-2 py-0.5 rounded-md">
-                      已隱藏
-                    </span>
-                  )}
                   {isAnswered && (
                     <span className="text-[10px] font-bold text-[#7A6C65] bg-[#EFE7DC] px-2 py-0.5 rounded-md inline-flex items-center gap-0.5">
                       <CheckCheck className="w-3 h-3" /> 答過了
                     </span>
                   )}
                   {faq.options && faq.options.length > 0 && (
-                    <span className="text-[10px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md">
-                      {faq.options.length} 個選項
-                    </span>
+                    <OptionsBadge options={faq.options} />
                   )}
                 </div>
 
@@ -661,33 +685,28 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
 
               {/* Action Column */}
               <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto border-t sm:border-t-0 pt-2 sm:pt-0 border-[#E8DFD3]">
-                <button
-                  onClick={() =>
-                    onUpdateFAQ({ ...faq, isPinned: !faq.isPinned, updatedAt: new Date().toISOString() })
-                  }
-                  className={`p-2 rounded-xl transition-colors ${
-                    faq.isPinned
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'text-[#7A6C65] hover:bg-[#F4ECE1]'
-                  }`}
-                  title={faq.isPinned ? '取消置頂' : '置頂'}
-                >
-                  <Pin className="w-4 h-4" />
-                </button>
-
-                <button
-                  onClick={() =>
-                    onUpdateFAQ({ ...faq, isHidden: !faq.isHidden, updatedAt: new Date().toISOString() })
-                  }
-                  className={`p-2 rounded-xl transition-colors ${
-                    faq.isHidden
-                      ? 'bg-gray-200 text-gray-700'
-                      : 'text-[#7A6C65] hover:bg-[#F4ECE1]'
-                  }`}
-                  title={faq.isHidden ? '顯示' : '隱藏'}
-                >
-                  {faq.isHidden ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
+                {onToggleAnswered && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleAnswered(faq, !isAnswered)}
+                    className={`p-2 rounded-xl transition-colors cursor-pointer ${
+                      isAnswered
+                        ? 'bg-[#E3D9CB] text-[#5C4B3A]'
+                        : 'text-[#7A6C65] hover:bg-[#F4ECE1]'
+                    }`}
+                    title={
+                      isAnswered
+                        ? '標記為還沒答過（之後抽題會再抽到）'
+                        : '標記為答過了（之後抽題會跳過）'
+                    }
+                  >
+                    {isAnswered ? (
+                      <CheckCheck className="w-4 h-4" />
+                    ) : (
+                      <Circle className="w-4 h-4" />
+                    )}
+                  </button>
+                )}
 
                 <button
                   onClick={() => handleOpenEditModal(faq)}

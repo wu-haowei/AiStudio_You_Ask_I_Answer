@@ -4,8 +4,14 @@ export interface FAQItem {
   /** Context or intent behind the question — shown in the admin list only. */
   answer: string;
   category: string;
-  isPinned?: boolean;
-  isHidden?: boolean;
+  /*
+   * `isPinned` and `isHidden` used to live here. Neither ever reached the game
+   * — the question picker never looked at either one — so they were admin
+   * toggles that changed nothing. Whether a question has been played is the
+   * state that actually matters, and that is kept per pair on the room
+   * document as playedFaqIds. Questions written by older versions may still
+   * carry the old fields; nothing reads them.
+   */
   /** Two or more choices. Absent means the question has no preset options. */
   options?: string[];
   updatedAt: string;
@@ -20,6 +26,20 @@ export interface Category {
 }
 
 export type ActiveTab = 'co_play' | 'admin_manage';
+
+/*
+ * Sentinels for the two entries in the category picker that are not categories.
+ *
+ * They share the field a real category name goes in, so they live here rather
+ * than being spelled out at each use — the picker and the publisher have to
+ * agree on them exactly, and they used to be written out by hand in both.
+ */
+
+/** Draw from the whole library, whatever category the question belongs to. */
+export const RANDOM_CATEGORY_KEY = 'RANDOM';
+
+/** Write a question by hand instead of drawing one. */
+export const CUSTOM_CATEGORY_KEY = 'CUSTOM';
 
 /**
  * Firestore document schema version. Bumped whenever stored shapes change;
