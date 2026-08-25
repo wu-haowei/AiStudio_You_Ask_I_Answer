@@ -210,6 +210,39 @@ Firestore → 同一個 `config` 集合 → 新增文件：
 
 ---
 
+## 從 Google 雲端匯入題目
+
+後台「匯入題目」視窗多了一個「從雲端讀取」按鈕：讀取後台設定好的 Google Drive 資料夾，自動抓裡面**所有** `.json` 檔案並合併成一份清單，不用先下載到本機、也不用每次手動貼連結。讀到的內容會填進下面的文字框，跟平常貼 JSON 一樣，按「匯入」才會真的寫入目前這組的題庫——所以就算某個檔案格式有問題，也是在這一步發現，還沒寫進資料庫。
+
+流程不經過任何後端，是瀏覽器直接呼叫 Google Drive API，靠的是一把限定 Drive API 的 **API 金鑰**，不需要登入 Google 帳號。
+
+### 設定步驟
+
+**1. 資料夾要設成公開**
+
+Google Drive 資料夾的共用設定選「知道連結的人皆可查看」，否則金鑰讀不到內容。
+
+**2. 建立 API 金鑰**
+
+[Google Cloud Console](https://console.cloud.google.com/) → 選擇這個 Firebase 專案（跟 `VITE_FIREBASE_PROJECT_ID` 同一個即可，不用另外開專案）：
+
+1. **API 和服務 → 程式庫**，搜尋 **Google Drive API**，啟用它
+2. **API 和服務 → 憑證 → 建立憑證 → API 金鑰**
+3. 建議限制金鑰用途：**API 限制**選只允許 Google Drive API；**應用程式限制**選 HTTP 轉介網址，填上網站的網域（本機開發要加 `http://localhost:3000/*`），避免金鑰被盜用在別的地方
+
+**3. 寫進環境變數**
+
+跟其他 `VITE_FIREBASE_*` 一樣的做法（`.env` 本機測試，或部署平台/GitHub Actions 的環境變數）：
+
+- `VITE_GOOGLE_API_KEY`：剛剛建立的金鑰
+- `VITE_GOOGLE_API_URL`：要匯入的資料夾分享連結，例如 `https://drive.google.com/drive/folders/xxxxxxxx`
+
+兩個變數都是選填，沒設定的話按鈕會分別跳出「尚未設定 Google API 金鑰」或「尚未設定雲端連結」的錯誤，不影響其他功能。GitHub Pages 部署要在 repo 設定的 **Variables**（不是 Secrets，跟 `VITE_FIREBASE_*` 同一類）裡加上這兩個名稱一致的變數。
+
+> 這把金鑰只認得到「公開分享」的內容，讀不到私人未分享的檔案，所以外流也頂多是能看到你們本來就打算公開分享的題庫資料夾。
+
+---
+
 ## 疑難排解
 
 | 狀況 | 原因 |
