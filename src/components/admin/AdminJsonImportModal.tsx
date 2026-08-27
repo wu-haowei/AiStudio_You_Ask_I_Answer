@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { Upload, X, Sparkles, Check, Cloud, Loader2 } from 'lucide-react';
+import { Upload, X, Sparkles, Check, Cloud, Loader2, CheckCheck, Eye, EyeOff } from 'lucide-react';
 import {
   DEFAULT_DRIVE_LINK,
   fetchAllDriveFolderFiles,
   fetchGoogleDriveFileTextById,
+  IS_MOCK_DRIVE,
   resolveDriveInput,
   type FolderFetchProgress,
 } from '../../lib/googleDrive';
@@ -13,6 +14,10 @@ interface AdminJsonImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onImportData: (jsonStr: string) => void | Promise<void>;
+  /** Trimmed text of every question this pair has already answered, for the "已答過" badge in the cloud picker. */
+  answeredQuestionTexts?: Set<string>;
+  /** Marks (or un-marks) a cloud question as answered directly by its text, before it is ever imported. */
+  onToggleAnsweredText?: (questionText: string, answered: boolean) => void | Promise<void>;
   showToast: (title: string, description?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
 }
 
@@ -28,16 +33,20 @@ const ALL_CATEGORIES = '全部';
 const categoryOf = (item: DriveQuestion): string =>
   (typeof item.category === 'string' && item.category.trim()) || UNFILED_CATEGORY;
 
+const questionTextOf = (item: DriveQuestion): string =>
+  typeof item.question === 'string' ? item.question.trim() : '';
+
 /*
  * Fixed row height, so the picker can virtualize: a cloud folder can hold
  * thousands of questions, and mounting one <label> per question froze the tab
  * long before you got to scroll through them. Only rows near the visible
  * window are ever in the DOM; a spacer div holds the scrollbar at the right
- * size for everything else. Fixed height means one line of text — the
- * question is truncated rather than wrapped, which is what makes the math work.
+ * size for everything else. Fixed height is what makes the math work, so a
+ * question wraps up to two lines (`line-clamp-2`) rather than growing freely —
+ * every row gets the same height whether its text fills both lines or not.
  */
-const ROW_HEIGHT = 34;
-const LIST_HEIGHT = 224;
+const ROW_HEIGHT = 46;
+const LIST_HEIGHT = 230;
 const OVERSCAN = 6;
 
 /*
@@ -62,6 +71,8 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
   isOpen,
   onClose,
   onImportData,
+  answeredQuestionTexts,
+  onToggleAnsweredText,
   showToast,
 }) => {
   const [pastedJsonText, setPastedJsonText] = useState('');
@@ -77,6 +88,8 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
   const [selectedIndexes, setSelectedIndexes] = useState<Set<number>>(new Set());
   const [categoryFilter, setCategoryFilter] = useState(ALL_CATEGORIES);
   const [listScrollTop, setListScrollTop] = useState(0);
+  /** Which row's options/answer are currently shown below the list — a fixed-height panel, not row expansion, since that would break the virtualization math. */
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
   /** One pass over every item rather than re-filtering the whole array per category in the dropdown. */
   const categoryCounts = useMemo(() => {
@@ -111,6 +124,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
     setSelectedIndexes(new Set());
     setCategoryFilter(ALL_CATEGORIES);
     setListScrollTop(0);
+    setPreviewIndex(null);
   };
 
   const handleFetchFromDrive = async () => {
@@ -277,8 +291,13 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
               從 Google 雲端匯入
             </span>
             <p className="text-[11px] text-[#7A6C65]">
-              讀取後台設定的雲端資料夾，自動合併裡面所有 JSON 檔案（需先設定「知道連結的人皆可查看」）
+              讀取雲端資料夾，自動合併裡面所有 JSON 檔案
             </p>
+            {IS_MOCK_DRIVE && (
+              <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+                ⚠️ 測試模式：目前讀的是本機範本資料，不會連線 Google
+              </p>
+            )}
             <button
               type="button"
               onClick={handleFetchFromDrive}
@@ -344,29 +363,101 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                     {renderedRows.map((idx, i) => {
                       const item = driveItems[idx];
                       const rowNumber = firstRenderedRow + i;
+                      const questionText = questionTextOf(item);
+                      const isAnswered = !!questionText && !!answeredQuestionTexts?.has(questionText);
                       return (
                         <label
                           key={idx}
                           style={{ position: 'absolute', top: rowNumber * ROW_HEIGHT, height: ROW_HEIGHT }}
-                          className="flex items-center gap-2 px-2.5 text-xs cursor-pointer hover:bg-[#F5EFE6] w-full min-w-0"
+                          className="flex items-start gap-2 px-2.5 py-1 text-xs cursor-pointer hover:bg-[#F5EFE6] w-full min-w-0"
                         >
                           <input
                             type="checkbox"
                             checked={selectedIndexes.has(idx)}
                             onChange={() => toggleIndex(idx)}
-                            className="w-4 h-4 accent-[#8C6D53] cursor-pointer shrink-0"
+                            className="w-4 h-4 mt-0.5 accent-[#8C6D53] cursor-pointer shrink-0"
                           />
-                          <span className="truncate min-w-0 flex-1">
+                          <span className="line-clamp-2 min-w-0 flex-1 leading-snug">
                             <span className="text-[10px] font-semibold text-[#8C6D53]">[{categoryOf(item)}] </span>
-                            <span className="text-[#3A2E2B]">
-                              {typeof item.question === 'string' && item.question ? item.question : '（沒有題目文字）'}
-                            </span>
+                            <span className="text-[#3A2E2B]">{questionText || '（沒有題目文字）'}</span>
                           </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              // Inside a <label>, a click bubbling up would also
+                              // toggle the checkbox — this button is for looking,
+                              // not selecting.
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setPreviewIndex((prev) => (prev === idx ? null : idx));
+                            }}
+                            title="檢視選項"
+                            className={`shrink-0 p-1 rounded-md cursor-pointer ${
+                              previewIndex === idx
+                                ? 'bg-[#E3D9CB] text-[#5C4B3A]'
+                                : 'text-[#8C6D53] hover:bg-[#EADDCB]'
+                            }`}
+                          >
+                            {previewIndex === idx ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                          {/* Rightmost: mark/un-mark this cloud question as answered, independent of importing it. */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (!questionText || !onToggleAnsweredText) return;
+                              onToggleAnsweredText(questionText, !isAnswered);
+                            }}
+                            disabled={!questionText || !onToggleAnsweredText}
+                            title={isAnswered ? '標記為還沒答過' : '標記為答過了'}
+                            className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-md inline-flex items-center gap-0.5 whitespace-nowrap cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                              isAnswered
+                                ? 'bg-[#EFE7DC] text-[#7A6C65] hover:bg-[#E3D9CB]'
+                                : 'bg-white border border-[#D0BFAC] text-[#7A6C65] hover:bg-[#F5EFE6]'
+                            }`}
+                          >
+                            <CheckCheck className="w-3 h-3" /> {isAnswered ? '答過了' : '標記答過'}
+                          </button>
                         </label>
                       );
                     })}
                   </div>
                 </div>
+
+                {previewIndex !== null && driveItems[previewIndex] && (
+                  <div className="rounded-xl border border-[#E8DFD3] bg-white p-3 text-xs space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-semibold text-[#3A2E2B]">
+                        <span className="text-[10px] font-semibold text-[#8C6D53]">
+                          [{categoryOf(driveItems[previewIndex])}]{' '}
+                        </span>
+                        {questionTextOf(driveItems[previewIndex]) || '（沒有題目文字）'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewIndex(null)}
+                        className="shrink-0 p-1 rounded-md text-[#7A6C65] hover:bg-[#F5EFE6] cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    {Array.isArray(driveItems[previewIndex].options) &&
+                      (driveItems[previewIndex].options as unknown[]).length > 0 && (
+                        <ul className="list-disc list-inside text-[#4A3F35] space-y-0.5">
+                          {(driveItems[previewIndex].options as unknown[]).map((opt, i) => (
+                            <li key={i}>{String(opt)}</li>
+                          ))}
+                        </ul>
+                      )}
+                    {typeof driveItems[previewIndex].answer === 'string' &&
+                      (driveItems[previewIndex].answer as string).trim() && (
+                        <p className="text-[#7A6C65] pt-1.5 border-t border-[#E8DFD3]">
+                          {driveItems[previewIndex].answer as string}
+                        </p>
+                      )}
+                  </div>
+                )}
 
                 <button
                   type="button"

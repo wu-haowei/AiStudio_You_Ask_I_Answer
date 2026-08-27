@@ -64,6 +64,18 @@ interface AdminManageViewProps {
   roomId: string;
   /** Questions this pair has already answered, offered for clean-up. */
   answeredFaqs?: FAQItem[];
+  /**
+   * Trimmed text of every question this pair has ever answered — passed
+   * through to the cloud import picker so a question can show as already
+   * answered even when it is not currently in the library under any id.
+   */
+  answeredQuestionTexts?: Set<string>;
+  /**
+   * Marks (or un-marks) a cloud question as answered directly by its text,
+   * for the import picker — a question there has no faqId yet, so this is
+   * separate from onToggleAnswered below.
+   */
+  onToggleAnsweredText?: (questionText: string, answered: boolean) => void | Promise<void>;
   onDeleteAnswered?: () => void | Promise<void>;
   /**
    * Marks a question played, or unplays it. The state lives on the room
@@ -95,6 +107,8 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   partnerName,
   roomId,
   answeredFaqs = [],
+  answeredQuestionTexts,
+  onToggleAnsweredText,
   onDeleteAnswered,
   onToggleAnswered,
   onRestoreAnswered,
@@ -920,6 +934,8 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         isOpen={isJsonModalOpen}
         onClose={() => setIsJsonModalOpen(false)}
         onImportData={onImportData}
+        answeredQuestionTexts={answeredQuestionTexts}
+        onToggleAnsweredText={onToggleAnsweredText}
         showToast={showToast}
       />
 

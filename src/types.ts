@@ -196,6 +196,16 @@ export interface CoPlayRoom {
    */
   playedFaqIds?: Record<string, string[]>;
   /**
+   * Trimmed text of every question ever answered, flat and append-only.
+   *
+   * `playedFaqIds` forgets a question the moment its library entry is
+   * deleted — the id it was keyed on stops meaning anything. This survives
+   * that: re-importing the exact same text later (say, from the same Google
+   * Drive folder it originally came from) still shows it as already answered,
+   * because the match is on the words, not on an id that no longer exists.
+   */
+  playedQuestionTexts?: string[];
+  /**
    * ISO timestamps of recently published questions, pruned to the activity
    * window on every write. Riding on the room document means the "last 3 hours"
    * counter costs no reads of its own.

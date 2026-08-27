@@ -16,6 +16,7 @@ import {
   deleteField,
   writeBatch,
   arrayUnion,
+  arrayRemove,
   runTransaction,
   serverTimestamp,
   type QueryDocumentSnapshot,
@@ -814,6 +815,10 @@ export const publishRound = async (
       ...(round.faqId
         ? { playedFaqIds: { [round.category]: arrayUnion(round.faqId) } }
         : {}),
+      // Unconditional, unlike playedFaqIds above — a hand-typed question has
+      // no faqId to key on, but it still happened and is still worth
+      // remembering by its words.
+      playedQuestionTexts: arrayUnion(round.question.trim()),
       recentRounds,
       updatedAt: new Date().toISOString(),
     },
@@ -821,15 +826,25 @@ export const publishRound = async (
   );
 };
 
-/** Every question this pair has already played, flattened across categories. */
-export const loadPlayedFaqIds = async (code: string): Promise<string[]> => {
+/**
+ * Everything this pair has already answered: library ids (for the replay
+ * filter) and raw question text (for spotting the same question again after
+ * its original library entry is gone). One read serves both.
+ */
+export const loadPlayedData = async (
+  code: string
+): Promise<{ faqIds: string[]; questionTexts: string[] }> => {
   try {
     const snap = await getDoc(roomRef(code));
-    const played = (snap.data()?.playedFaqIds || {}) as Record<string, string[]>;
-    return Array.from(new Set(Object.values(played).flat().filter(Boolean)));
+    const data = snap.data();
+    const played = (data?.playedFaqIds || {}) as Record<string, string[]>;
+    return {
+      faqIds: Array.from(new Set(Object.values(played).flat().filter(Boolean))),
+      questionTexts: Array.from(new Set((data?.playedQuestionTexts || []) as string[])),
+    };
   } catch (err) {
     console.warn('[firestore] failed to read played questions:', err);
-    return [];
+    return { faqIds: [], questionTexts: [] };
   }
 };
 
@@ -838,10 +853,14 @@ export const loadPlayedFaqIds = async (code: string): Promise<string[]> => {
  *
  * The admin list offers this as a manual toggle: a pair may have talked a
  * question through out loud, or simply not want it coming up again. It writes
- * the same field the game does, so the replay filter needs no special case —
- * and `forgetPlayedFaqIds` is already the way back.
+ * the same fields the game does, so the replay filter and the text-based
+ * "already answered" lookup both need no special case — and
+ * `forgetPlayedFaqIds` is already the way back for the id side. The text side
+ * has its own way back too — see `setPlayedQuestionText` — for the one place
+ * that needs it: the cloud import picker, marking a question before it has an
+ * id to hang a played-faq record on.
  */
-export const markFaqPlayed = async (code: string, category: string, faqId: string) => {
+export const markFaqPlayed = async (code: string, category: string, faqId: string, questionText?: string) => {
   if (!code || !faqId) return;
   await setDoc(
     roomRef(code),
@@ -849,10 +868,35 @@ export const markFaqPlayed = async (code: string, category: string, faqId: strin
       // arrayUnion must be built inline; sanitizeForFirestore would flatten the
       // sentinel into a plain object and destroy it.
       playedFaqIds: { [category || '未分類']: arrayUnion(faqId) },
+      ...(questionText?.trim() ? { playedQuestionTexts: arrayUnion(questionText.trim()) } : {}),
       updatedAt: new Date().toISOString(),
     },
     { merge: true }
   );
+};
+
+/**
+ * Adds or removes a single question's text from the durable "answered"
+ * record directly — for the cloud import picker, where a question may not be
+ * in the library yet (so there is no faqId for `markFaqPlayed` to use) and
+ * still needs to be markable, and un-markable, as answered.
+ */
+export const setPlayedQuestionText = async (code: string, questionText: string, answered: boolean) => {
+  const text = questionText.trim();
+  if (!code || !text) return;
+  try {
+    await setDoc(
+      roomRef(code),
+      {
+        // Sentinels must be built inline; sanitizeForFirestore would flatten them into plain objects.
+        playedQuestionTexts: answered ? arrayUnion(text) : arrayRemove(text),
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn('[firestore] failed to update played question text:', err);
+  }
 };
 
 /**

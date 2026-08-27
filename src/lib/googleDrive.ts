@@ -6,6 +6,62 @@ const DRIVE_API_KEY = env.VITE_GOOGLE_API_KEY || '';
 /** Folder/file link the import modal pre-fills its input with. Optional — just a shortcut. */
 export const DEFAULT_DRIVE_LINK = env.VITE_GOOGLE_API_URL || '';
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Local-only switch that swaps every Drive network call for canned fixture
+ * data. Testing the picker (categories, "已答過" matching, the eye preview,
+ * the progress bar) means clicking "從雲端讀取" over and over — against the
+ * real API that is what tripped Google's abuse detector during development.
+ * Never read in the production build path; see VITE_MOCK_GOOGLE_DRIVE in
+ * .env.example.
+ */
+export const IS_MOCK_DRIVE = env.VITE_MOCK_GOOGLE_DRIVE === 'true';
+
+const MOCK_FILES: DriveFileEntry[] = [
+  { id: 'mock-file-a', name: 'mock_questions_A.json', mimeType: 'application/json' },
+  { id: 'mock-file-b', name: 'mock_questions_B.json', mimeType: 'application/json' },
+];
+
+/** Deliberately includes one duplicate question (by text) across the two files, since real folders do too. */
+const MOCK_FILE_CONTENTS: Record<string, unknown[]> = {
+  'mock-file-a': [
+    {
+      question: '（範本）最喜歡的旅行地點是哪裡？',
+      answer: '測試用題目，練習匯入流程用',
+      category: '生活習慣',
+      options: ['山上', '海邊', '大城市', '國外隨便走'],
+    },
+    {
+      question: '（範本）假日通常都在做什麼？',
+      answer: '測試用題目',
+      category: '生活習慣',
+      options: ['在家耍廢', '出門運動', '找朋友聚會'],
+    },
+    {
+      question: '（範本）小時候的夢想是什麼？',
+      answer: '測試用題目',
+      category: '成長回憶',
+      options: ['當老師', '當醫生', '當太空人', '沒認真想過'],
+    },
+  ],
+  'mock-file-b': [
+    {
+      question: '（範本）最近一次感動落淚是什麼時候？',
+      answer: '測試用題目，敏感分類的範例',
+      category: '敏感題',
+      options: ['看電影或劇的時候', '想到家人的時候', '不記得了'],
+    },
+    {
+      // Same text as one in mock-file-a — exercises the duplicate-across-files path.
+      question: '（範本）最喜歡的旅行地點是哪裡？',
+      answer: '跟另一個檔案重複的題目，用來測試合併去重',
+      category: '生活習慣',
+      options: ['山上', '海邊', '大城市', '國外隨便走'],
+    },
+  ],
+};
+
 const requireApiKey = () => {
   if (!DRIVE_API_KEY) {
     throw new Error('尚未設定 Google API 金鑰（VITE_GOOGLE_API_KEY），無法從雲端讀取');
@@ -97,6 +153,10 @@ const handleDriveError = async (res: Response, notFoundMsg: string, forbiddenMsg
  * would make the picker unpredictable).
  */
 export const listDriveFolderFiles = async (folderId: string): Promise<DriveFileEntry[]> => {
+  if (IS_MOCK_DRIVE) {
+    await sleep(150);
+    return MOCK_FILES;
+  }
   requireApiKey();
 
   const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
@@ -124,6 +184,12 @@ export const listDriveFolderFiles = async (folderId: string): Promise<DriveFileE
  * into a Google account to import questions.
  */
 export const fetchGoogleDriveFileTextById = async (fileId: string): Promise<string> => {
+  if (IS_MOCK_DRIVE) {
+    await sleep(150 + Math.random() * 200);
+    // An id outside the fixture set (e.g. a single-file link pasted while
+    // mocking) still gets something back rather than a confusing 404.
+    return JSON.stringify(MOCK_FILE_CONTENTS[fileId] || MOCK_FILE_CONTENTS['mock-file-a']);
+  }
   requireApiKey();
 
   const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${DRIVE_API_KEY}`;
@@ -166,8 +232,6 @@ export interface FolderFetchProgress {
   completed: number;
   total: number;
 }
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Firing every file in a folder at once trips Drive's anonymous-request rate

@@ -8,8 +8,9 @@ import {
   ensureSignedIn,
   forgetPlayedFaqIds,
   loadDefaultFaqs,
-  loadPlayedFaqIds,
+  loadPlayedData,
   markFaqPlayed,
+  setPlayedQuestionText,
   deleteDefaultFaq,
   deleteDefaultFaqs,
   clearPlayedFaqIds,
@@ -43,6 +44,8 @@ import { ToastContainer } from './components/Toast';
 import { importLegacyFaqs, migrateLegacyRoom } from './lib/migration';
 
 const ACTIVE_ROOM_KEY = 'milktea_active_room';
+/** Stable empty set for when the admin screen has nothing to compare against — a fresh Set() every render would be a new prop identity each time. */
+const EMPTY_QUESTION_TEXTS = new Set<string>();
 
 export default function App() {
   const { name: userName, isSignedIn, signIn, signOut } = useIdentity();
@@ -79,6 +82,8 @@ export default function App() {
   const [canEditDefaults, setCanEditDefaults] = useState(false);
   /** Questions this pair has already answered, for the admin clean-up button. */
   const [playedFaqIds, setPlayedFaqIds] = useState<Set<string>>(new Set());
+  /** Trimmed text of every question ever answered — survives the original library entry being deleted. */
+  const [playedQuestionTexts, setPlayedQuestionTexts] = useState<Set<string>>(new Set());
   const [isLoadingContent, setIsLoadingContent] = useState(true);
 
   /** Allowlist state for this device. */
@@ -357,18 +362,29 @@ export default function App() {
     if (!activeRoom || activeTab !== 'admin_manage') return;
 
     let cancelled = false;
-    loadPlayedFaqIds(activeRoom.id).then((ids) => {
-      if (!cancelled) setPlayedFaqIds(new Set(ids));
+    loadPlayedData(activeRoom.id).then(({ faqIds, questionTexts }) => {
+      if (cancelled) return;
+      setPlayedFaqIds(new Set(faqIds));
+      setPlayedQuestionTexts(new Set(questionTexts));
     });
     return () => {
       cancelled = true;
     };
   }, [activeRoom?.id, activeTab]);
 
+  /**
+   * A question counts as answered by id (its library entry was marked
+   * played) or by text (this exact wording was answered before under some
+   * other entry — including one already deleted). The text match is what
+   * lets a re-imported duplicate show as answered on the spot, without
+   * having to be marked again.
+   */
   const answeredFaqs = useMemo(
-    () => faqs.filter((f) => playedFaqIds.has(f.id)),
-    [faqs, playedFaqIds]
+    () => faqs.filter((f) => playedFaqIds.has(f.id) || playedQuestionTexts.has(f.question.trim())),
+    [faqs, playedFaqIds, playedQuestionTexts]
   );
+  /** Same set as answeredFaqs, but as ids — for filtering rather than displaying. */
+  const answeredIds = useMemo(() => new Set(answeredFaqs.map((f) => f.id)), [answeredFaqs]);
 
   /**
    * Clears out everything the pair has already answered.
@@ -386,7 +402,7 @@ export default function App() {
     if (isUsingDefaultFaqs) {
       await saveRoomFaqs(
         roomId,
-        faqs.filter((f) => !playedFaqIds.has(f.id))
+        faqs.filter((f) => !answeredIds.has(f.id))
       );
     } else {
       await deleteRoomFaqs(roomId, ids);
@@ -404,11 +420,16 @@ export default function App() {
    * once when the admin tab opens rather than being subscribed to — a listener
    * on the room document for something only this screen reads would not pay for
    * itself.
+   *
+   * Marking answered also records the question's text (see
+   * playedQuestionTexts), and that half is one-way: un-marking only frees the
+   * id up for the replay filter, it does not make the text forget having been
+   * answered. If it genuinely never happened, delete the question instead.
    */
   const handleToggleAnswered = async (faq: FAQItem, answered: boolean) => {
     const roomId = requireRoom();
     try {
-      if (answered) await markFaqPlayed(roomId, faq.category, faq.id);
+      if (answered) await markFaqPlayed(roomId, faq.category, faq.id, faq.question);
       else await forgetPlayedFaqIds(roomId, [faq.id]);
 
       setPlayedFaqIds((prev) => {
@@ -417,8 +438,37 @@ export default function App() {
         else next.delete(faq.id);
         return next;
       });
+      if (answered) {
+        setPlayedQuestionTexts((prev) => new Set(prev).add(faq.question.trim()));
+      }
     } catch (err: any) {
       console.error('Toggle answered failed:', err);
+      showToast('標記失敗', err?.message || '請稍後再試', 'error');
+    }
+  };
+
+  /**
+   * Same "已答過" concept, but for a question sitting in the cloud import
+   * picker — it has no faqId yet, since it may never be imported, so this
+   * writes straight to the text record instead of going through markFaqPlayed.
+   * Unlike the library toggle above, this one is fully reversible: the picker
+   * is the one place a mark can be undone outright, not just freed up for
+   * replay.
+   */
+  const handleToggleAnsweredText = async (questionText: string, answered: boolean) => {
+    const roomId = requireRoom();
+    const text = questionText.trim();
+    if (!text) return;
+    try {
+      await setPlayedQuestionText(roomId, text, answered);
+      setPlayedQuestionTexts((prev) => {
+        const next = new Set(prev);
+        if (answered) next.add(text);
+        else next.delete(text);
+        return next;
+      });
+    } catch (err: any) {
+      console.error('Toggle answered text failed:', err);
       showToast('標記失敗', err?.message || '請稍後再試', 'error');
     }
   };
@@ -686,6 +736,8 @@ export default function App() {
                 canEditDefaults={canEditDefaults}
                 partnerName={activeRoom.partner}
                 answeredFaqs={isEditingDefaults ? [] : answeredFaqs}
+                answeredQuestionTexts={isEditingDefaults ? EMPTY_QUESTION_TEXTS : playedQuestionTexts}
+                onToggleAnsweredText={isEditingDefaults ? undefined : handleToggleAnsweredText}
                 onDeleteAnswered={isEditingDefaults ? undefined : handleDeleteAnswered}
                 onToggleAnswered={isEditingDefaults ? undefined : handleToggleAnswered}
                 onRestoreAnswered={isEditingDefaults ? undefined : handleRestoreAnswered}
