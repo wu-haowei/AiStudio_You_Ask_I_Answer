@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   X,
   Check,
+  HelpCircle,
 } from 'lucide-react';
 import { Category, FAQItem, UNFILED_CATEGORY } from '../types';
 import { db } from '../lib/firebase';
@@ -87,6 +88,8 @@ interface AdminManageViewProps {
   onRestoreAnswered?: (ids: string[]) => void | Promise<void>;
   isLoading?: boolean;
   onExportData: () => void;
+  /** Re-opens the app explainer — the button here covers anyone who never saw it, or dismissed it before reading. */
+  onOpenOnboarding: () => void;
   showToast: (title: string, description?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
 }
 
@@ -113,6 +116,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   onToggleAnswered,
   onRestoreAnswered,
   onExportData,
+  onOpenOnboarding,
   isLoading = false,
   showToast,
 }) => {
@@ -469,6 +473,15 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
           >
             <Plus className="w-4 h-4" />
             <span>新增題目</span>
+          </button>
+
+          <button
+            onClick={onOpenOnboarding}
+            title="重新打開你問我答怎麼玩的說明"
+            className="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-white text-[#7A6C65] border border-[#D0BFAC] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-all inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            <HelpCircle className="w-4 h-4" />
+            <span>使用說明</span>
           </button>
 
           {onDeleteAnswered && (
