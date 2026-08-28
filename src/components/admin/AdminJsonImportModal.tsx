@@ -261,6 +261,14 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
     });
   };
 
+  /** Every question across every category, independent of the current filter — for the "全選全部" shortcut below. */
+  const allItemsSelected = !!driveItems && driveItems.length > 0 && driveItems.every((_, idx) => selectedIndexes.has(idx));
+
+  const toggleSelectAllItems = () => {
+    if (!driveItems) return;
+    setSelectedIndexes(allItemsSelected ? new Set() : new Set(driveItems.map((_, idx) => idx)));
+  };
+
   const handleImportSelected = async () => {
     if (!driveItems || selectedIndexes.size === 0) return;
     const selectedItems = driveItems.filter((_, idx) => selectedIndexes.has(idx));
@@ -454,6 +462,15 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                     />
                     <span>全選目前 {visibleIndexes.length} 題</span>
                   </label>
+                  {categoryFilter !== ALL_CATEGORIES && (
+                    <button
+                      type="button"
+                      onClick={toggleSelectAllItems}
+                      className="text-xs font-semibold text-[#8C6D53] hover:underline cursor-pointer"
+                    >
+                      {allItemsSelected ? '取消全選（全部分類）' : `全選全部 ${driveItems.length} 題`}
+                    </button>
+                  )}
                   <span className="text-xs text-[#7A6C65]">已選 {selectedIndexes.size} 題</span>
                 </div>
 
