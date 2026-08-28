@@ -45,10 +45,10 @@ const steps: { icon: React.ReactNode; title: string; body: string }[] = [
 
 /**
  * Explainer for what this app is and how a round works — shown automatically
- * every time someone signs in. A corner tip rather than a blocking modal on
- * purpose: it fires on every login now, so demanding a click before the rest
- * of the screen becomes usable would get old fast. Reachable any time from
- * the player menu too, which the closing note below points back to.
+ * the first time this browser sees a signed-in user. A corner tip rather than
+ * a blocking modal, so it never demands a click before the rest of the screen
+ * becomes usable. Reachable again afterwards from the player menu or the
+ * admin screen's help button, which the closing note below points back to.
  */
 export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClose }) => {
   if (!isOpen) return null;

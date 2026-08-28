@@ -45,6 +45,8 @@ import { ToastContainer } from './components/Toast';
 import { importLegacyFaqs, migrateLegacyRoom } from './lib/migration';
 
 const ACTIVE_ROOM_KEY = 'milktea_active_room';
+/** Local-device flag — the app-explainer panel auto-shows once per browser, not once per account. */
+const ONBOARDING_SEEN_KEY = 'milktea_qa_onboarding_seen_v1';
 /** Stable empty set for when the admin screen has nothing to compare against — a fresh Set() every render would be a new prop identity each time. */
 const EMPTY_QUESTION_TEXTS = new Set<string>();
 
@@ -151,12 +153,19 @@ export default function App() {
   }, []);
 
   /**
-   * The app-explainer shows itself every time someone signs in — including a
-   * plain page reload with a session already saved, since that also lands here
-   * signed in. Also reachable any time from the player menu.
+   * The app-explainer auto-shows once, the first time this browser sees a
+   * signed-in user — not tied to the account, since a browser only ever holds
+   * one anyway (see SETUP.md). Reachable again afterwards from the player menu
+   * or the admin screen's own help button.
    */
   useEffect(() => {
     if (!isSignedIn) return;
+    try {
+      if (localStorage.getItem(ONBOARDING_SEEN_KEY)) return;
+      localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
+    } catch {
+      // Storage unavailable (private browsing, quota) — show it this once and move on.
+    }
     setIsOnboardingOpen(true);
   }, [isSignedIn]);
 
@@ -768,6 +777,7 @@ export default function App() {
                 onMigrateLegacy={handleMigrateLegacy}
                 onImportData={handleImportData}
                 onExportData={handleExportData}
+                onOpenOnboarding={() => setIsOnboardingOpen(true)}
                 showToast={showToast}
               />
             )}
