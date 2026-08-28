@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Upload, X, Sparkles, Check, Cloud, Loader2, CheckCheck, Eye, EyeOff } from 'lucide-react';
 import {
   DEFAULT_DRIVE_LINK,
@@ -96,6 +96,15 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
   const [selectedIndexes, setSelectedIndexes] = useState<Set<number>>(new Set());
   const [categoryFilter, setCategoryFilter] = useState(ALL_CATEGORIES);
   const [listScrollTop, setListScrollTop] = useState(0);
+  /**
+   * The scrollable list div's own scrollTop lives in the DOM, not in React
+   * state — resetting `listScrollTop` alone leaves the element itself still
+   * scrolled down. Rows would then render as if scrolled to the top while the
+   * browser keeps showing the old (now empty) scroll position, until the user
+   * scrolls further and an onScroll event syncs the two back up. This ref lets
+   * every place that resets `listScrollTop` reset the real element too.
+   */
+  const listScrollRef = useRef<HTMLDivElement | null>(null);
   /** Which row's options/answer are currently shown below the list — a fixed-height panel, not row expansion, since that would break the virtualization math. */
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
@@ -127,11 +136,16 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
 
   if (!isOpen) return null;
 
+  const resetListScroll = () => {
+    setListScrollTop(0);
+    if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
+  };
+
   const loadDriveItems = (parsed: unknown[]) => {
     setDriveItems(parsed as DriveQuestion[]);
     setSelectedIndexes(new Set());
     setCategoryFilter(ALL_CATEGORIES);
-    setListScrollTop(0);
+    resetListScroll();
     setPreviewIndex(null);
   };
 
@@ -440,7 +454,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                   value={categoryFilter}
                   onChange={(e) => {
                     setCategoryFilter(e.target.value);
-                    setListScrollTop(0);
+                    resetListScroll();
                   }}
                   className="w-full px-3 py-2 text-xs rounded-xl milk-tea-input"
                 >
@@ -475,6 +489,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                 </div>
 
                 <div
+                  ref={listScrollRef}
                   className="overflow-y-auto rounded-xl border border-[#E8DFD3] bg-white"
                   style={{ height: LIST_HEIGHT }}
                   onScroll={(e) => setListScrollTop(e.currentTarget.scrollTop)}
