@@ -221,16 +221,21 @@ export default function App() {
    * categories arrive with it; a category no question is filed under stops
    * appearing, without anything having to delete it.
    *
+   * Built from `editedFaqs` — whichever library the admin screen is actually
+   * pointed at — not `faqs` (what this pair plays with). Otherwise switching
+   * to "編輯預設題庫" still showed this room's own categories instead of the
+   * default library's.
+   *
    * Order follows first appearance in the library rather than being sorted, so
    * the picker reads in the order the questions were written.
    */
   const categories: Category[] = useMemo(() => {
     const names: string[] = [];
-    for (const faq of faqs) {
+    for (const faq of editedFaqs) {
       if (faq.category && !names.includes(faq.category)) names.push(faq.category);
     }
     return names.map((name) => ({ id: `cat-${encodeURIComponent(name)}`, name }));
-  }, [faqs]);
+  }, [editedFaqs]);
 
   // Display preferences follow the signed-in name, not the device
   useEffect(() => {
