@@ -8,6 +8,7 @@ import {
   Image,
   ArrowLeft,
   PlusCircle,
+  HelpCircle,
 } from 'lucide-react';
 import { ActiveTab } from '../types';
 import { useIdentity } from '../lib/identity';
@@ -27,6 +28,8 @@ interface HeaderProps {
   /** Players seen in the room within the presence window. */
   onlineCount: number;
   onOpenBackgroundSettings: () => void;
+  /** Re-opens the first-run app explainer on demand. */
+  onOpenOnboarding: () => void;
   /** Shows or hides the admin screen's default-library switch. */
   onToggleDefaultLibrary: () => void;
   onSignOut: () => void;
@@ -53,6 +56,7 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveTab,
   onlineCount,
   onOpenBackgroundSettings,
+  onOpenOnboarding,
   onToggleDefaultLibrary,
   onSignOut,
   partnerName,
@@ -281,6 +285,17 @@ export const Header: React.FC<HeaderProps> = ({
                       >
                         <Image className="w-4 h-4 text-[#A68B6D]" />
                         聊天背景
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          onOpenOnboarding();
+                        }}
+                        className="w-full px-4 py-2.5 text-left text-xs font-semibold text-[#4A3F35] hover:bg-[#F5EFE6] transition-colors flex items-center gap-2.5 cursor-pointer"
+                      >
+                        <HelpCircle className="w-4 h-4 text-[#A68B6D]" />
+                        使用說明
                       </button>
                       <button
                         type="button"

@@ -37,6 +37,7 @@ import { AccessGate } from './components/AccessGate';
 import { LoginView } from './components/LoginView';
 import { ConversationListView } from './components/ConversationListView';
 import { BackgroundSettingsModal } from './components/BackgroundSettingsModal';
+import { OnboardingModal } from './components/OnboardingModal';
 import { Header } from './components/Header';
 import { CoPlayView } from './components/CoPlayView';
 import { AdminManageView } from './components/AdminManageView';
@@ -44,6 +45,8 @@ import { ToastContainer } from './components/Toast';
 import { importLegacyFaqs, migrateLegacyRoom } from './lib/migration';
 
 const ACTIVE_ROOM_KEY = 'milktea_active_room';
+/** Local-device flag — the app-explainer modal shows once per browser, not once per account. */
+const ONBOARDING_SEEN_KEY = 'milktea_qa_onboarding_seen_v1';
 /** Stable empty set for when the admin screen has nothing to compare against — a fresh Set() every render would be a new prop identity each time. */
 const EMPTY_QUESTION_TEXTS = new Set<string>();
 
@@ -100,6 +103,7 @@ export default function App() {
   }>({ onlineCount: 0, isRoundActive: false, canInvite: false });
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFERENCES);
   const [isBackgroundModalOpen, setIsBackgroundModalOpen] = useState(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const showToast = (
@@ -147,6 +151,22 @@ export default function App() {
       }
     })();
   }, []);
+
+  /**
+   * The app-explainer shows itself once, the first time this browser sees a
+   * signed-in user — not tied to the account, since a browser only ever holds
+   * one anyway (see SETUP.md). Reachable again afterwards from the player menu.
+   */
+  useEffect(() => {
+    if (!isSignedIn) return;
+    try {
+      if (localStorage.getItem(ONBOARDING_SEEN_KEY)) return;
+      localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
+    } catch {
+      // Storage unavailable (private browsing, quota) — show it this once and move on.
+    }
+    setIsOnboardingOpen(true);
+  }, [isSignedIn]);
 
   // Each pair owns its questions; an empty library falls back to the defaults.
   useEffect(() => {
@@ -698,6 +718,7 @@ export default function App() {
         canStartChallenge={roomStatus.canInvite}
         challengeHint={roomStatus.inviteHint}
         onOpenBackgroundSettings={() => setIsBackgroundModalOpen(true)}
+        onOpenOnboarding={() => setIsOnboardingOpen(true)}
         onToggleDefaultLibrary={handleToggleDefaultLibrary}
         onSignOut={handleSignOut}
         showToast={showToast}
@@ -769,6 +790,8 @@ export default function App() {
         onSave={handleSavePreferences}
         showToast={showToast}
       />
+
+      <OnboardingModal isOpen={isOnboardingOpen} onClose={() => setIsOnboardingOpen(false)} />
 
       <ToastContainer toasts={toasts} onDismiss={handleDismissToast} />
     </div>
