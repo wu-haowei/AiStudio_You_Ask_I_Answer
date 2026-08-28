@@ -400,15 +400,15 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                   {driveFolderFiles.map((file) => (
                     <label
                       key={file.id}
-                      className="flex items-center gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-[#F5EFE6]"
+                      className="flex items-start gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-[#F5EFE6]"
                     >
                       <input
                         type="checkbox"
                         checked={selectedFileIds.has(file.id)}
                         onChange={() => toggleFileId(file.id)}
-                        className="w-4 h-4 accent-[#8C6D53] cursor-pointer shrink-0"
+                        className="w-4 h-4 mt-0.5 accent-[#8C6D53] cursor-pointer shrink-0"
                       />
-                      <span className="truncate text-[#3A2E2B]">{file.name}</span>
+                      <span className="min-w-0 flex-1 break-all text-[#3A2E2B]">{file.name}</span>
                     </label>
                   ))}
                 </div>
