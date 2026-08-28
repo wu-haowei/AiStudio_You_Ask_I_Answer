@@ -30,9 +30,9 @@ const steps: { icon: React.ReactNode; title: string; body: string }[] = [
 ];
 
 /**
- * First-run explainer for what this app is and how a round works — shown once
- * automatically after a new account finishes signing in, and reachable again
- * afterwards from the player menu for anyone who wants a refresher.
+ * Explainer for what this app is and how a round works — shown automatically
+ * every time someone signs in, and reachable any time from the player menu
+ * for anyone who wants a refresher mid-session.
  */
 export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
