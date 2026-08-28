@@ -2,10 +2,13 @@ import React, { useMemo, useState } from 'react';
 import { Upload, X, Sparkles, Check, Cloud, Loader2, CheckCheck, Eye, EyeOff } from 'lucide-react';
 import {
   DEFAULT_DRIVE_LINK,
-  fetchAllDriveFolderFiles,
+  fetchDriveFiles,
   fetchGoogleDriveFileTextById,
   IS_MOCK_DRIVE,
+  isJsonDriveFile,
+  listDriveFolderFiles,
   resolveDriveInput,
+  type DriveFileEntry,
   type FolderFetchProgress,
 } from '../../lib/googleDrive';
 import { UNFILED_CATEGORY } from '../../types';
@@ -79,6 +82,11 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
   const [isFetchingDrive, setIsFetchingDrive] = useState(false);
   const [driveProgress, setDriveProgress] = useState<FolderFetchProgress | null>(null);
 
+  /** JSON files found in a fetched folder, awaiting a pick of which ones to actually read. */
+  const [driveFolderFiles, setDriveFolderFiles] = useState<DriveFileEntry[] | null>(null);
+  /** Which of driveFolderFiles to read content from — defaults to all of them. */
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+
   /** Fetched cloud questions awaiting a pick, or null before any fetch / after import. */
   const [driveItems, setDriveItems] = useState<DriveQuestion[] | null>(null);
   /**
@@ -142,34 +150,14 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
     setDriveProgress(null);
     try {
       if (target.type === 'folder') {
-        const { items, loadedFiles, failedFiles, quotaExceeded } = await fetchAllDriveFolderFiles(
-          target.id,
-          setDriveProgress
-        );
-        if (quotaExceeded) {
-          showToast(
-            'Google Drive 用量已達上限',
-            loadedFiles.length > 0
-              ? `讀到 ${loadedFiles.length} 個檔案後開始被限流，先中止其餘 ${failedFiles.length} 個，請稍後再試一次補齊`
-              : '請求被連續拒絕，這批用量大概是被之前的測試用完了，過幾分鐘再試一次',
-            'warning'
-          );
-          if (loadedFiles.length === 0) return;
-        } else if (loadedFiles.length === 0) {
-          showToast(
-            '沒有讀到任何題目',
-            failedFiles.length > 0 ? `資料夾裡的 JSON 檔案都讀取失敗：${failedFiles.join('、')}` : '這個資料夾裡沒有 JSON 檔案',
-            'warning'
-          );
+        const files = (await listDriveFolderFiles(target.id)).filter(isJsonDriveFile);
+        if (files.length === 0) {
+          showToast('這個資料夾裡沒有 JSON 檔案', '', 'warning');
           return;
-        } else {
-          showToast(
-            '已合併資料夾內容',
-            `讀取 ${loadedFiles.length} 個檔案，共 ${items.length} 筆資料${failedFiles.length > 0 ? `，${failedFiles.length} 個檔案讀取失敗：${failedFiles.join('、')}` : ''}，請在下方勾選要匯入的題目`,
-            failedFiles.length > 0 ? 'warning' : 'success'
-          );
         }
-        loadDriveItems(items);
+        setDriveFolderFiles(files);
+        setSelectedFileIds(new Set(files.map((f) => f.id)));
+        setDriveItems(null);
       } else {
         const text = await fetchGoogleDriveFileTextById(target.id);
         let parsed: unknown;
@@ -185,9 +173,66 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
           showToast('已讀取雲端檔案', '內容不是題目陣列，請在下方文字框檢查內容', 'warning');
           return;
         }
+        setDriveFolderFiles(null);
         loadDriveItems(parsed);
         showToast('已讀取雲端檔案', `共讀到 ${parsed.length} 筆資料，請在下方勾選要匯入的題目`, 'success');
       }
+    } catch (err: any) {
+      showToast('讀取雲端檔案失敗', err?.message, 'error');
+    } finally {
+      setIsFetchingDrive(false);
+      setDriveProgress(null);
+    }
+  };
+
+  const toggleFileId = (id: string) => {
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allFilesSelected =
+    !!driveFolderFiles && driveFolderFiles.length > 0 && driveFolderFiles.every((f) => selectedFileIds.has(f.id));
+
+  const toggleSelectAllFiles = () => {
+    if (!driveFolderFiles) return;
+    setSelectedFileIds((prev) => {
+      if (allFilesSelected) return new Set();
+      return new Set(driveFolderFiles.map((f) => f.id));
+    });
+  };
+
+  const handleLoadSelectedFiles = async () => {
+    if (!driveFolderFiles || selectedFileIds.size === 0) return;
+    const files = driveFolderFiles.filter((f) => selectedFileIds.has(f.id));
+
+    setIsFetchingDrive(true);
+    setDriveProgress(null);
+    try {
+      const { items, loadedFiles, failedFiles, quotaExceeded } = await fetchDriveFiles(files, setDriveProgress);
+      if (quotaExceeded) {
+        showToast(
+          'Google Drive 用量已達上限',
+          loadedFiles.length > 0
+            ? `讀到 ${loadedFiles.length} 個檔案後開始被限流，先中止其餘 ${failedFiles.length} 個，請稍後再試一次補齊`
+            : '請求被連續拒絕，這批用量大概是被之前的測試用完了，過幾分鐘再試一次',
+          'warning'
+        );
+        if (loadedFiles.length === 0) return;
+      } else if (loadedFiles.length === 0) {
+        showToast('沒有讀到任何題目', failedFiles.length > 0 ? `選取的檔案都讀取失敗：${failedFiles.join('、')}` : '', 'warning');
+        return;
+      } else {
+        showToast(
+          '已讀取所選檔案',
+          `讀取 ${loadedFiles.length} 個檔案，共 ${items.length} 筆資料${failedFiles.length > 0 ? `，${failedFiles.length} 個檔案讀取失敗：${failedFiles.join('、')}` : ''}，請在下方勾選要匯入的題目`,
+          failedFiles.length > 0 ? 'warning' : 'success'
+        );
+      }
+      loadDriveItems(items);
     } catch (err: any) {
       showToast('讀取雲端檔案失敗', err?.message, 'error');
     } finally {
@@ -216,6 +261,14 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
     });
   };
 
+  /** Every question across every category, independent of the current filter — for the "全選全部" shortcut below. */
+  const allItemsSelected = !!driveItems && driveItems.length > 0 && driveItems.every((_, idx) => selectedIndexes.has(idx));
+
+  const toggleSelectAllItems = () => {
+    if (!driveItems) return;
+    setSelectedIndexes(allItemsSelected ? new Set() : new Set(driveItems.map((_, idx) => idx)));
+  };
+
   const handleImportSelected = async () => {
     if (!driveItems || selectedIndexes.size === 0) return;
     const selectedItems = driveItems.filter((_, idx) => selectedIndexes.has(idx));
@@ -224,6 +277,8 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
       onClose();
       setDriveItems(null);
       setSelectedIndexes(new Set());
+      setDriveFolderFiles(null);
+      setSelectedFileIds(new Set());
     } catch (err: any) {
       showToast('匯入失敗', err?.message || '請檢查題目格式是否完整', 'error');
     }
@@ -291,7 +346,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
               從 Google 雲端匯入
             </span>
             <p className="text-[11px] text-[#7A6C65]">
-              讀取雲端資料夾，自動合併裡面所有 JSON 檔案
+              讀取雲端資料夾或單一檔案；資料夾會先列出裡面的 JSON 檔案，可自己勾選要讀哪幾個
             </p>
             {IS_MOCK_DRIVE && (
               <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
@@ -323,8 +378,64 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
               </div>
             )}
 
+            {driveFolderFiles && !driveItems && (
+              <div className="space-y-2 pt-1">
+                <p className="text-[11px] text-[#7A6C65]">
+                  資料夾裡有 {driveFolderFiles.length} 個 JSON 檔案，勾選要讀取的檔案：
+                </p>
+                <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-white border border-[#E8DFD3]">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-[#4A3F35] cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={allFilesSelected}
+                      onChange={toggleSelectAllFiles}
+                      className="w-4 h-4 accent-[#8C6D53] cursor-pointer"
+                    />
+                    <span>全選</span>
+                  </label>
+                  <span className="text-xs text-[#7A6C65]">已選 {selectedFileIds.size} 個檔案</span>
+                </div>
+
+                <div className="max-h-48 overflow-y-auto rounded-xl border border-[#E8DFD3] bg-white divide-y divide-[#F0E9DE]">
+                  {driveFolderFiles.map((file) => (
+                    <label
+                      key={file.id}
+                      className="flex items-center gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-[#F5EFE6]"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedFileIds.has(file.id)}
+                        onChange={() => toggleFileId(file.id)}
+                        className="w-4 h-4 accent-[#8C6D53] cursor-pointer shrink-0"
+                      />
+                      <span className="truncate text-[#3A2E2B]">{file.name}</span>
+                    </label>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleLoadSelectedFiles}
+                  disabled={isFetchingDrive || selectedFileIds.size === 0}
+                  className="milk-tea-btn-primary px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed w-fit"
+                >
+                  {isFetchingDrive ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  <span>讀取所選檔案（{selectedFileIds.size}）</span>
+                </button>
+              </div>
+            )}
+
             {driveItems && (
               <div className="space-y-2 pt-1">
+                {driveFolderFiles && (
+                  <button
+                    type="button"
+                    onClick={() => setDriveItems(null)}
+                    className="text-[11px] text-[#8C6D53] font-semibold hover:underline cursor-pointer"
+                  >
+                    ← 重新選擇檔案
+                  </button>
+                )}
                 <select
                   value={categoryFilter}
                   onChange={(e) => {
@@ -351,6 +462,15 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                     />
                     <span>全選目前 {visibleIndexes.length} 題</span>
                   </label>
+                  {categoryFilter !== ALL_CATEGORIES && (
+                    <button
+                      type="button"
+                      onClick={toggleSelectAllItems}
+                      className="text-xs font-semibold text-[#8C6D53] hover:underline cursor-pointer"
+                    >
+                      {allItemsSelected ? '取消全選（全部分類）' : `全選全部 ${driveItems.length} 題`}
+                    </button>
+                  )}
                   <span className="text-xs text-[#7A6C65]">已選 {selectedIndexes.size} 題</span>
                 </div>
 

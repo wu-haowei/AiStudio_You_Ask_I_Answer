@@ -272,19 +272,19 @@ const DRIVE_FETCH_CONCURRENCY = 4;
 const QUOTA_BAIL_STREAK = 3;
 
 /**
- * Reads every `.json` file directly inside a folder and concatenates whatever
- * arrays they contain into one list, so a whole folder of question sets can be
- * imported in one go instead of picking files one at a time.
+ * Reads the given `.json` files (as listed by `listDriveFolderFiles`) and
+ * concatenates whatever arrays they contain into one list — the import modal
+ * lists a folder's files first, then calls this with whichever ones the user
+ * checked.
  *
  * `onProgress` fires once per file as its own attempt (retries included)
  * settles — not once per batch — so a slow file doesn't hold up the count for
  * the three others already done alongside it.
  */
-export const fetchAllDriveFolderFiles = async (
-  folderId: string,
+export const fetchDriveFiles = async (
+  files: DriveFileEntry[],
   onProgress?: (progress: FolderFetchProgress) => void
 ): Promise<FolderImportResult> => {
-  const files = (await listDriveFolderFiles(folderId)).filter(isJsonDriveFile);
   const total = files.length;
   onProgress?.({ completed: 0, total });
 
