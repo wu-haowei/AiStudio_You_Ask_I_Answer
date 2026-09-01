@@ -282,6 +282,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
       <p className="text-xs text-[#7A6C5E] text-center leading-relaxed">
         重設密碼的信件已經寄到 {name.trim()} 設定的 Email 了。點信裡的連結，就能直接設定新密碼。
       </p>
+      <p className="text-xs text-[#A68B6D] text-center leading-relaxed">
+        沒看到信嗎？也可能在垃圾信箱內，記得去看一下。
+      </p>
       <button
         type="button"
         onClick={() => {
