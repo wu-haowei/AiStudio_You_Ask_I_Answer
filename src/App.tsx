@@ -24,7 +24,13 @@ import {
   saveRoomFaqs,
   subscribeToRoomFaqs,
 } from './lib/firebase';
-import { endSession, hasValidSession, lookupAccount } from './lib/accounts';
+import {
+  endSession,
+  hasValidSession,
+  isPasswordResetLink,
+  lookupAccount,
+  syncVerifiedEmail,
+} from './lib/accounts';
 import { useIdentity } from './lib/identity';
 import { clearPresence } from './lib/pairing';
 import {
@@ -57,25 +63,26 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('co_play');
 
   /**
-   * The oobCode from a password-reset email link (?mode=resetPassword&oobCode=...).
+   * The URL this app was opened with, when it is a password-reset link (see
+   * isPasswordResetLink and the accounts.ts module doc comment for why that
+   * link looks like an email-link sign-in rather than a password-reset one).
    * Read once at startup; completing or cancelling the reset clears it and
    * scrubs the query string, so a refresh afterward lands on the normal flow.
    */
-  const [resetCode, setResetCode] = useState<string | null>(() => {
+  const [resetLink, setResetLink] = useState<string | null>(() => {
     try {
-      const params = new URLSearchParams(window.location.search);
-      return params.get('mode') === 'resetPassword' ? params.get('oobCode') : null;
+      return isPasswordResetLink(window.location.href) ? window.location.href : null;
     } catch {
       return null;
     }
   });
 
-  const clearResetCode = () => {
-    setResetCode(null);
+  const clearResetLink = () => {
+    setResetLink(null);
     try {
       window.history.replaceState({}, '', window.location.pathname);
     } catch {
-      // Cosmetic only — an oobCode left in the URL bar is single-use anyway.
+      // Cosmetic only — a link left in the URL bar is single-use anyway.
     }
   };
 
@@ -376,11 +383,19 @@ export default function App() {
    * can decline this every single time and keep using the app exactly as
    * before. The only cost of skipping it is that "forgot password" has
    * nothing to send to until it is done once.
+   *
+   * Also picks up a change-email link clicked since the last sign-in — see
+   * syncVerifiedEmail's doc comment for why that has to happen here rather
+   * than the moment it is confirmed.
    */
   useEffect(() => {
     if (access !== 'granted' || !isSignedIn || !userName) return;
     let cancelled = false;
-    lookupAccount(userName)
+    syncVerifiedEmail(userName)
+      .catch(() => {
+        // Best-effort — it'll try again next sign-in.
+      })
+      .then(() => lookupAccount(userName))
       .then((account) => {
         if (!cancelled && !account.hasRecoveryEmail) setIsEmailModalOpen(true);
       })
@@ -722,18 +737,18 @@ export default function App() {
 
   /*
    * A password-reset link lands here before anything else — it proves who
-   * someone is a completely different way (the emailed code), so it has
+   * someone is a completely different way (the emailed link), so it has
    * nothing to do with the invite gate or the normal sign-in flow below.
    */
-  if (resetCode) {
+  if (resetLink) {
     return (
       <ResetPasswordView
-        oobCode={resetCode}
+        link={resetLink}
         onDone={(name) => {
           signIn(name);
-          clearResetCode();
+          clearResetLink();
         }}
-        onCancel={clearResetCode}
+        onCancel={clearResetLink}
       />
     );
   }

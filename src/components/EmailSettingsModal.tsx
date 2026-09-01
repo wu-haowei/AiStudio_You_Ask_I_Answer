@@ -67,10 +67,19 @@ export const EmailSettingsModal: React.FC<EmailSettingsModalProps> = ({
     setBusy(true);
     setError('');
     try {
-      await setRecoveryEmail(name, nextEmail);
-      setCurrentEmail(nextEmail.trim());
+      const result = await setRecoveryEmail(name, nextEmail);
+      const submitted = nextEmail.trim();
       setNextEmail('');
-      showToast('已更新救援 Email', undefined, 'success');
+      if (result === 'verification-sent') {
+        showToast(
+          '請至新 Email 收信',
+          `已寄出驗證信到 ${submitted}，點裡面的連結完成驗證後，下次登入這裡就會換成新的救援 Email`,
+          'info'
+        );
+      } else {
+        setCurrentEmail(submitted);
+        showToast('已更新救援 Email', undefined, 'success');
+      }
     } catch (err) {
       setError(err instanceof AuthError ? err.message : '發生錯誤，請稍後再試');
       console.warn('[email-settings]', err);

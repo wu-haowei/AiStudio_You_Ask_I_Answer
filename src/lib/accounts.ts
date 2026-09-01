@@ -1,12 +1,12 @@
 import { deleteDoc, doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
 import {
   EmailAuthProvider,
-  confirmPasswordReset,
+  isSignInWithEmailLink,
   linkWithCredential,
-  sendPasswordResetEmail,
-  signInWithEmailAndPassword,
-  updateEmail,
-  verifyPasswordResetCode,
+  sendSignInLinkToEmail,
+  signInWithEmailLink,
+  updatePassword,
+  verifyBeforeUpdateEmail,
 } from 'firebase/auth';
 import { auth, db, ensureSignedIn } from './firebase';
 
@@ -48,8 +48,17 @@ import { auth, db, ensureSignedIn } from './firebase';
  * from on its own — there is no session to prove who you are. `emails/{email}`
  * is the door around that: it maps a recovery email to an account key, and is
  * only readable by whoever has just proven ownership of that exact email via
- * Firebase's own (built-in, no package or server of ours) password-reset
- * email. See firestore.rules for the mechanics.
+ * a verified Firebase sign-in. See firestore.rules for the mechanics.
+ *
+ * That verified sign-in is a passwordless "email link" one
+ * (sendSignInLinkToEmail / signInWithEmailLink), not the more obvious
+ * sendPasswordResetEmail / confirmPasswordReset pair. Firebase's own reset
+ * flow only completes on Firebase's own hosted page unless the project's
+ * email templates have "customize action URL" turned on — a project setting
+ * this app cannot reach or rely on. An email-link sign-in has no such
+ * hosted page to begin with; the link always opens this app directly, which
+ * is what lets the new password be typed here rather than on a Firebase
+ * screen this app never sees the result of.
  */
 
 export const DEFAULT_PASSWORD = '0101';
@@ -274,17 +283,28 @@ const randomInternalPassword = (): string =>
 /**
  * Links a recovery email to the signed-in account, so a future "forgot
  * password" has something to reset. This is the only place `emails/{email}`
- * gets written — see the module doc comment for what that document is for.
+ * gets written on the happy path — see the module doc comment for what that
+ * document is for, and syncVerifiedEmail below for the other place.
  *
  * A browser's anonymous Firebase user can only ever be linked to email/password
  * once — one uid, one Firebase-side credential. Testing two different named
  * accounts from the same browser hits that the moment the second one tries to
- * set up its own email: Firebase already upgraded this uid the first time.
- * There is no real conflict (the two are still different app accounts, this
- * is purely a Firebase Auth limit on the one uid), so that case falls back to
- * overwriting the existing credential instead of failing outright.
+ * set up its own email, and so does the same account simply changing an email
+ * it already set earlier: Firebase already upgraded this uid the first time,
+ * so a second `linkWithCredential` always fails with provider-already-linked.
+ *
+ * Firebase no longer allows overwriting that linked email outright
+ * (`updateEmail` now fails with auth/operation-not-allowed, "please verify
+ * the new email before changing email") — it has to be proven first. That
+ * case sends a verification link to the new address via
+ * `verifyBeforeUpdateEmail` instead, and returns without touching Firestore:
+ * the new address only becomes this account's email once syncVerifiedEmail
+ * notices Firebase's own copy changed, which happens next sign-in.
  */
-export const setRecoveryEmail = async (name: string, email: string): Promise<void> => {
+export const setRecoveryEmail = async (
+  name: string,
+  email: string
+): Promise<'linked' | 'verification-sent'> => {
   const clean = assertUsableName(name);
   const key = accountKey(clean);
   const trimmedEmail = email.trim();
@@ -295,7 +315,7 @@ export const setRecoveryEmail = async (name: string, email: string): Promise<voi
   const priorSnap = await getDoc(doc(db, USERS, key));
   const priorEmail = (priorSnap.data()?.email as string | undefined)?.trim();
   if (priorEmail && emailKey(priorEmail) === emailKey(trimmedEmail)) {
-    return; // already set to this exact email — nothing to do
+    return 'linked'; // already set to this exact email — nothing to do
   }
 
   const user = await ensureSignedIn();
@@ -308,21 +328,23 @@ export const setRecoveryEmail = async (name: string, email: string): Promise<voi
       throw new AuthError('這個 Email 已經被使用，換一個試試');
     }
     if (err?.code === 'auth/provider-already-linked') {
-      // This browser already has an email/password credential from another
-      // named account tested here before — replace it with this one's.
+      // This uid already has an email/password credential — either this same
+      // account's own earlier email, or another named account tested in this
+      // browser before. Either way, Firebase now insists on proof before
+      // handing the address over.
       try {
-        await updateEmail(user, trimmedEmail);
-      } catch (updateErr: any) {
-        console.warn('[accounts] updating existing linked email failed:', updateErr);
-        if (updateErr?.code === 'auth/email-already-in-use') {
+        await verifyBeforeUpdateEmail(user, trimmedEmail);
+      } catch (verifyErr: any) {
+        console.warn('[accounts] sending change-email verification failed:', verifyErr);
+        if (verifyErr?.code === 'auth/email-already-in-use') {
           throw new AuthError('這個 Email 已經被使用，換一個試試');
         }
-        throw new AuthError('設定 Email 失敗，請稍後再試');
+        throw new AuthError('寄送驗證信失敗，請稍後再試');
       }
-    } else {
-      console.warn('[accounts] linking email failed:', err);
-      throw new AuthError('設定 Email 失敗，請稍後再試');
+      return 'verification-sent';
     }
+    console.warn('[accounts] linking email failed:', err);
+    throw new AuthError('設定 Email 失敗，請稍後再試');
   }
 
   try {
@@ -345,26 +367,83 @@ export const setRecoveryEmail = async (name: string, email: string): Promise<voi
   }
 
   await setDoc(doc(db, USERS, key), { hasRecoveryEmail: true, email: trimmedEmail }, { merge: true });
+  return 'linked';
 };
 
 /**
- * Kicks off Firebase's own password-reset email — no mail-sending package or
- * server of ours involved, Firebase sends it. Deliberately quiet about
- * whether the email actually matched an account: telling a stranger "no
- * account uses that email" is exactly the kind of thing this screen must not
- * reveal.
+ * Picks up an email change once Firebase actually confirms it.
+ *
+ * `verifyBeforeUpdateEmail` (see setRecoveryEmail above) does not update
+ * anything until the person clicks the link it sends — Firebase's own copy of
+ * `user.email` only changes at that point, and only becomes visible here
+ * after a `reload()`. There is no backend to be notified the moment that
+ * happens, so this runs opportunistically on sign-in instead: most of the
+ * time it finds nothing new and is a single cheap read, but the one time it
+ * matters (the next time this browser opens the app after the link was
+ * clicked, on this device or another) it is what actually moves the address
+ * into this account's Firestore record and the `emails/` index.
+ */
+export const syncVerifiedEmail = async (name: string): Promise<void> => {
+  const clean = assertUsableName(name);
+  const key = accountKey(clean);
+  const user = await ensureSignedIn();
+
+  try {
+    await user.reload();
+  } catch {
+    return; // offline or similar — nothing lost, this just runs again next sign-in
+  }
+
+  const liveEmail = user.email?.trim();
+  if (!liveEmail || !user.emailVerified) return;
+
+  const snap = await getDoc(doc(db, USERS, key));
+  const storedEmail = (snap.data()?.email as string | undefined)?.trim();
+  if (storedEmail && emailKey(storedEmail) === emailKey(liveEmail)) return; // already in sync
+
+  try {
+    await setDoc(doc(db, EMAILS, emailKey(liveEmail)), { key, createdAt: new Date().toISOString() });
+  } catch (err) {
+    console.warn('[accounts] failed to record confirmed email index:', err);
+    return; // likely claimed by another account already — leave it for a human to sort out
+  }
+
+  if (storedEmail) {
+    await deleteDoc(doc(db, EMAILS, emailKey(storedEmail))).catch((err) =>
+      console.warn('[accounts] failed to retire old email index:', err)
+    );
+  }
+
+  await setDoc(doc(db, USERS, key), { hasRecoveryEmail: true, email: liveEmail }, { merge: true });
+};
+
+/** Where completePasswordReset looks first for the email a reset link belongs to. */
+const RESET_EMAIL_STORAGE_KEY = 'youaskianswer_reset_email';
+
+/**
+ * Kicks off Firebase's own email delivery — no mail-sending package or server
+ * of ours involved, Firebase sends it. See the module doc comment for why
+ * this is a passwordless "email link" rather than an actual password-reset
+ * email under the hood.
+ *
+ * The email is carried three ways in case any one of them is unavailable by
+ * the time the link is opened: in localStorage (works when it's opened in
+ * the same browser, which is the common case), and in the link's own query
+ * string (works from a different device or a cleared localStorage too).
  */
 export const requestPasswordReset = async (email: string): Promise<void> => {
   const trimmed = email.trim();
   if (!isValidEmail(trimmed)) throw new AuthError('請輸入有效的 Email');
 
   try {
-    await sendPasswordResetEmail(auth, trimmed, {
-      url: window.location.origin + window.location.pathname,
-      handleCodeInApp: true,
-    });
-  } catch (err: any) {
-    if (err?.code === 'auth/user-not-found') return; // see doc comment above
+    const continueUrl = `${window.location.origin}${window.location.pathname}?email=${encodeURIComponent(trimmed)}`;
+    await sendSignInLinkToEmail(auth, trimmed, { url: continueUrl, handleCodeInApp: true });
+    try {
+      window.localStorage.setItem(RESET_EMAIL_STORAGE_KEY, trimmed);
+    } catch {
+      // Not fatal — the email is also in the link's own query string.
+    }
+  } catch (err) {
     console.warn('[accounts] password reset request failed:', err);
     throw new AuthError('寄送失敗，請檢查網路後再試');
   }
@@ -388,47 +467,65 @@ export const requestPasswordResetForName = async (name: string): Promise<void> =
   await requestPasswordReset(account.email);
 };
 
-/** Confirms a password-reset link is genuine and unexpired, and returns the email it was sent to. */
-export const verifyResetCode = async (oobCode: string): Promise<string> => {
+/** Whether the current URL is a password-reset link this app just sent — see the module doc comment. */
+export const isPasswordResetLink = (url: string): boolean => {
   try {
-    return await verifyPasswordResetCode(auth, oobCode);
-  } catch (err) {
-    console.warn('[accounts] invalid or expired reset code:', err);
-    throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+    return isSignInWithEmailLink(auth, url);
+  } catch {
+    return false;
   }
 };
 
 /**
- * Finishes a "forgot password" reset: sets the new password on both sides —
- * Firebase's own copy (via the emailed code, which is what proves this is
- * legitimate) and this app's own hash (via the emails/{email} index, which is
- * how a browser with nothing but a verified email gets to touch secrets/{key}
- * at all — see firestore.rules' canResetByEmail) — then signs this browser in
- * as that account, the same as an ordinary login would.
+ * Finishes a "forgot password" reset: proves ownership of the email by
+ * completing Firebase's email-link sign-in (which lands directly in this
+ * app — see the module doc comment for why that beats an actual password
+ * reset email here), then sets the new password on both sides — Firebase's
+ * own copy, best-effort, and this app's own hash via the emails/{email}
+ * index, which is how a browser with nothing but a verified email gets to
+ * touch secrets/{key} at all (see firestore.rules' canResetByEmail) — and
+ * finally binds this browser's session to that account, the same as an
+ * ordinary login would.
  */
 export const completePasswordReset = async (
-  oobCode: string,
+  link: string,
   newPassword: string
 ): Promise<AccountRecord> => {
   if (newPassword.length < 4) throw new AuthError('新密碼至少 4 個字元');
   if (newPassword === DEFAULT_PASSWORD) throw new AuthError('請不要使用預設密碼');
+  if (!isPasswordResetLink(link)) throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
 
-  const email = await verifyResetCode(oobCode);
-
+  let email = '';
   try {
-    await confirmPasswordReset(auth, oobCode, newPassword);
-  } catch (err) {
-    console.warn('[accounts] confirming reset failed:', err);
-    throw new AuthError('重設密碼失敗，連結可能已經失效，請重新申請一次');
+    email = window.localStorage.getItem(RESET_EMAIL_STORAGE_KEY) || '';
+  } catch {
+    // Fall through to the link's own query string below.
+  }
+  if (!email) {
+    try {
+      email = new URL(link).searchParams.get('email') || '';
+    } catch {
+      // Malformed link — email stays empty, handled below.
+    }
+  }
+  if (!email) {
+    throw new AuthError('無法確認這個連結是哪個帳號的，請回到原本申請的裝置上開啟');
   }
 
   let uid: string;
+  let signedInUser: Awaited<ReturnType<typeof signInWithEmailLink>>['user'];
   try {
-    const credential = await signInWithEmailAndPassword(auth, email, newPassword);
+    const credential = await signInWithEmailLink(auth, email, link);
     uid = credential.user.uid;
+    signedInUser = credential.user;
   } catch (err) {
-    console.warn('[accounts] sign-in after reset failed:', err);
-    throw new AuthError('密碼已經重設成功，但自動登入失敗，請回到登入畫面用新密碼登入');
+    console.warn('[accounts] email-link sign-in failed:', err);
+    throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+  }
+  try {
+    window.localStorage.removeItem(RESET_EMAIL_STORAGE_KEY);
+  } catch {
+    // Cosmetic only.
   }
 
   const indexSnap = await getDoc(doc(db, EMAILS, emailKey(email)));
@@ -440,6 +537,12 @@ export const completePasswordReset = async (
   const userSnap = await getDoc(doc(db, USERS, key));
   const display = (userSnap.data()?.name as string) || key;
   const hash = await hashPassword(key, newPassword);
+
+  // Firebase's own copy is kept in step for tidiness — nothing here depends
+  // on it succeeding, since app login never checks it.
+  await updatePassword(signedInUser, newPassword).catch((err) =>
+    console.warn('[accounts] updating Firebase-side password failed:', err)
+  );
 
   await setDoc(
     doc(db, SECRETS, key),
