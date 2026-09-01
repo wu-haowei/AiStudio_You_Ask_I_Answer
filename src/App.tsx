@@ -24,7 +24,7 @@ import {
   saveRoomFaqs,
   subscribeToRoomFaqs,
 } from './lib/firebase';
-import { endSession, hasValidSession } from './lib/accounts';
+import { endSession, hasValidSession, lookupAccount } from './lib/accounts';
 import { useIdentity } from './lib/identity';
 import { clearPresence } from './lib/pairing';
 import {
@@ -35,8 +35,10 @@ import {
 } from './lib/preferences';
 import { AccessGate } from './components/AccessGate';
 import { LoginView } from './components/LoginView';
+import { ResetPasswordView } from './components/ResetPasswordView';
 import { ConversationListView } from './components/ConversationListView';
 import { BackgroundSettingsModal } from './components/BackgroundSettingsModal';
+import { EmailSettingsModal } from './components/EmailSettingsModal';
 import { Header } from './components/Header';
 import { CoPlayView } from './components/CoPlayView';
 import { AdminManageView } from './components/AdminManageView';
@@ -50,6 +52,29 @@ const EMPTY_QUESTION_TEXTS = new Set<string>();
 export default function App() {
   const { name: userName, isSignedIn, signIn, signOut } = useIdentity();
   const [activeTab, setActiveTab] = useState<ActiveTab>('co_play');
+
+  /**
+   * The oobCode from a password-reset email link (?mode=resetPassword&oobCode=...).
+   * Read once at startup; completing or cancelling the reset clears it and
+   * scrubs the query string, so a refresh afterward lands on the normal flow.
+   */
+  const [resetCode, setResetCode] = useState<string | null>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('mode') === 'resetPassword' ? params.get('oobCode') : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const clearResetCode = () => {
+    setResetCode(null);
+    try {
+      window.history.replaceState({}, '', window.location.pathname);
+    } catch {
+      // Cosmetic only — an oobCode left in the URL bar is single-use anyway.
+    }
+  };
 
   /** Which pair room is open. Empty means the conversation list is showing. */
   const [activeRoom, setActiveRoom] = useState<{ id: string; partner: string } | null>(() => {
@@ -100,6 +125,7 @@ export default function App() {
   }>({ onlineCount: 0, isRoundActive: false, canInvite: false });
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFERENCES);
   const [isBackgroundModalOpen, setIsBackgroundModalOpen] = useState(false);
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const showToast = (
@@ -316,6 +342,28 @@ export default function App() {
         showToast('請重新登入', '這台裝置的登入狀態已失效', 'info');
       }
     })();
+  }, [access, isSignedIn, userName]);
+
+  /**
+   * Nudges toward setting a recovery email on every sign-in, rather than
+   * blocking login over it the way a forced password change does — someone
+   * can decline this every single time and keep using the app exactly as
+   * before. The only cost of skipping it is that "forgot password" has
+   * nothing to send to until it is done once.
+   */
+  useEffect(() => {
+    if (access !== 'granted' || !isSignedIn || !userName) return;
+    let cancelled = false;
+    lookupAccount(userName)
+      .then((account) => {
+        if (!cancelled && !account.hasRecoveryEmail) setIsEmailModalOpen(true);
+      })
+      .catch(() => {
+        // A failed lookup is not worth nagging about — it'll be asked again next sign-in.
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [access, isSignedIn, userName]);
 
   /* Question library CRUD — always scoped to the open pair room. */
@@ -646,6 +694,24 @@ export default function App() {
     );
   };
 
+  /*
+   * A password-reset link lands here before anything else — it proves who
+   * someone is a completely different way (the emailed code), so it has
+   * nothing to do with the invite gate or the normal sign-in flow below.
+   */
+  if (resetCode) {
+    return (
+      <ResetPasswordView
+        oobCode={resetCode}
+        onDone={(name) => {
+          signIn(name);
+          clearResetCode();
+        }}
+        onCancel={clearResetCode}
+      />
+    );
+  }
+
   if (access === 'checking') {
     return (
       <div className="h-full bg-[#F5E6D3] flex items-center justify-center text-sm text-[#7A6C5E]">
@@ -693,6 +759,7 @@ export default function App() {
         canStartChallenge={roomStatus.canInvite}
         challengeHint={roomStatus.inviteHint}
         onOpenBackgroundSettings={() => setIsBackgroundModalOpen(true)}
+        onOpenEmailSettings={() => setIsEmailModalOpen(true)}
         onToggleDefaultLibrary={handleToggleDefaultLibrary}
         onSignOut={handleSignOut}
         showToast={showToast}
@@ -762,6 +829,13 @@ export default function App() {
         onClose={() => setIsBackgroundModalOpen(false)}
         preferences={preferences}
         onSave={handleSavePreferences}
+        showToast={showToast}
+      />
+
+      <EmailSettingsModal
+        isOpen={isEmailModalOpen}
+        onClose={() => setIsEmailModalOpen(false)}
+        name={userName}
         showToast={showToast}
       />
 

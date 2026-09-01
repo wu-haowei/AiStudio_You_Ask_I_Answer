@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { UserRound, KeyRound, ShieldCheck } from 'lucide-react';
+import { UserRound, KeyRound, ShieldCheck, MailCheck } from 'lucide-react';
 import {
   AuthError,
   DEFAULT_PASSWORD,
   changePassword,
   lookupAccount,
+  requestPasswordResetForName,
   signInWithPassword,
 } from '../lib/accounts';
 
@@ -12,13 +13,21 @@ interface LoginViewProps {
   onSignedIn: (name: string) => void;
 }
 
-type Step = 'name' | 'password' | 'change';
+type Step = 'name' | 'password' | 'change' | 'forgot-sent';
 
 /**
  * Name, then password, then a forced change if the account is still on the
  * default. Splitting the steps lets the password screen say whether this is a
- * brand new account, which is the difference between "type 0101" and "type the
- * password you chose".
+ * brand new account, which is the difference between "type 0101" and "type
+ * the password you chose".
+ *
+ * Setting up a recovery email is not part of this flow at all — App shows a
+ * dismissible reminder for that after signing in, since making it a gate here
+ * would lock someone out of their own conversation over a step they might
+ * simply not want to do yet.
+ *
+ * "忘記密碼" on the password step already knows the name (it's right there on
+ * screen), so it fires straight to forgot-sent — there is nothing left to ask.
  */
 export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
   const [step, setStep] = useState<Step>('name');
@@ -90,6 +99,22 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
     try {
       await changePassword(name, password, nextPassword);
       onSignedIn(name.trim());
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** The name is already on screen — nothing left to ask before sending. */
+  const handleForgotClick = async () => {
+    if (busy) return;
+
+    setBusy(true);
+    setError('');
+    try {
+      await requestPasswordResetForName(name);
+      setStep('forgot-sent');
     } catch (err) {
       fail(err);
     } finally {
@@ -180,25 +205,38 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
         <button type="submit" disabled={!password || busy} className={submit}>
           {busy ? '登入中…' : '登入'}
         </button>
-        <button
-          type="button"
-          onClick={() => {
-            setStep('name');
-            setPassword('');
-            setError('');
-          }}
-          className="w-full py-2 text-xs font-semibold text-[#7A6C5E] hover:text-[#4A3F35] cursor-pointer"
-        >
-          換一個姓名
-        </button>
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => {
+              setStep('name');
+              setPassword('');
+              setError('');
+            }}
+            className="py-2 text-xs font-semibold text-[#7A6C5E] hover:text-[#4A3F35] cursor-pointer"
+          >
+            換一個姓名
+          </button>
+          {!isNewAccount && (
+            <button
+              type="button"
+              onClick={handleForgotClick}
+              disabled={busy}
+              className="py-2 text-xs font-semibold text-[#7A6C5E] hover:text-[#4A3F35] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {busy ? '寄送中…' : '忘記密碼？'}
+            </button>
+          )}
+        </div>
       </form>
     );
   }
 
-  return shell(
-    <ShieldCheck className="w-7 h-7" />,
-    '設定新密碼',
-    '第一次登入需要換掉預設密碼',
+  if (step === 'change') {
+    return shell(
+      <ShieldCheck className="w-7 h-7" />,
+      '設定新密碼',
+      '第一次登入需要換掉預設密碼',
     <form onSubmit={handleChangeSubmit} className="space-y-3">
       <div className="space-y-1.5">
         <label htmlFor="new-password" className="block text-xs font-bold text-[#7A6C5E]">
@@ -233,5 +271,28 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
         {busy ? '設定中…' : '設定並進入'}
       </button>
     </form>
+    );
+  }
+
+  return shell(
+    <MailCheck className="w-7 h-7" />,
+    '信寄出了',
+    '請到信箱收信',
+    <div className="space-y-3">
+      <p className="text-xs text-[#7A6C5E] text-center leading-relaxed">
+        重設密碼的信件已經寄到 {name.trim()} 設定的 Email 了。點信裡的連結，就能直接設定新密碼。
+      </p>
+      <button
+        type="button"
+        onClick={() => {
+          setStep('name');
+          setPassword('');
+          setError('');
+        }}
+        className={submit}
+      >
+        返回登入
+      </button>
+    </div>
   );
 };

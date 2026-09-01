@@ -59,6 +59,21 @@ service cloud.firestore {
       return me().lower();
     }
 
+    /**
+     * True once a request has proven, via Firebase's own verified-email
+     * sign-in, that it is entitled to reset a particular account's secret —
+     * the "forgot password" path in through the front door instead of a
+     * session, which someone who forgot their password does not have yet.
+     * See emails/{emailKey} below for the mapping this reads.
+     */
+    function canResetByEmail(key) {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true
+        && exists(/databases/$(database)/documents/emails/$(request.auth.token.email.lower()))
+        && get(/databases/$(database)/documents/emails/$(request.auth.token.email.lower())).data.key == key;
+    }
+
     /* ---------------------------------------------------------------- *
      * Accounts
      * ---------------------------------------------------------------- */
@@ -108,8 +123,32 @@ service cloud.firestore {
       // Claiming a name is a one-off; `create` only ever applies to a document
       // that does not exist yet, so a password cannot be overwritten this way
       allow create: if canRegister();
-      allow update: if hasSession() && myKey() == key;
+      allow update: if (hasSession() && myKey() == key) || canResetByEmail(key);
       allow delete: if false;
+    }
+
+    /*
+     * Recovery email → account key, so "forgot password" has something to
+     * reset without a session (the whole problem a forgotten password causes).
+     *
+     * The email/password sign-in this depends on is Firebase's own — sending
+     * the actual reset mail is Firebase's job, not this app's, so there is no
+     * mail-sending package or server of ours anywhere in this path. Completing
+     * that flow is what sets request.auth.token.email_verified, which is what
+     * canResetByEmail (above) actually trusts.
+     */
+    match /emails/{emailKey} {
+      // Only readable by someone who has just proven, via a verified Firebase
+      // email/password sign-in, that this exact address is theirs.
+      allow read: if request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() == emailKey;
+      // Claiming an email is a one-off per address, same reasoning as secrets
+      // above — this is what stops two names from fighting over one inbox.
+      allow create: if hasSession() && request.resource.data.key == myKey();
+      allow update: if false;
+      allow delete: if hasSession() && resource.data.key == myKey();
     }
 
     /*

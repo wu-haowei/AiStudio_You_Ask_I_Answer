@@ -40,9 +40,10 @@ firebase deploy --only firestore:rules
 
 | 集合 | 文件 ID | 內容 | 誰讀得到 |
 | --- | --- | --- | --- |
-| `users` | 姓名 | `name`、`mustChangePassword` | 所有人（只有這裡是公開的） |
+| `users` | 姓名 | `name`、`mustChangePassword`、`hasRecoveryEmail` | 所有人（只有這裡是公開的） |
 | `secrets` | 姓名 | `passwordHash` | **沒有人**，只有安全規則讀得到 |
 | `sessions` | 匿名 UID | `name`、`passwordHash` | 只有自己 |
+| `emails` | Email（小寫） | `key`（對應哪個姓名） | 只有剛用該 Email 完成 Firebase 驗證信流程的瀏覽器 |
 
 沒有後端可以驗密碼，所以驗證放在規則裡：登入時把雜湊寫進 `sessions/{uid}`，
 規則會拿它跟 `secrets/{姓名}` 比對，**不一致就整筆寫入被拒絕**。
@@ -50,7 +51,7 @@ firebase deploy --only firestore:rules
 
 - **姓名不分大小寫**：`Amy`、`amy`、`AMY` 是同一個帳號。文件 ID 一律用小寫，顯示名稱則保留註冊時的寫法
 - 姓名同時是文件 ID，所以**不能包含斜線**（規則沒辦法做 URL 編碼，只好從源頭限制）
-- 忘記密碼：到 Console 刪掉 `secrets/{姓名}` 與 `users/{姓名}`，下次登入等於新帳號（`0101`）
+- **忘記密碼**：如果這個帳號有設定救援 Email，登入畫面的「忘記密碼？」就能自己重設，見下方〈忘記密碼〉一節。沒設定過的話，還是只能到 Console 手動刪掉 `secrets/{姓名}` 與 `users/{姓名}`，下次登入等於新帳號（`0101`）
 - 清掉瀏覽器資料後匿名 UID 會換一組，`sessions` 就對不上，App 會請你重新登入——密碼還是原來那組
 
 ### 一個瀏覽器只能登入一個帳號
@@ -60,6 +61,29 @@ firebase deploy --only firestore:rules
 要兩個人同時測試，請用**兩個不同的瀏覽器**或無痕視窗。
 
 同一個帳號開兩個視窗則沒問題，而且**線上人數不會因此變成 2**（改成算不重複的姓名）。
+
+---
+
+## 忘記密碼
+
+登入畫面（既有帳號的密碼那一步）多了「忘記密碼？」；第一次登入或改完密碼後，也會被要求先設定一個救援 Email 才能繼續使用——沒有 Email，忘記密碼就真的沒辦法自救。
+
+寄信這件事完全靠 **Firebase Authentication 內建的密碼重設信**，沒有裝任何寄信套件、沒有自己的後端、也不需要另外申請 Email 服務。運作方式：
+
+1. 設定 Email 時，會把這個 Email 用 `linkWithCredential` 掛到目前這個匿名帳號上，讓 Firebase Auth「認得」這個 Email，並在 `emails/{email}` 記一筆「這個 Email 屬於哪個姓名」的對照（規則保護，只有剛用該 Email 完成驗證信流程的人讀得到自己那一筆）
+2. 「忘記密碼？」呼叫 Firebase 的 `sendPasswordResetEmail`，信是 Google 寄的，內文、寄件位址都是 Firebase 預設的
+3. 信裡的連結會帶 `?mode=resetPassword&oobCode=...` 回到這個網站，App 會攔截並顯示「設定新密碼」畫面（不會先跑一般的登入流程）
+4. 設定新密碼後，同時完成三件事：Firebase 那邊的密碼、這個 App 自己用的密碼雜湊（`secrets/{姓名}`）、還有登入這個瀏覽器——一步到位，不用再手動登入一次
+
+### 需要在 Firebase Console 做的一次性設定
+
+**Authentication → Sign-in method → 新增供應商 → Email/Password → 啟用**（只要打開「電子郵件/密碼」，不用開「電子郵件連結」那個）。這是唯一要手動做的事——沒開的話，設定 Email 跟寄重設信都會失敗，錯誤訊息會是「設定 Email 失敗，請稍後再試」之類的通用錯誤。
+
+可選：Authentication → Templates → 可以編輯密碼重設信的內文/寄件人顯示名稱；Authentication → Settings → Authorized domains 要確認你的正式網域有在清單裡，不然 Firebase 可能拒絕把重設連結導回你的網站。
+
+### 安全模型
+
+`secrets/{姓名}` 原本只有「登入中的自己」能改；忘記密碼開了第二條路：**證明自己剛完成 Firebase 驗證信流程、且該 Email 在 `emails/{email}` 對應到這個姓名**，見 `firestore.rules` 的 `canResetByEmail`。沒有 Email 索引、Email 沒驗證、或 Email 對到別的姓名，一律被拒絕——已經寫進 `tests/firestore.rules.test.mjs` 的「Forgot password」那組測試，`npm run test:rules` 會一起跑到。
 
 ---
 

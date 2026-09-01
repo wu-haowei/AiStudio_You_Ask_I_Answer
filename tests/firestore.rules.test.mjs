@@ -77,11 +77,27 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'rooms/pair__amy__bob/faqs/f1'), { question: 'q' });
   await setDoc(doc(db, 'rooms/MAIN-ROOM'), { code: 'MAIN-ROOM' });
   await setDoc(doc(db, 'rooms/MAIN-ROOM/messages/old1'), { text: 'legacy' });
+  // Amy has linked a recovery email; bob has not.
+  await setDoc(doc(db, 'emails/amy@example.com'), { key: 'amy' });
 });
 
 const amy = env.authenticatedContext('uid-amy').firestore();
 const eve = env.authenticatedContext('uid-eve').firestore();
 const nobody = env.authenticatedContext('uid-new').firestore();
+
+// A browser that has just completed Firebase's own password-reset email
+// flow for amy@example.com — no session yet, just a verified email claim.
+const verifiedAsAmy = env
+  .authenticatedContext('uid-reset', { email: 'amy@example.com', email_verified: true })
+  .firestore();
+// Same idea, but the link was never clicked — email present, not verified.
+const unverifiedAsAmy = env
+  .authenticatedContext('uid-unverified', { email: 'amy@example.com', email_verified: false })
+  .firestore();
+// A verified email that was never linked to any account.
+const verifiedStranger = env
+  .authenticatedContext('uid-stranger', { email: 'nobody@example.com', email_verified: true })
+  .firestore();
 
 console.log('\nPasswords');
 await test('correct password binds a session', () =>
@@ -106,6 +122,34 @@ await test('a users doc must match its own id', () =>
   assertFails(setDoc(doc(eve, 'users/zoe'), { name: 'amy' })));
 await test('a users doc id must be the lowercased name', () =>
   assertFails(setDoc(doc(eve, 'users/Zoe'), { name: 'Zoe' })));
+
+console.log('\nForgot password (verified-email reset)');
+await test('a verified, linked email may reset that account\'s password', () =>
+  assertSucceeds(setDoc(doc(verifiedAsAmy, 'secrets/amy'), { passwordHash: 'reset-hash' }, { merge: true })));
+await test('that same verified email may not touch a different account', () =>
+  assertFails(setDoc(doc(verifiedAsAmy, 'secrets/bob'), { passwordHash: 'stolen' }, { merge: true })));
+await test('an unverified email cannot reset anything, even if it matches', () =>
+  assertFails(setDoc(doc(unverifiedAsAmy, 'secrets/amy'), { passwordHash: 'reset-hash' }, { merge: true })));
+await test('a verified email nobody linked cannot reset anything', () =>
+  assertFails(setDoc(doc(verifiedStranger, 'secrets/amy'), { passwordHash: 'reset-hash' }, { merge: true })));
+await test('the email/account mapping is unreadable without a matching verified email', () =>
+  assertFails(getDoc(doc(amy, 'emails/amy@example.com'))));
+await test('the email/account mapping is unreadable by an unverified match', () =>
+  assertFails(getDoc(doc(unverifiedAsAmy, 'emails/amy@example.com'))));
+await test('a verified matching email may read its own mapping', () =>
+  assertSucceeds(getDoc(doc(verifiedAsAmy, 'emails/amy@example.com'))));
+await test('linking a new email requires a session', () =>
+  assertFails(setDoc(doc(verifiedAsAmy, 'emails/new@example.com'), { key: 'amy' })));
+await test('the account owner may link a new email for themselves', () =>
+  assertSucceeds(setDoc(doc(amy, 'emails/amy-alt@example.com'), { key: 'amy' })));
+await test('nobody may link an email to somebody else\'s account', () =>
+  assertFails(setDoc(doc(eve, 'emails/eve-hijack@example.com'), { key: 'amy' })));
+await test('an email already claimed by one account cannot be re-claimed by another', () =>
+  assertFails(setDoc(doc(eve, 'emails/amy@example.com'), { key: 'eve' })));
+await test('the account owner may unlink their own email', () =>
+  assertSucceeds(deleteDoc(doc(amy, 'emails/amy-alt@example.com'))));
+await test('nobody may unlink someone else\'s email', () =>
+  assertFails(deleteDoc(doc(eve, 'emails/amy@example.com'))));
 
 console.log('\nPrivate conversations');
 await test('participant reads the room', () =>
