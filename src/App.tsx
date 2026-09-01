@@ -39,6 +39,7 @@ import { ResetPasswordView } from './components/ResetPasswordView';
 import { ConversationListView } from './components/ConversationListView';
 import { BackgroundSettingsModal } from './components/BackgroundSettingsModal';
 import { EmailSettingsModal } from './components/EmailSettingsModal';
+import { OnboardingModal } from './components/OnboardingModal';
 import { Header } from './components/Header';
 import { CoPlayView } from './components/CoPlayView';
 import { AdminManageView } from './components/AdminManageView';
@@ -46,6 +47,8 @@ import { ToastContainer } from './components/Toast';
 import { importLegacyFaqs, migrateLegacyRoom } from './lib/migration';
 
 const ACTIVE_ROOM_KEY = 'milktea_active_room';
+/** Local-device flag — the app-explainer panel auto-shows once per browser, not once per account. */
+const ONBOARDING_SEEN_KEY = 'milktea_qa_onboarding_seen_v1';
 /** Stable empty set for when the admin screen has nothing to compare against — a fresh Set() every render would be a new prop identity each time. */
 const EMPTY_QUESTION_TEXTS = new Set<string>();
 
@@ -126,6 +129,7 @@ export default function App() {
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFERENCES);
   const [isBackgroundModalOpen, setIsBackgroundModalOpen] = useState(false);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const showToast = (
@@ -173,6 +177,23 @@ export default function App() {
       }
     })();
   }, []);
+
+  /**
+   * The app-explainer auto-shows once, the first time this browser sees a
+   * signed-in user — not tied to the account, since a browser only ever holds
+   * one anyway (see SETUP.md). Reachable again afterwards from the player menu
+   * or the admin screen's own help button.
+   */
+  useEffect(() => {
+    if (!isSignedIn) return;
+    try {
+      if (localStorage.getItem(ONBOARDING_SEEN_KEY)) return;
+      localStorage.setItem(ONBOARDING_SEEN_KEY, '1');
+    } catch {
+      // Storage unavailable (private browsing, quota) — show it this once and move on.
+    }
+    setIsOnboardingOpen(true);
+  }, [isSignedIn]);
 
   // Each pair owns its questions; an empty library falls back to the defaults.
   useEffect(() => {
@@ -247,16 +268,21 @@ export default function App() {
    * categories arrive with it; a category no question is filed under stops
    * appearing, without anything having to delete it.
    *
+   * Built from `editedFaqs` — whichever library the admin screen is actually
+   * pointed at — not `faqs` (what this pair plays with). Otherwise switching
+   * to "編輯預設題庫" still showed this room's own categories instead of the
+   * default library's.
+   *
    * Order follows first appearance in the library rather than being sorted, so
    * the picker reads in the order the questions were written.
    */
   const categories: Category[] = useMemo(() => {
     const names: string[] = [];
-    for (const faq of faqs) {
+    for (const faq of editedFaqs) {
       if (faq.category && !names.includes(faq.category)) names.push(faq.category);
     }
     return names.map((name) => ({ id: `cat-${encodeURIComponent(name)}`, name }));
-  }, [faqs]);
+  }, [editedFaqs]);
 
   // Display preferences follow the signed-in name, not the device
   useEffect(() => {
@@ -760,6 +786,7 @@ export default function App() {
         challengeHint={roomStatus.inviteHint}
         onOpenBackgroundSettings={() => setIsBackgroundModalOpen(true)}
         onOpenEmailSettings={() => setIsEmailModalOpen(true)}
+        onOpenOnboarding={() => setIsOnboardingOpen(true)}
         onToggleDefaultLibrary={handleToggleDefaultLibrary}
         onSignOut={handleSignOut}
         showToast={showToast}
@@ -817,6 +844,7 @@ export default function App() {
                 onMigrateLegacy={handleMigrateLegacy}
                 onImportData={handleImportData}
                 onExportData={handleExportData}
+                onOpenOnboarding={() => setIsOnboardingOpen(true)}
                 showToast={showToast}
               />
             )}
@@ -838,6 +866,8 @@ export default function App() {
         name={userName}
         showToast={showToast}
       />
+
+      <OnboardingModal isOpen={isOnboardingOpen} onClose={() => setIsOnboardingOpen(false)} />
 
       <ToastContainer toasts={toasts} onDismiss={handleDismissToast} />
     </div>
