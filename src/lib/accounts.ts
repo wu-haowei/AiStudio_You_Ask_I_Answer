@@ -300,11 +300,22 @@ const randomInternalPassword = (): string =>
  * `verifyBeforeUpdateEmail` instead, and returns without touching Firestore:
  * the new address only becomes this account's email once syncVerifiedEmail
  * notices Firebase's own copy changed, which happens next sign-in.
+ *
+ * That verification call itself has one more precondition: Firebase requires
+ * a *recently proven* sign-in for it (auth/requires-recent-login), and this
+ * browser's anonymous session was typically authenticated long ago — there is
+ * no ongoing "recent login" for an anonymous uid that just persists via a
+ * refresh token. There is also no stored password to reauthenticate with
+ * (randomInternalPassword above is thrown away on purpose). The only proof
+ * Firebase will still accept is another real sign-in event, so that case
+ * sends an email-link sign-in to whatever address is *currently* linked —
+ * clicking it (completeEmailChangeReauth) freshens the session enough for a
+ * second attempt at verifyBeforeUpdateEmail to go through.
  */
 export const setRecoveryEmail = async (
   name: string,
   email: string
-): Promise<'linked' | 'verification-sent'> => {
+): Promise<'linked' | 'verification-sent' | 'reauth-required'> => {
   const clean = assertUsableName(name);
   const key = accountKey(clean);
   const trimmedEmail = email.trim();
@@ -335,6 +346,23 @@ export const setRecoveryEmail = async (
       try {
         await verifyBeforeUpdateEmail(user, trimmedEmail);
       } catch (verifyErr: any) {
+        if (verifyErr?.code === 'auth/requires-recent-login') {
+          // user.email — the live Firebase-side address — rather than
+          // priorEmail: the linked credential may belong to a different named
+          // account tested in this same browser, which priorEmail wouldn't know.
+          const currentEmail = user.email;
+          if (!currentEmail) throw new AuthError('無法確認目前登入狀態，請重新整理頁面後再試');
+          try {
+            const continueUrl =
+              `${window.location.origin}${window.location.pathname}` +
+              `?purpose=reauthEmail&email=${encodeURIComponent(currentEmail)}&pendingEmail=${encodeURIComponent(trimmedEmail)}`;
+            await sendSignInLinkToEmail(auth, currentEmail, { url: continueUrl, handleCodeInApp: true });
+          } catch (reauthErr) {
+            console.warn('[accounts] sending reauth link failed:', reauthErr);
+            throw new AuthError('寄送驗證信失敗，請稍後再試');
+          }
+          return 'reauth-required';
+        }
         console.warn('[accounts] sending change-email verification failed:', verifyErr);
         if (verifyErr?.code === 'auth/email-already-in-use') {
           throw new AuthError('這個 Email 已經被使用，換一個試試');
@@ -467,13 +495,67 @@ export const requestPasswordResetForName = async (name: string): Promise<void> =
   await requestPasswordReset(account.email);
 };
 
-/** Whether the current URL is a password-reset link this app just sent — see the module doc comment. */
+/**
+ * Whether the current URL is a password-reset link this app just sent — see
+ * the module doc comment. Excludes email-change reauth links (below): both
+ * are email-link sign-ins under the hood, told apart by the `purpose` query
+ * param this app itself adds to the link's continue URL.
+ */
 export const isPasswordResetLink = (url: string): boolean => {
   try {
-    return isSignInWithEmailLink(auth, url);
+    if (!isSignInWithEmailLink(auth, url)) return false;
+    return new URL(url).searchParams.get('purpose') !== 'reauthEmail';
   } catch {
     return false;
   }
+};
+
+/** Whether the current URL is the "prove it's still you" link setRecoveryEmail sends on auth/requires-recent-login. */
+export const isEmailChangeReauthLink = (url: string): boolean => {
+  try {
+    if (!isSignInWithEmailLink(auth, url)) return false;
+    return new URL(url).searchParams.get('purpose') === 'reauthEmail';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Finishes the reauth detour from setRecoveryEmail: signs back in via the
+ * link (satisfying Firebase's "recent login" requirement) and immediately
+ * retries sending the actual change-email verification, now that the session
+ * is fresh. This does not touch this app's own Firestore data at all — same
+ * as the direct verification-sent path, syncVerifiedEmail is what moves the
+ * address over, the next time this account signs in for real.
+ */
+export const completeEmailChangeReauth = async (link: string): Promise<string> => {
+  if (!isEmailChangeReauthLink(link)) throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+
+  const params = new URL(link).searchParams;
+  const email = params.get('email') || '';
+  const pendingEmail = params.get('pendingEmail') || '';
+  if (!email || !pendingEmail) throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+
+  let user;
+  try {
+    const credential = await signInWithEmailLink(auth, email, link);
+    user = credential.user;
+  } catch (err) {
+    console.warn('[accounts] reauth email-link sign-in failed:', err);
+    throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+  }
+
+  try {
+    await verifyBeforeUpdateEmail(user, pendingEmail);
+  } catch (err: any) {
+    console.warn('[accounts] sending change-email verification after reauth failed:', err);
+    if (err?.code === 'auth/email-already-in-use') {
+      throw new AuthError('這個 Email 已經被使用，換一個試試');
+    }
+    throw new AuthError('身份驗證成功，但寄送新 Email 的確認信失敗，請回到設定裡重新試一次');
+  }
+
+  return pendingEmail;
 };
 
 /**

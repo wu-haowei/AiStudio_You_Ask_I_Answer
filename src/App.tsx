@@ -27,6 +27,7 @@ import {
 import {
   endSession,
   hasValidSession,
+  isEmailChangeReauthLink,
   isPasswordResetLink,
   lookupAccount,
   syncVerifiedEmail,
@@ -42,6 +43,7 @@ import {
 import { AccessGate } from './components/AccessGate';
 import { LoginView } from './components/LoginView';
 import { ResetPasswordView } from './components/ResetPasswordView';
+import { EmailChangeReauthView } from './components/EmailChangeReauthView';
 import { ConversationListView } from './components/ConversationListView';
 import { BackgroundSettingsModal } from './components/BackgroundSettingsModal';
 import { EmailSettingsModal } from './components/EmailSettingsModal';
@@ -83,6 +85,29 @@ export default function App() {
       window.history.replaceState({}, '', window.location.pathname);
     } catch {
       // Cosmetic only — a link left in the URL bar is single-use anyway.
+    }
+  };
+
+  /**
+   * The "please confirm it's still you" link setRecoveryEmail sends on
+   * auth/requires-recent-login (see that function's doc comment) — a
+   * completely separate link type from resetLink above, even though both are
+   * email-link sign-ins under the hood.
+   */
+  const [emailReauthLink, setEmailReauthLink] = useState<string | null>(() => {
+    try {
+      return isEmailChangeReauthLink(window.location.href) ? window.location.href : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const clearEmailReauthLink = () => {
+    setEmailReauthLink(null);
+    try {
+      window.history.replaceState({}, '', window.location.pathname);
+    } catch {
+      // Cosmetic only.
     }
   };
 
@@ -751,6 +776,16 @@ export default function App() {
         onCancel={clearResetLink}
       />
     );
+  }
+
+  /*
+   * The "please confirm it's still you" detour setRecoveryEmail sends when
+   * Firebase won't accept the change without a recent sign-in — see that
+   * function's doc comment. Same as resetLink, has nothing to do with the
+   * app's own session below; it never signs anyone into it.
+   */
+  if (emailReauthLink) {
+    return <EmailChangeReauthView link={emailReauthLink} onDone={clearEmailReauthLink} />;
   }
 
   if (access === 'checking') {
