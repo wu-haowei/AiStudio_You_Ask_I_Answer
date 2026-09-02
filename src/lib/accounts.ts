@@ -266,21 +266,6 @@ export const changePassword = async (
 };
 
 /**
- * A password for Firebase's own copy of the credential — never this
- * account's actual password. Firebase requires one to create an
- * email/password credential at all, but nothing ever signs in with it
- * directly; the only path that matters is completePasswordReset, which
- * overwrites it with whatever the person types during an actual reset. Using
- * a real password here would tie Firebase's stricter rules (6+ characters) to
- * this app's own (4+), which is exactly the mismatch that made a short
- * custom password fail here with auth/weak-password.
- */
-const randomInternalPassword = (): string =>
-  Array.from(crypto.getRandomValues(new Uint8Array(24)))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-
-/**
  * Best-effort duplicate check, run before touching Firebase Auth at all so a
  * taken address is rejected immediately instead of after one or two email
  * round-trips. Exact-string match on `users.email`, not case-normalized —
@@ -302,48 +287,50 @@ const findAccountKeyUsingEmail = async (trimmedEmail: string): Promise<string | 
 };
 
 /**
- * Links a recovery email to the signed-in account, so a future "forgot
- * password" has something to reset. This is the only place `emails/{email}`
- * gets written on the happy path — see the module doc comment for what that
- * document is for, and syncVerifiedEmail below for the other place.
+ * Starts setting or changing this account's recovery email. Nothing is
+ * written to Firestore here in either case — ownership of the address has to
+ * be proven by clicking an emailed link first (completeNewEmailConfirmation
+ * or completeEmailChangeReauth do the actual writing), otherwise anyone who
+ * can type into this form could redirect a stranger's password resets to an
+ * address of their own with no proof of anything.
  *
- * A browser's anonymous Firebase user can only ever be linked to email/password
- * once — one uid, one Firebase-side credential. Testing two different named
- * accounts from the same browser hits that the moment the second one tries to
- * set up its own email, and so does the same account simply changing an email
- * it already set earlier: Firebase already upgraded this uid the first time,
- * so a second `linkWithCredential` always fails with provider-already-linked.
+ * Two different links, depending on whether this account already has an
+ * email on file:
  *
- * That case — changing an email that is already set — is deliberately routed
- * through a confirmation link to the *old* address first, not just tried
- * directly: without that, someone with temporary access to an already-signed-in
- * browser could silently redirect a stranger's password-reset mail to an
- * address of their own, needing nothing but their own inbox to "confirm" it.
- * Requiring the old address's owner to approve first closes that hole. It
- * also happens to be the only path Firebase still accepts once this uid's
- * sign-in is no longer "recent" (auth/requires-recent-login) — this browser's
- * anonymous session is typically authenticated long ago, and there is no
- * stored password to reauthenticate with (randomInternalPassword above is
- * thrown away on purpose) — so a real sign-in event, via that same link, is
- * the only proof left. See completeEmailChangeReauth for the second half:
- * once that link is confirmed, it sends the *actual* change-email
- * verification to the new address, per Firebase's own separate requirement
- * that the new address prove itself too (auth/operation-not-allowed otherwise).
- * Neither half touches Firestore directly — the new address only becomes
- * this account's email once syncVerifiedEmail notices Firebase's own copy
- * changed, which happens next sign-in.
+ *   - First time (no priorEmail): a confirmation link goes straight to the
+ *     *new* address. Clicking it (completeNewEmailConfirmation) links a
+ *     verified email-link credential onto this same signed-in browser's
+ *     uid via EmailAuthProvider.credentialWithLink, and writes Firestore
+ *     immediately — that click still has hasSession() on this same device,
+ *     nothing about the identity changed underneath it.
+ *
+ *   - Changing an existing one: the link goes to the *old* address first
+ *     instead — requiring the current owner to approve before a new address
+ *     can even be proposed, which is what stops someone with temporary
+ *     access to an already-signed-in browser from quietly redirecting
+ *     password resets to themselves. Clicking it (completeEmailChangeReauth)
+ *     signs back into this same uid (the old address's credential already
+ *     belongs to it) and — now that Firebase considers this uid "recently"
+ *     signed in — sends the real change-email verification to the new
+ *     address. There is no stored password to reauthenticate with any other
+ *     way (this app never keeps one for Firebase's own copy of the
+ *     credential), so an emailed link is the only proof Firebase still
+ *     accepts once the original session is no longer fresh
+ *     (auth/requires-recent-login) — which, for a long-lived anonymous
+ *     session, is effectively always. Neither half of that path touches
+ *     Firestore directly either: the new address only becomes this account's
+ *     email once syncVerifiedEmail notices Firebase's own copy changed,
+ *     which happens on a later, ordinary sign-in.
  */
 export const setRecoveryEmail = async (
   name: string,
   email: string
-): Promise<'linked' | 'reauth-required'> => {
+): Promise<'linked' | 'verification-sent' | 'reauth-required'> => {
   const clean = assertUsableName(name);
   const key = accountKey(clean);
   const trimmedEmail = email.trim();
   if (!isValidEmail(trimmedEmail)) throw new AuthError('請輸入有效的 Email');
 
-  // Read before writing anything, so a switch away from an old email can
-  // retire that old email's index entry once the new one is safely in place.
   const priorSnap = await getDoc(doc(db, USERS, key));
   const priorEmail = (priorSnap.data()?.email as string | undefined)?.trim();
   if (priorEmail && emailKey(priorEmail) === emailKey(trimmedEmail)) {
@@ -353,61 +340,107 @@ export const setRecoveryEmail = async (
   const dupKey = await findAccountKeyUsingEmail(trimmedEmail);
   if (dupKey && dupKey !== key) throw new AuthError('這個 Email 已經被使用，換一個試試');
 
+  if (priorEmail) {
+    try {
+      const continueUrl =
+        `${window.location.origin}${window.location.pathname}` +
+        `?purpose=reauthEmail&email=${encodeURIComponent(priorEmail)}&pendingEmail=${encodeURIComponent(trimmedEmail)}`;
+      await sendSignInLinkToEmail(auth, priorEmail, { url: continueUrl, handleCodeInApp: true });
+    } catch (err) {
+      console.warn('[accounts] sending reauth link failed:', err);
+      throw new AuthError('寄送確認信失敗，請稍後再試');
+    }
+    return 'reauth-required';
+  }
+
+  try {
+    const continueUrl =
+      `${window.location.origin}${window.location.pathname}` +
+      `?purpose=confirmNewEmail&pendingEmail=${encodeURIComponent(trimmedEmail)}&name=${encodeURIComponent(clean)}`;
+    await sendSignInLinkToEmail(auth, trimmedEmail, { url: continueUrl, handleCodeInApp: true });
+  } catch (err) {
+    console.warn('[accounts] sending new-email confirmation failed:', err);
+    throw new AuthError('寄送確認信失敗，請稍後再試');
+  }
+  return 'verification-sent';
+};
+
+/**
+ * Whether the current URL is one of this app's own email-link sign-ins with
+ * no special `purpose` attached — a plain "forgot password" link. The other
+ * two purposes (email-change confirmation and reauth) are told apart by that
+ * query param this app itself adds to the link's continue URL, so anything
+ * carrying one is excluded here rather than named one by one — a link type
+ * added later only needs its own isXLink check, not an update to this one.
+ */
+export const isPasswordResetLink = (url: string): boolean => {
+  try {
+    if (!isSignInWithEmailLink(auth, url)) return false;
+    return !new URL(url).searchParams.get('purpose');
+  } catch {
+    return false;
+  }
+};
+
+/** Whether the current URL is the link setRecoveryEmail sends to a brand-new address, before it has ever been set for this account. */
+export const isNewEmailConfirmationLink = (url: string): boolean => {
+  try {
+    if (!isSignInWithEmailLink(auth, url)) return false;
+    return new URL(url).searchParams.get('purpose') === 'confirmNewEmail';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Finishes first-time recovery-email setup: proves ownership of the address
+ * by linking a verified email-link credential onto *this same* signed-in
+ * uid (EmailAuthProvider.credentialWithLink — the officially-blessed way to
+ * upgrade an anonymous user via a clicked link, rather than a fresh sign-in
+ * that would swap in a different uid and orphan this device's session), then
+ * writes the emails/{email} index and users/{key} directly — safe to do here
+ * because hasSession() still holds: nothing about which uid this browser is
+ * signed in as has changed.
+ *
+ * This is why it matters that the link is opened in the *same* browser that
+ * requested it: a different device has no session for this account to begin
+ * with, so the Firestore writes below would simply be refused by rules.
+ */
+export const completeNewEmailConfirmation = async (link: string): Promise<string> => {
+  if (!isNewEmailConfirmationLink(link)) throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+
+  const params = new URL(link).searchParams;
+  const pendingEmail = params.get('pendingEmail') || '';
+  const name = params.get('name') || '';
+  if (!pendingEmail || !name) throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+
+  const clean = assertUsableName(name);
+  const key = accountKey(clean);
   const user = await ensureSignedIn();
 
   try {
-    await linkWithCredential(user, EmailAuthProvider.credential(trimmedEmail, randomInternalPassword()));
+    await linkWithCredential(user, EmailAuthProvider.credentialWithLink(pendingEmail, link));
   } catch (err: any) {
+    console.warn('[accounts] confirming new email failed:', err);
+    if (err?.code === 'auth/provider-already-linked') {
+      throw new AuthError('這台裝置或瀏覽器已經設定過別的 Email，請改到設定裡的「換成新的 Email」重新試一次');
+    }
     if (err?.code === 'auth/email-already-in-use' || err?.code === 'auth/credential-already-in-use') {
-      console.warn('[accounts] linking email failed:', err);
       throw new AuthError('這個 Email 已經被使用，換一個試試');
     }
-    if (err?.code === 'auth/provider-already-linked') {
-      // This uid already has an email/password credential — either this same
-      // account's own earlier email, or another named account tested in this
-      // browser before. Either way, the old address has to approve first —
-      // see the doc comment above for why that is not merely a workaround.
-      // user.email (the live Firebase-side address) rather than priorEmail:
-      // the linked credential may belong to a different named account tested
-      // in this same browser, which priorEmail wouldn't know about.
-      const currentEmail = user.email;
-      if (!currentEmail) throw new AuthError('無法確認目前登入狀態，請重新整理頁面後再試');
-      try {
-        const continueUrl =
-          `${window.location.origin}${window.location.pathname}` +
-          `?purpose=reauthEmail&email=${encodeURIComponent(currentEmail)}&pendingEmail=${encodeURIComponent(trimmedEmail)}`;
-        await sendSignInLinkToEmail(auth, currentEmail, { url: continueUrl, handleCodeInApp: true });
-      } catch (reauthErr) {
-        console.warn('[accounts] sending reauth link failed:', reauthErr);
-        throw new AuthError('寄送確認信失敗，請稍後再試');
-      }
-      return 'reauth-required';
-    }
-    console.warn('[accounts] linking email failed:', err);
-    throw new AuthError('設定 Email 失敗，請稍後再試');
+    throw new AuthError('請回到原本申請這個連結的裝置或瀏覽器上再試一次');
   }
 
   try {
     // Create-only by rule — this is also what stops two accounts sharing one inbox.
-    await setDoc(doc(db, EMAILS, emailKey(trimmedEmail)), {
-      key,
-      createdAt: new Date().toISOString(),
-    });
+    await setDoc(doc(db, EMAILS, emailKey(pendingEmail)), { key, createdAt: new Date().toISOString() });
   } catch (err) {
     console.warn('[accounts] failed to record email index:', err);
     throw new AuthError('這個 Email 可能已經被其他帳號使用');
   }
 
-  // Only retired now that the new one is confirmed written — a failed create
-  // above must not leave this account with no working email index at all.
-  if (priorEmail) {
-    await deleteDoc(doc(db, EMAILS, emailKey(priorEmail))).catch((err) =>
-      console.warn('[accounts] failed to retire old email index:', err)
-    );
-  }
-
-  await setDoc(doc(db, USERS, key), { hasRecoveryEmail: true, email: trimmedEmail }, { merge: true });
-  return 'linked';
+  await setDoc(doc(db, USERS, key), { hasRecoveryEmail: true, email: pendingEmail }, { merge: true });
+  return pendingEmail;
 };
 
 /**
@@ -507,22 +540,7 @@ export const requestPasswordResetForName = async (name: string): Promise<void> =
   await requestPasswordReset(account.email);
 };
 
-/**
- * Whether the current URL is a password-reset link this app just sent — see
- * the module doc comment. Excludes email-change reauth links (below): both
- * are email-link sign-ins under the hood, told apart by the `purpose` query
- * param this app itself adds to the link's continue URL.
- */
-export const isPasswordResetLink = (url: string): boolean => {
-  try {
-    if (!isSignInWithEmailLink(auth, url)) return false;
-    return new URL(url).searchParams.get('purpose') !== 'reauthEmail';
-  } catch {
-    return false;
-  }
-};
-
-/** Whether the current URL is the "prove it's still you" link setRecoveryEmail sends on auth/requires-recent-login. */
+/** Whether the current URL is the "old address, please approve" link setRecoveryEmail sends when changing an already-set email. */
 export const isEmailChangeReauthLink = (url: string): boolean => {
   try {
     if (!isSignInWithEmailLink(auth, url)) return false;

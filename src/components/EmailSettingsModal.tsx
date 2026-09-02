@@ -76,9 +76,14 @@ export const EmailSettingsModal: React.FC<EmailSettingsModalProps> = ({
           '為了安全，換 Email 要先經過目前設定的信箱同意——確認信已經寄過去了，點裡面的連結後，才會繼續寄驗證信到新的 Email',
           'info'
         );
+      } else if (result === 'verification-sent') {
+        showToast(
+          '請至信箱收信',
+          `確認信已經寄到 ${submitted} 了，點裡面的連結才算真的設定完成`,
+          'info'
+        );
       } else {
-        setCurrentEmail(submitted);
-        showToast('已更新救援 Email', undefined, 'success');
+        showToast('沒有變化', '這已經是目前設定的 Email 了', 'info');
       }
     } catch (err) {
       setError(err instanceof AuthError ? err.message : '發生錯誤，請稍後再試');

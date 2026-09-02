@@ -52,6 +52,7 @@ firebase deploy --only firestore:rules
 - **姓名不分大小寫**：`Amy`、`amy`、`AMY` 是同一個帳號。文件 ID 一律用小寫，顯示名稱則保留註冊時的寫法
 - 姓名同時是文件 ID，所以**不能包含斜線**（規則沒辦法做 URL 編碼，只好從源頭限制）
 - **忘記密碼**：如果這個帳號有設定救援 Email，登入畫面的「忘記密碼？」就能自己重設，見下方〈忘記密碼〉一節。沒設定過的話，還是只能到 Console 手動刪掉 `secrets/{姓名}` 與 `users/{姓名}`，下次登入等於新帳號（`0101`）
+- **手動清掉救援 Email 記得連 Auth 一起清**：光刪 Firestore 的 `users/{姓名}.email` 沒用，下次登入會被 `syncVerifiedEmail` 自動補回來——因為 Firebase Auth 那邊還連著一組已驗證的憑證。要連 Authentication → Users 裡對應的匿名使用者（uid 可以從 `sessions` 集合裡該姓名那筆文件的 ID 找到）一起刪掉
 - 清掉瀏覽器資料後匿名 UID 會換一組，`sessions` 就對不上，App 會請你重新登入——密碼還是原來那組
 
 ### 一個瀏覽器只能登入一個帳號
@@ -66,24 +67,31 @@ firebase deploy --only firestore:rules
 
 ## 忘記密碼
 
-登入畫面（既有帳號的密碼那一步）多了「忘記密碼？」；第一次登入或改完密碼後，也會被要求先設定一個救援 Email 才能繼續使用——沒有 Email，忘記密碼就真的沒辦法自救。
+登入畫面（既有帳號的密碼那一步）多了「忘記密碼？」；登入後每次也會被（可跳過的）彈窗提醒設定救援 Email——沒有 Email，忘記密碼就真的沒辦法自救。
 
-寄信這件事完全靠 **Firebase Authentication 內建的密碼重設信**，沒有裝任何寄信套件、沒有自己的後端、也不需要另外申請 Email 服務。運作方式：
+寄信這件事完全靠 **Firebase Authentication 內建的 Email 連結（passwordless email link）機制**，沒有裝任何寄信套件、沒有自己的後端、也不需要另外申請 Email 服務。之所以不是更直覺的「密碼重設信」（`sendPasswordResetEmail`），是因為那種信的連結預設會先跳到 Firebase 自己的托管頁面完成重設，要跳過那個頁面、直接進這個網站，需要在 Console 開「自訂動作網址」（Customize action URL）——而這個專案的範本編輯功能被 Firebase 鎖住過，鎖不鎖是帳號層級的限制，不保證解得開。Email 連結登入的信件天生就沒有 Firebase 自己的頁面可以顯示，一定會直接跳回這個網站，才能繞過這個限制。代價是**信件內容本身固定用 Firebase 的預設格式，Console 改不了**。
 
-1. 設定 Email 時，會把這個 Email 用 `linkWithCredential` 掛到目前這個匿名帳號上，讓 Firebase Auth「認得」這個 Email，並在 `emails/{email}` 記一筆「這個 Email 屬於哪個姓名」的對照（規則保護，只有剛用該 Email 完成驗證信流程的人讀得到自己那一筆）
-2. 「忘記密碼？」呼叫 Firebase 的 `sendPasswordResetEmail`，信是 Google 寄的，內文、寄件位址都是 Firebase 預設的
-3. 信裡的連結會帶 `?mode=resetPassword&oobCode=...` 回到這個網站，App 會攔截並顯示「設定新密碼」畫面（不會先跑一般的登入流程）
-4. 設定新密碼後，同時完成三件事：Firebase 那邊的密碼、這個 App 自己用的密碼雜湊（`secrets/{姓名}`）、還有登入這個瀏覽器——一步到位，不用再手動登入一次
+運作方式，依情境分三種：
+
+**第一次設定救援 Email**：呼叫 `sendSignInLinkToEmail` 寄一封確認信到這個新 Email；點裡面的連結會回到這個網站，用 `EmailAuthProvider.credentialWithLink` 把這組已驗證的憑證掛到目前這個匿名帳號上（同一個瀏覽器才有效，見下方安全模型），同時把 `emails/{email}` 索引跟 `users/{姓名}.email` 寫進去——一步到位。
+
+**改成另一個 Email**（原本已經有設定過）：先寄一封確認信到**舊的** Email，點連結表示「我同意換」；同意之後才會接著寄第二封信到新 Email，點了才算真的換成功。要求先經過舊信箱同意，是為了防止有人借用已登入的瀏覽器把救援 Email 偷換成自己的——光靠新信箱自己按確認是擋不住這種情況的。兩封信都不會直接改 Firestore，是靠下面這個機制事後補上的：
+
+**`syncVerifiedEmail`**：換 Email 走到「寄信到新地址」那一步之後，Firebase 那邊的 Email 就算改了，但這個 App 自己的 Firestore 記錄還沒更新（因為當下那個瀏覽器分頁不一定跟原本登入的裝置是同一個 session）。所以改成每次正常登入時，順便檢查一次「Firebase 那邊現在的 Email 是不是已驗證、且跟 Firestore 記錄的不一樣」，不一樣就自動同步過去——換句話說，**點完信裡最後一個連結之後，要等下一次重新登入才會真的生效**，不是點完馬上生效。
+
+「忘記密碼？」本身則是：查出這個姓名對應的 Email，直接寄一封 Email 連結登入信過去（不用再輸入一次 Email）；點連結進到這個網站的「設定新密碼」畫面，同時完成三件事：Firebase 那邊的密碼、這個 App 自己用的密碼雜湊（`secrets/{姓名}`）、還有登入這個瀏覽器——一步到位，不用再手動登入一次。
 
 ### 需要在 Firebase Console 做的一次性設定
 
-**Authentication → Sign-in method → 新增供應商 → Email/Password → 啟用**（只要打開「電子郵件/密碼」，不用開「電子郵件連結」那個）。這是唯一要手動做的事——沒開的話，設定 Email 跟寄重設信都會失敗，錯誤訊息會是「設定 Email 失敗，請稍後再試」之類的通用錯誤。
+**Authentication → Sign-in method → 電子郵件/密碼 → 打開裡面的「Email link (passwordless sign-in)」子開關**（不是新增供應商，是點進既有的「電子郵件/密碼」那一列才看得到）。這是唯一要手動做的事——沒開的話，設定 Email 跟忘記密碼都會直接 400 失敗（`auth/operation-not-allowed`）。
 
-可選：Authentication → Templates → 可以編輯密碼重設信的內文/寄件人顯示名稱；Authentication → Settings → Authorized domains 要確認你的正式網域有在清單裡，不然 Firebase 可能拒絕把重設連結導回你的網站。
+也要確認 Authentication → Settings → Authorized domains 裡有你測試/正式用的網域（`localhost`、正式網域都要各自加），不然寄信會直接失敗（`auth/unauthorized-continue-uri`）。
 
 ### 安全模型
 
 `secrets/{姓名}` 原本只有「登入中的自己」能改；忘記密碼開了第二條路：**證明自己剛完成 Firebase 驗證信流程、且該 Email 在 `emails/{email}` 對應到這個姓名**，見 `firestore.rules` 的 `canResetByEmail`。沒有 Email 索引、Email 沒驗證、或 Email 對到別的姓名，一律被拒絕——已經寫進 `tests/firestore.rules.test.mjs` 的「Forgot password」那組測試，`npm run test:rules` 會一起跑到。
+
+第一次設定救援 Email 的那個連結，**一定要在原本申請的同一個瀏覽器打開**才會生效：它是靠當下那個瀏覽器既有的登入狀態（`hasSession()`）直接寫入 Firestore，換一台裝置打開會因為規則擋下來而失敗，訊息會請你回到原本的裝置重試——這不是 bug，是這個沒有後端的架構下唯一能確認「按連結的人真的是原本那個已登入帳號」的辦法。
 
 ---
 

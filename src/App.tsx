@@ -28,6 +28,7 @@ import {
   endSession,
   hasValidSession,
   isEmailChangeReauthLink,
+  isNewEmailConfirmationLink,
   isPasswordResetLink,
   lookupAccount,
   syncVerifiedEmail,
@@ -44,6 +45,7 @@ import { AccessGate } from './components/AccessGate';
 import { LoginView } from './components/LoginView';
 import { ResetPasswordView } from './components/ResetPasswordView';
 import { EmailChangeReauthView } from './components/EmailChangeReauthView';
+import { NewEmailConfirmationView } from './components/NewEmailConfirmationView';
 import { ConversationListView } from './components/ConversationListView';
 import { BackgroundSettingsModal } from './components/BackgroundSettingsModal';
 import { EmailSettingsModal } from './components/EmailSettingsModal';
@@ -89,8 +91,8 @@ export default function App() {
   };
 
   /**
-   * The "please confirm it's still you" link setRecoveryEmail sends on
-   * auth/requires-recent-login (see that function's doc comment) — a
+   * The "old address, please approve" link setRecoveryEmail sends whenever an
+   * already-set email is being changed (see that function's doc comment) — a
    * completely separate link type from resetLink above, even though both are
    * email-link sign-ins under the hood.
    */
@@ -104,6 +106,24 @@ export default function App() {
 
   const clearEmailReauthLink = () => {
     setEmailReauthLink(null);
+    try {
+      window.history.replaceState({}, '', window.location.pathname);
+    } catch {
+      // Cosmetic only.
+    }
+  };
+
+  /** The confirmation link setRecoveryEmail sends the first time an account sets a recovery email at all. */
+  const [newEmailConfirmLink, setNewEmailConfirmLink] = useState<string | null>(() => {
+    try {
+      return isNewEmailConfirmationLink(window.location.href) ? window.location.href : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const clearNewEmailConfirmLink = () => {
+    setNewEmailConfirmLink(null);
     try {
       window.history.replaceState({}, '', window.location.pathname);
     } catch {
@@ -779,13 +799,23 @@ export default function App() {
   }
 
   /*
-   * The "please confirm it's still you" detour setRecoveryEmail sends when
-   * Firebase won't accept the change without a recent sign-in — see that
-   * function's doc comment. Same as resetLink, has nothing to do with the
-   * app's own session below; it never signs anyone into it.
+   * The "old address, please approve" detour setRecoveryEmail sends whenever
+   * an already-set email is being changed — see that function's doc comment.
+   * Same as resetLink, has nothing to do with the app's own session below; it
+   * never signs anyone into it.
    */
   if (emailReauthLink) {
     return <EmailChangeReauthView link={emailReauthLink} onDone={clearEmailReauthLink} />;
+  }
+
+  /*
+   * The confirmation link setRecoveryEmail sends the first time an account
+   * sets a recovery email at all — must be opened in this same browser (see
+   * completeNewEmailConfirmation's doc comment), since it writes Firestore
+   * directly using this device's own existing session.
+   */
+  if (newEmailConfirmLink) {
+    return <NewEmailConfirmationView link={newEmailConfirmLink} onDone={clearNewEmailConfirmLink} />;
   }
 
   if (access === 'checking') {
