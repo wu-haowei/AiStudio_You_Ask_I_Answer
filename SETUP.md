@@ -73,11 +73,15 @@ firebase deploy --only firestore:rules
 
 運作方式，依情境分三種：
 
-**第一次設定救援 Email**：呼叫 `sendSignInLinkToEmail` 寄一封確認信到這個新 Email；點裡面的連結會回到這個網站，用 `EmailAuthProvider.credentialWithLink` 把這組已驗證的憑證掛到目前這個匿名帳號上（同一個瀏覽器才有效，見下方安全模型），同時把 `emails/{email}` 索引跟 `users/{姓名}.email` 寫進去——一步到位。
+**設定 Email 前**：不管是第一次設定還是改成另一個，都會先查一次 `users` 集合裡有沒有別的帳號已經填過一模一樣的地址，有就直接擋下來、不寄任何信（`accounts.ts` 的 `findAccountKeyUsingEmail`）。這只是字串完全比對、不分大小寫檢查不出來的那種還是要靠下面 `emails/{email}` 的建立規則兜底。
 
-**改成另一個 Email**（原本已經有設定過）：先寄一封確認信到**舊的** Email，點連結表示「我同意換」；同意之後才會接著寄第二封信到新 Email，點了才算真的換成功。要求先經過舊信箱同意，是為了防止有人借用已登入的瀏覽器把救援 Email 偷換成自己的——光靠新信箱自己按確認是擋不住這種情況的。兩封信都不會直接改 Firestore，是靠下面這個機制事後補上的：
+**第一次設定救援 Email**：呼叫 `sendSignInLinkToEmail` 寄一封確認信到這個新 Email；點裡面的連結會回到這個網站，做一次 `signInWithEmailLink`（純粹只是「證明這個地址是我的」，跟這個瀏覽器原本的登入狀態無關，任何裝置點開都行）。原本想用 `EmailAuthProvider.credentialWithLink` + `linkWithCredential` 把憑證直接掛到目前這個匿名帳號上、當場寫 Firestore——實測（對著 Auth 模擬器）發現這個組合並不會真的「掛上去」，而是默默登入成另一個獨立帳號，導致後續步驟必定失敗（`auth/invalid-action-code`），所以放棄這條路，改成跟下面「改 Email」共用同一套機制：先不碰 Firestore，靠 `syncVerifiedEmail` 事後補上。
 
-**`syncVerifiedEmail`**：換 Email 走到「寄信到新地址」那一步之後，Firebase 那邊的 Email 就算改了，但這個 App 自己的 Firestore 記錄還沒更新（因為當下那個瀏覽器分頁不一定跟原本登入的裝置是同一個 session）。所以改成每次正常登入時，順便檢查一次「Firebase 那邊現在的 Email 是不是已驗證、且跟 Firestore 記錄的不一樣」，不一樣就自動同步過去——換句話說，**點完信裡最後一個連結之後，要等下一次重新登入才會真的生效**，不是點完馬上生效。
+**改成另一個 Email**（原本已經有設定過）：先寄一封確認信到**舊的** Email，點連結表示「我同意換」；同意之後才會接著寄第二封信到新 Email，點了才算真的換成功。要求先經過舊信箱同意，是為了防止有人借用已登入的瀏覽器把救援 Email 偷換成自己的——光靠新信箱自己按確認是擋不住這種情況的。
+
+**`syncVerifiedEmail`**：不管是上面哪一種，點完信裡的連結當下都不會直接改 Firestore——當下那個分頁不一定跟原本登入的裝置是同一個 session，直接寫很可能被規則擋下來。所以改成每次正常登入時，順便檢查一次「Firebase 那邊現在的 Email 是不是已驗證、且跟 Firestore 記錄的不一樣」，不一樣就自動同步過去——換句話說，**點完信裡最後一個連結之後，要等下一次重新登入才會真的生效**，不是點完馬上生效。
+
+> 這兩個「點連結後自動觸發下一步」的畫面（`EmailChangeReauthView`、`NewEmailConfirmationView`）在 `useEffect` 裡呼叫的都是**一次性**的動作碼（用過就失效）。React 的 `<StrictMode>` 在開發模式會刻意把 effect 重複呼叫一次，藉此抓出這種「呼叫兩次會壞掉」的副作用——第一次呼叫其實會成功，但緊接著的第二次呼叫會因為動作碼已經用過而失敗，如果沒有特別處理，畫面顯示的會是那個誤導人的第二次失敗，讓人誤以為整個功能壞了。兩個元件都用一個 `useRef` 擋掉第二次呼叫，只保留真正成功的第一次結果——如果之後要再寫類似「點連結自動執行一次性動作」的畫面，記得比照辦理。
 
 「忘記密碼？」本身則是：查出這個姓名對應的 Email，直接寄一封 Email 連結登入信過去（不用再輸入一次 Email）；點連結進到這個網站的「設定新密碼」畫面，同時完成三件事：Firebase 那邊的密碼、這個 App 自己用的密碼雜湊（`secrets/{姓名}`）、還有登入這個瀏覽器——一步到位，不用再手動登入一次。
 
@@ -91,7 +95,7 @@ firebase deploy --only firestore:rules
 
 `secrets/{姓名}` 原本只有「登入中的自己」能改；忘記密碼開了第二條路：**證明自己剛完成 Firebase 驗證信流程、且該 Email 在 `emails/{email}` 對應到這個姓名**，見 `firestore.rules` 的 `canResetByEmail`。沒有 Email 索引、Email 沒驗證、或 Email 對到別的姓名，一律被拒絕——已經寫進 `tests/firestore.rules.test.mjs` 的「Forgot password」那組測試，`npm run test:rules` 會一起跑到。
 
-第一次設定救援 Email 的那個連結，**一定要在原本申請的同一個瀏覽器打開**才會生效：它是靠當下那個瀏覽器既有的登入狀態（`hasSession()`）直接寫入 Firestore，換一台裝置打開會因為規則擋下來而失敗，訊息會請你回到原本的裝置重試——這不是 bug，是這個沒有後端的架構下唯一能確認「按連結的人真的是原本那個已登入帳號」的辦法。
+設定 / 更改救援 Email 的兩種確認連結（見上方〈忘記密碼〉），任何裝置點開都行，不需要跟原本申請的瀏覽器一樣——它們只負責向 Firebase 證明「這個地址是我的」，從不直接碰 Firestore，真正落地永遠是 `syncVerifiedEmail` 在下一次正常登入時做的，那時候當然是在使用者自己已登入的裝置上，`hasSession()` 自然成立。
 
 ---
 

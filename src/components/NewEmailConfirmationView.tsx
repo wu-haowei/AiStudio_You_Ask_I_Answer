@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, MailCheck, XCircle } from 'lucide-react';
 import { AuthError, completeNewEmailConfirmation } from '../lib/accounts';
 
@@ -15,31 +15,38 @@ type Phase = 'working' | 'done' | 'invalid';
  * Where the "confirm your new recovery email" link from setRecoveryEmail
  * lands, for the very first time an account sets one — see that function's
  * doc comment for why even a first-time setup has to be proven this way now,
- * not accepted on the spot. Must be opened in the same browser that started
- * the setup (completeNewEmailConfirmation explains why); opening it anywhere
- * else surfaces as an ordinary failure message, not a crash.
+ * not accepted on the spot. Can be opened on any device — it only proves
+ * ownership of the address, nothing about this app's own session; the
+ * address actually lands on the account the next time it signs in for real.
  */
 export const NewEmailConfirmationView: React.FC<NewEmailConfirmationViewProps> = ({ link, onDone }) => {
   const [phase, setPhase] = useState<Phase>('working');
   const [confirmedEmail, setConfirmedEmail] = useState('');
   const [error, setError] = useState('');
+  /**
+   * The oobCode this confirms is single-use — a second attempt with the same
+   * link fails with auth/invalid-action-code even though the first one
+   * already succeeded. React's StrictMode deliberately double-invokes effects
+   * in development to catch exactly this kind of unguarded side effect, so
+   * the call itself has to be skipped outright on the second pass — a
+   * "cancelled" flag tied to that pass's own cleanup is not enough, since
+   * StrictMode's simulated unmount would flip it before the *first* (real)
+   * call's result ever arrives, silently swallowing it instead of showing it.
+   */
+  const startedRef = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
+    if (startedRef.current) return;
+    startedRef.current = true;
     completeNewEmailConfirmation(link)
       .then((email) => {
-        if (cancelled) return;
         setConfirmedEmail(email);
         setPhase('done');
       })
       .catch((err) => {
-        if (cancelled) return;
         setError(err instanceof AuthError ? err.message : '發生錯誤，請稍後再試');
         setPhase('invalid');
       });
-    return () => {
-      cancelled = true;
-    };
   }, [link]);
 
   const submit = 'milk-tea-btn-primary w-full py-3 rounded-2xl text-sm font-bold shadow-sm cursor-pointer';
@@ -91,8 +98,8 @@ export const NewEmailConfirmationView: React.FC<NewEmailConfirmationViewProps> =
 
   return shell(
     <CheckCircle2 className="w-7 h-7" />,
-    'Email 設定完成',
-    `${confirmedEmail} 已經是這個帳號的救援 Email 了，忘記密碼時會寄重設信到這裡。`,
+    'Email 確認完成',
+    `${confirmedEmail} 已經確認過了。回到原本設定的裝置，重新登入一次，就會正式變成這個帳號的救援 Email。`,
     <button type="button" onClick={onDone} className={submit}>
       回到登入畫面
     </button>

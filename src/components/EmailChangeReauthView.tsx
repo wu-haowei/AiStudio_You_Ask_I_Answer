@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, ShieldCheck, XCircle } from 'lucide-react';
 import { AuthError, completeEmailChangeReauth } from '../lib/accounts';
 
@@ -24,23 +24,31 @@ export const EmailChangeReauthView: React.FC<EmailChangeReauthViewProps> = ({ li
   const [phase, setPhase] = useState<Phase>('working');
   const [pendingEmail, setPendingEmail] = useState('');
   const [error, setError] = useState('');
+  /**
+   * The oobCode this confirms is single-use, and success here also sends a
+   * *second* email — a repeat call would both fail on the now-consumed code
+   * and, worse, double-send that follow-up. React's StrictMode deliberately
+   * double-invokes effects in development to catch exactly this kind of
+   * unguarded side effect, so the call itself has to be skipped outright on
+   * the second pass — a "cancelled" flag tied to that pass's own cleanup is
+   * not enough, since StrictMode's simulated unmount would flip it before the
+   * *first* (real) call's result ever arrives, silently swallowing it instead
+   * of showing it.
+   */
+  const startedRef = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
+    if (startedRef.current) return;
+    startedRef.current = true;
     completeEmailChangeReauth(link)
       .then((email) => {
-        if (cancelled) return;
         setPendingEmail(email);
         setPhase('done');
       })
       .catch((err) => {
-        if (cancelled) return;
         setError(err instanceof AuthError ? err.message : '發生錯誤，請稍後再試');
         setPhase('invalid');
       });
-    return () => {
-      cancelled = true;
-    };
   }, [link]);
 
   const submit = 'milk-tea-btn-primary w-full py-3 rounded-2xl text-sm font-bold shadow-sm cursor-pointer';
