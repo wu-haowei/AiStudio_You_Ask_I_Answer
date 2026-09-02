@@ -72,14 +72,8 @@ export const EmailSettingsModal: React.FC<EmailSettingsModalProps> = ({
       setNextEmail('');
       if (result === 'reauth-required') {
         showToast(
-          '請先確認身份',
-          '為了安全，Firebase 要求重新驗證一次身份——已寄一封確認信到目前設定的 Email，請先點裡面的連結，完成後才會繼續寄驗證信到新的 Email',
-          'info'
-        );
-      } else if (result === 'verification-sent') {
-        showToast(
-          '請至新 Email 收信',
-          `已寄出驗證信到 ${submitted}，點裡面的連結完成驗證後，下次登入這裡就會換成新的救援 Email`,
+          '請先到目前的 Email 確認',
+          '為了安全，換 Email 要先經過目前設定的信箱同意——確認信已經寄過去了，點裡面的連結後，才會繼續寄驗證信到新的 Email',
           'info'
         );
       } else {

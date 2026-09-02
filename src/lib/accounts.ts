@@ -1,4 +1,4 @@
-import { deleteDoc, doc, getDoc, onSnapshot, setDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, setDoc, where } from 'firebase/firestore';
 import {
   EmailAuthProvider,
   isSignInWithEmailLink,
@@ -281,6 +281,27 @@ const randomInternalPassword = (): string =>
     .join('');
 
 /**
+ * Best-effort duplicate check, run before touching Firebase Auth at all so a
+ * taken address is rejected immediately instead of after one or two email
+ * round-trips. Exact-string match on `users.email`, not case-normalized —
+ * the actual uniqueness guarantee is `emails/{emailKey}` (create-only, keyed
+ * by the lowercased address), enforced later once ownership is proven; this
+ * is purely for a faster, friendlier error when the casing already matches.
+ * It can run this early because `users/{key}` is public — see the module doc
+ * comment — unlike `emails/{emailKey}`, which requires proof of ownership of
+ * that exact address to even read.
+ */
+const findAccountKeyUsingEmail = async (trimmedEmail: string): Promise<string | null> => {
+  try {
+    const snap = await getDocs(query(collection(db, USERS), where('email', '==', trimmedEmail)));
+    return snap.docs[0]?.id ?? null; // whichever account (if any) already has this exact string on file
+  } catch (err) {
+    console.warn('[accounts] duplicate-email check failed:', err);
+    return null; // best-effort only — a failed check must not block a legitimate change
+  }
+};
+
+/**
  * Links a recovery email to the signed-in account, so a future "forgot
  * password" has something to reset. This is the only place `emails/{email}`
  * gets written on the happy path — see the module doc comment for what that
@@ -293,29 +314,29 @@ const randomInternalPassword = (): string =>
  * it already set earlier: Firebase already upgraded this uid the first time,
  * so a second `linkWithCredential` always fails with provider-already-linked.
  *
- * Firebase no longer allows overwriting that linked email outright
- * (`updateEmail` now fails with auth/operation-not-allowed, "please verify
- * the new email before changing email") — it has to be proven first. That
- * case sends a verification link to the new address via
- * `verifyBeforeUpdateEmail` instead, and returns without touching Firestore:
- * the new address only becomes this account's email once syncVerifiedEmail
- * notices Firebase's own copy changed, which happens next sign-in.
- *
- * That verification call itself has one more precondition: Firebase requires
- * a *recently proven* sign-in for it (auth/requires-recent-login), and this
- * browser's anonymous session was typically authenticated long ago — there is
- * no ongoing "recent login" for an anonymous uid that just persists via a
- * refresh token. There is also no stored password to reauthenticate with
- * (randomInternalPassword above is thrown away on purpose). The only proof
- * Firebase will still accept is another real sign-in event, so that case
- * sends an email-link sign-in to whatever address is *currently* linked —
- * clicking it (completeEmailChangeReauth) freshens the session enough for a
- * second attempt at verifyBeforeUpdateEmail to go through.
+ * That case — changing an email that is already set — is deliberately routed
+ * through a confirmation link to the *old* address first, not just tried
+ * directly: without that, someone with temporary access to an already-signed-in
+ * browser could silently redirect a stranger's password-reset mail to an
+ * address of their own, needing nothing but their own inbox to "confirm" it.
+ * Requiring the old address's owner to approve first closes that hole. It
+ * also happens to be the only path Firebase still accepts once this uid's
+ * sign-in is no longer "recent" (auth/requires-recent-login) — this browser's
+ * anonymous session is typically authenticated long ago, and there is no
+ * stored password to reauthenticate with (randomInternalPassword above is
+ * thrown away on purpose) — so a real sign-in event, via that same link, is
+ * the only proof left. See completeEmailChangeReauth for the second half:
+ * once that link is confirmed, it sends the *actual* change-email
+ * verification to the new address, per Firebase's own separate requirement
+ * that the new address prove itself too (auth/operation-not-allowed otherwise).
+ * Neither half touches Firestore directly — the new address only becomes
+ * this account's email once syncVerifiedEmail notices Firebase's own copy
+ * changed, which happens next sign-in.
  */
 export const setRecoveryEmail = async (
   name: string,
   email: string
-): Promise<'linked' | 'verification-sent' | 'reauth-required'> => {
+): Promise<'linked' | 'reauth-required'> => {
   const clean = assertUsableName(name);
   const key = accountKey(clean);
   const trimmedEmail = email.trim();
@@ -329,6 +350,9 @@ export const setRecoveryEmail = async (
     return 'linked'; // already set to this exact email — nothing to do
   }
 
+  const dupKey = await findAccountKeyUsingEmail(trimmedEmail);
+  if (dupKey && dupKey !== key) throw new AuthError('這個 Email 已經被使用，換一個試試');
+
   const user = await ensureSignedIn();
 
   try {
@@ -341,35 +365,23 @@ export const setRecoveryEmail = async (
     if (err?.code === 'auth/provider-already-linked') {
       // This uid already has an email/password credential — either this same
       // account's own earlier email, or another named account tested in this
-      // browser before. Either way, Firebase now insists on proof before
-      // handing the address over.
+      // browser before. Either way, the old address has to approve first —
+      // see the doc comment above for why that is not merely a workaround.
+      // user.email (the live Firebase-side address) rather than priorEmail:
+      // the linked credential may belong to a different named account tested
+      // in this same browser, which priorEmail wouldn't know about.
+      const currentEmail = user.email;
+      if (!currentEmail) throw new AuthError('無法確認目前登入狀態，請重新整理頁面後再試');
       try {
-        await verifyBeforeUpdateEmail(user, trimmedEmail);
-      } catch (verifyErr: any) {
-        if (verifyErr?.code === 'auth/requires-recent-login') {
-          // user.email — the live Firebase-side address — rather than
-          // priorEmail: the linked credential may belong to a different named
-          // account tested in this same browser, which priorEmail wouldn't know.
-          const currentEmail = user.email;
-          if (!currentEmail) throw new AuthError('無法確認目前登入狀態，請重新整理頁面後再試');
-          try {
-            const continueUrl =
-              `${window.location.origin}${window.location.pathname}` +
-              `?purpose=reauthEmail&email=${encodeURIComponent(currentEmail)}&pendingEmail=${encodeURIComponent(trimmedEmail)}`;
-            await sendSignInLinkToEmail(auth, currentEmail, { url: continueUrl, handleCodeInApp: true });
-          } catch (reauthErr) {
-            console.warn('[accounts] sending reauth link failed:', reauthErr);
-            throw new AuthError('寄送驗證信失敗，請稍後再試');
-          }
-          return 'reauth-required';
-        }
-        console.warn('[accounts] sending change-email verification failed:', verifyErr);
-        if (verifyErr?.code === 'auth/email-already-in-use') {
-          throw new AuthError('這個 Email 已經被使用，換一個試試');
-        }
-        throw new AuthError('寄送驗證信失敗，請稍後再試');
+        const continueUrl =
+          `${window.location.origin}${window.location.pathname}` +
+          `?purpose=reauthEmail&email=${encodeURIComponent(currentEmail)}&pendingEmail=${encodeURIComponent(trimmedEmail)}`;
+        await sendSignInLinkToEmail(auth, currentEmail, { url: continueUrl, handleCodeInApp: true });
+      } catch (reauthErr) {
+        console.warn('[accounts] sending reauth link failed:', reauthErr);
+        throw new AuthError('寄送確認信失敗，請稍後再試');
       }
-      return 'verification-sent';
+      return 'reauth-required';
     }
     console.warn('[accounts] linking email failed:', err);
     throw new AuthError('設定 Email 失敗，請稍後再試');
