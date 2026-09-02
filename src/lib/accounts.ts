@@ -74,6 +74,21 @@ const isValidEmail = (email: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.te
 const emailKey = (email: string): string => email.trim().toLowerCase();
 
 /**
+ * Firebase's free daily allowance for its own email sending (password reset,
+ * email link sign-in, etc.) is shared across every account on this project —
+ * heavy testing in one day can exhaust it for everyone. `auth/quota-exceeded`
+ * is the one failure worth calling out by name rather than folding into a
+ * generic "try again later", since "later" here specifically means tomorrow,
+ * not a few minutes.
+ */
+const friendlyEmailSendError = (err: unknown, fallbackMessage: string): AuthError => {
+  if ((err as { code?: string })?.code === 'auth/quota-exceeded') {
+    return new AuthError('今天寄信次數已經達上限了，這是 Firebase 的每日配額限制，請明天再試一次');
+  }
+  return new AuthError(fallbackMessage);
+};
+
+/**
  * Names double as document ids, so the few characters Firestore forbids there
  * are rejected up front rather than failing mysteriously on write.
  */
@@ -348,7 +363,7 @@ export const setRecoveryEmail = async (
       await sendSignInLinkToEmail(auth, priorEmail, { url: continueUrl, handleCodeInApp: true });
     } catch (err) {
       console.warn('[accounts] sending reauth link failed:', err);
-      throw new AuthError('寄送確認信失敗，請稍後再試');
+      throw friendlyEmailSendError(err, '寄送確認信失敗，請稍後再試');
     }
     return 'reauth-required';
   }
@@ -360,7 +375,7 @@ export const setRecoveryEmail = async (
     await sendSignInLinkToEmail(auth, trimmedEmail, { url: continueUrl, handleCodeInApp: true });
   } catch (err) {
     console.warn('[accounts] sending new-email confirmation failed:', err);
-    throw new AuthError('寄送確認信失敗，請稍後再試');
+    throw friendlyEmailSendError(err, '寄送確認信失敗，請稍後再試');
   }
   return 'verification-sent';
 };
@@ -518,7 +533,7 @@ export const requestPasswordReset = async (email: string): Promise<void> => {
     }
   } catch (err) {
     console.warn('[accounts] password reset request failed:', err);
-    throw new AuthError('寄送失敗，請檢查網路後再試');
+    throw friendlyEmailSendError(err, '寄送失敗，請檢查網路後再試');
   }
 };
 
@@ -582,7 +597,7 @@ export const completeEmailChangeReauth = async (link: string): Promise<string> =
     if (err?.code === 'auth/email-already-in-use') {
       throw new AuthError('這個 Email 已經被使用，換一個試試');
     }
-    throw new AuthError('身份驗證成功，但寄送新 Email 的確認信失敗，請回到設定裡重新試一次');
+    throw friendlyEmailSendError(err, '身份驗證成功，但寄送新 Email 的確認信失敗，請回到設定裡重新試一次');
   }
 
   return pendingEmail;
