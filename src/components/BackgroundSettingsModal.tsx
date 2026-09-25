@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, ImagePlus, Trash2 } from 'lucide-react';
 import { type UserPreferences } from '../lib/preferences';
 import { BackgroundCropEditor } from './BackgroundCropEditor';
+import { useT } from '../i18n';
 
 interface BackgroundSettingsModalProps {
   isOpen: boolean;
@@ -23,6 +24,7 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
   onSave,
   showToast,
 }) => {
+  const t = useT();
   /** A chosen file waits here until it has been framed in the crop editor. */
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   // Fade is previewed live, so it is held locally until the modal closes
@@ -45,7 +47,7 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      showToast('請選擇圖片檔', undefined, 'warning');
+      showToast(t('bgset.pickImage'), undefined, 'warning');
       return;
     }
     setPendingFile(file);
@@ -55,13 +57,13 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
     try {
       await onSave({ chatBackground: dataUrl });
       setPendingFile(null);
-      showToast('背景已更新', undefined, 'success');
+      showToast(t('bgset.updated'), undefined, 'success');
     } catch (err: any) {
       const raw = String(err?.message || err);
       // Firestore rejects oversized documents with a byte count in the message
       const tooBig = raw.includes('longer than') || raw.includes('1048487');
       throw new Error(
-        tooBig ? '圖片超過雲端單筆資料上限，請縮小範圍後再試' : `儲存失敗：${raw}`
+        tooBig ? t('bgset.tooBig') : t('bgset.saveFailed', { reason: raw })
       );
     }
   };
@@ -90,13 +92,13 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
       <div className="bg-[#FAF7F2] border border-[#D9C5B2] rounded-3xl p-5 sm:p-6 max-w-sm w-full shadow-2xl space-y-4">
         <div className="flex items-start justify-between border-b border-[#D9C5B2] pb-3">
           <div>
-            <h3 className="text-base font-bold text-[#4A3F35]">聊天背景</h3>
-            <p className="text-xs text-[#7A6C5E] mt-0.5">只有你看得到，換裝置登入一樣在</p>
+            <h3 className="text-base font-bold text-[#4A3F35]">{t('header.chatBackground')}</h3>
+            <p className="text-xs text-[#7A6C5E] mt-0.5">{t('bgset.privacy')}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="關閉"
+            aria-label={t('common.close')}
             className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -109,7 +111,7 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
             <>
               <img
                 src={preferences.chatBackground}
-                alt="背景預覽"
+                alt={t('bgset.previewAlt')}
                 className="absolute inset-0 w-full h-full object-cover"
               />
               <div
@@ -119,23 +121,23 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
             </>
           ) : (
             <div className="absolute inset-0 flex items-center justify-center text-xs text-[#A69684]">
-              尚未設定背景
+              {t('bgset.none')}
             </div>
           )}
 
           <div className="relative h-full flex flex-col justify-end gap-1.5 p-3">
             <span className="self-start max-w-[75%] px-2.5 py-1.5 rounded-xl rounded-bl-none bg-white border border-[#D9C5B2] text-[11px] text-[#4A3F35]">
-              這樣看得清楚嗎
+              {t('bgset.readableQ')}
             </span>
             <span className="self-end max-w-[75%] px-2.5 py-1.5 rounded-xl rounded-br-none bg-[#A68B6D] text-[11px] text-white">
-              可以，很好看
+              {t('bgset.readableA')}
             </span>
           </div>
         </div>
 
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs font-bold text-[#5C4B3A]">
-            <label htmlFor="bg-fade">變淡程度</label>
+            <label htmlFor="bg-fade">{t('bgset.fade')}</label>
             <span className="text-[#7A6C5E]">{fade}%</span>
           </div>
           <input
@@ -151,13 +153,13 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
             onKeyUp={(e) => handleFadeCommit(Number((e.target as HTMLInputElement).value))}
             className="w-full accent-[#A68B6D] disabled:opacity-40"
           />
-          <p className="text-[11px] text-[#A69684]">調高會讓訊息更好讀</p>
+          <p className="text-[11px] text-[#A69684]">{t('bgset.fadeHint')}</p>
         </div>
 
         <div className="flex items-center gap-2 pt-1">
           <label className="flex-1 py-3 rounded-2xl text-xs font-bold text-center cursor-pointer transition-colors inline-flex items-center justify-center gap-1.5 milk-tea-btn-primary shadow-sm">
             <ImagePlus className="w-4 h-4" />
-            {hasBackground ? '換一張' : '選擇圖片'}
+            {hasBackground ? t('bgset.change') : t('bgset.choose')}
             <input type="file" accept="image/*" className="hidden" onChange={handleFileChosen} />
           </label>
 
@@ -165,7 +167,7 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
             <button
               type="button"
               onClick={() => onSave({ chatBackground: '' })}
-              aria-label="移除背景"
+              aria-label={t('bgset.remove')}
               className="px-3 py-3 rounded-2xl bg-[#F2EBE1] text-[#7A6C5E] hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
             >
               <Trash2 className="w-4 h-4" />
@@ -174,7 +176,7 @@ export const BackgroundSettingsModal: React.FC<BackgroundSettingsModalProps> = (
         </div>
 
         <p className="text-[11px] text-[#A69684] leading-relaxed">
-          選好圖後可以拖曳調整位置，只有框內範圍會上傳。
+          {t('bgset.cropHint')}
         </p>
       </div>
     </div>

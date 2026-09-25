@@ -2,6 +2,8 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { Target, Sparkles, X, Check, CheckCircle2 } from 'lucide-react';
 import { OTHER_PICK_INDEX, RoomQuestion } from '../../types';
+import { useLang, useT } from '../../i18n';
+import { displayCategory, localizedRoundQuestion } from '../../i18n/content';
 
 /** A player may rank at most this many options. */
 const MAX_PICKS = 2;
@@ -57,6 +59,8 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
   onSubmitOption,
   onCancelActiveQuestion,
 }) => {
+  const t = useT();
+  const lang = useLang();
   /**
    * Tapping an option appends it to the ordered list; tapping it again removes
    * it. Once two are chosen the oldest is dropped, so a third tap always works.
@@ -77,6 +81,10 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
     return null;
   }
 
+  // The round carries its own translations, so each player reads the question in their own language.
+  const view = localizedRoundQuestion(activeQ, lang);
+  const viewOptions = view.options ?? activeQ.options;
+
   /*
    * Portalled into <body> for the same reason as the invite dialogs: the
    * conversation panel is hidden rather than unmounted while the admin tab is
@@ -91,9 +99,9 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
               <Target className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-[#4A3F35]">作答</h3>
+              <h3 className="text-base font-bold text-[#4A3F35]">{t('answer.title')}</h3>
               <p className="text-xs text-[#7A6C5E]">
-                {isTarget ? '請選擇你的真實答案' : `猜猜 ${partnerDisplayName} 的選擇`}
+                {isTarget ? t('answer.subtitleTarget') : t('answer.subtitleGuess', { name: partnerDisplayName })}
               </p>
             </div>
           </div>
@@ -102,7 +110,7 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
               type="button"
               onClick={onDismissModal}
               className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
-              title="關閉視窗"
+              title={t('invite.closeWindow')}
             >
               <X className="w-5 h-5" />
             </button>
@@ -113,10 +121,10 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
         <div className="bg-white p-4 rounded-2xl border border-[#D9C5B2] space-y-1.5 shadow-2xs">
           <div className="text-xs font-bold text-[#A68B6D] flex items-center gap-1">
             <Sparkles className="w-3.5 h-3.5" />
-            [{activeQ.category}]
+            [{displayCategory(activeQ.category)}]
           </div>
           <div className="text-xs sm:text-sm font-bold text-[#4A3F35] leading-relaxed">
-            {activeQ.question}
+            {view.question}
           </div>
         </div>
 
@@ -126,14 +134,14 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
             {!hasTargetAnswered ? (
               <div className="space-y-3">
                 <p className="text-xs font-bold text-[#5C4B3A]">
-                  選擇你的真實答案
-                  <span className="ml-1 font-medium text-[#7A6C5E]">（最多兩個，依順序）</span>
+                  {t('answer.subtitleTarget')}
+                  <span className="ml-1 font-medium text-[#7A6C5E]">{t('answer.maxTwoOrdered')}</span>
                 </p>
                 {hasInitiatorGuessed && (
-                  <PartnerReadyNote text={`${partnerDisplayName} 已經猜完了，等你作答`} />
+                  <PartnerReadyNote text={t('answer.partnerGuessed', { name: partnerDisplayName })} />
                 )}
                 <div className="grid grid-cols-2 gap-2">
-                  {activeQ.options.map((opt, idx) => (
+                  {viewOptions.map((opt, idx) => (
                     <OptionButton
                       key={idx}
                       label={opt}
@@ -144,7 +152,7 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                   ))}
 
                   <OptionButton
-                    label="其他 (自訂選項)"
+                    label={t('answer.otherOption')}
                     rank={rankOf(OTHER_PICK_INDEX)}
                     accent="#A68B6D"
                     fullWidth
@@ -156,13 +164,13 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                 {hasPicks && (
                   <div className="space-y-1 pt-1 animate-fade-in">
                     <label className="text-[11px] font-bold text-[#5C4B3A] flex items-center gap-1">
-                      <span>{isOtherPicked ? '自訂答案' : '補充說明（選填）'}</span>
+                      <span>{isOtherPicked ? t('answer.customAnswer') : t('answer.noteOptional')}</span>
                     </label>
                     <input
                       type="text"
                       value={answerExplanation}
                       onChange={(e) => setAnswerExplanation(e.target.value)}
-                      placeholder={isOtherPicked ? '輸入你的答案' : '可填寫選擇原因'}
+                      placeholder={isOtherPicked ? t('answer.typeAnswer') : t('answer.reasonHint')}
                       className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input font-bold"
                     />
                   </div>
@@ -175,17 +183,17 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                   className="w-full mt-2 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
-                  <span>送出真心話</span>
+                  <span>{t('answer.sendHonest')}</span>
                 </button>
               </div>
             ) : (
               <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-2">
                 <div className="text-xs font-bold text-emerald-900 flex items-center justify-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  已送出真心話
+                  {t('answer.sentHonest')}
                 </div>
                 <p className="text-[11px] text-emerald-700 font-medium">
-                  等待對方猜測，結果會顯示在對話框
+                  {t('answer.waitGuessResult')}
                 </p>
                 <div className="pt-1 flex items-center justify-center gap-2">
                   <button
@@ -193,14 +201,14 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                     onClick={onDismissModal}
                     className="px-3 py-1.5 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-xs font-bold transition-colors cursor-pointer"
                   >
-                    關閉
+                    {t('common.close')}
                   </button>
                   <button
                     type="button"
                     onClick={onCancelActiveQuestion}
                     className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-colors cursor-pointer"
                   >
-                    取消這題
+                    {t('answer.cancelQuestion')}
                   </button>
                 </div>
               </div>
@@ -214,14 +222,14 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
             {!hasInitiatorGuessed ? (
               <div className="space-y-3">
                 <p className="text-xs font-bold text-[#8C6D53]">
-                  猜猜 {partnerDisplayName} 會選哪一個？
-                  <span className="ml-1 font-medium text-[#7A6C5E]">（最多兩個，猜中一個就算對）</span>
+                  {t('answer.guessWhich', { name: partnerDisplayName })}
+                  <span className="ml-1 font-medium text-[#7A6C5E]">{t('answer.maxTwoOneRight')}</span>
                 </p>
                 {hasTargetAnswered && (
-                  <PartnerReadyNote text={`${partnerDisplayName} 已經作答了，等你猜`} />
+                  <PartnerReadyNote text={t('answer.partnerAnswered', { name: partnerDisplayName })} />
                 )}
                 <div className="grid grid-cols-2 gap-2">
-                  {activeQ.options.map((opt, idx) => (
+                  {viewOptions.map((opt, idx) => (
                     <OptionButton
                       key={idx}
                       label={opt}
@@ -232,7 +240,7 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                   ))}
 
                   <OptionButton
-                    label="其他 (自訂猜測)"
+                    label={t('answer.otherGuess')}
                     rank={rankOf(OTHER_PICK_INDEX)}
                     accent="#8C6D53"
                     fullWidth
@@ -244,13 +252,13 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                 {hasPicks && (
                   <div className="space-y-1 pt-1 animate-fade-in">
                     <label className="text-[11px] font-bold text-[#8C6D53] flex items-center gap-1">
-                      <span>{isOtherPicked ? '自訂猜測' : '補充說明（選填）'}</span>
+                      <span>{isOtherPicked ? t('answer.customGuess') : t('answer.noteOptional')}</span>
                     </label>
                     <input
                       type="text"
                       value={answerExplanation}
                       onChange={(e) => setAnswerExplanation(e.target.value)}
-                      placeholder={isOtherPicked ? '輸入你的猜測' : '可填寫猜測原因'}
+                      placeholder={isOtherPicked ? t('answer.typeGuess') : t('answer.guessReasonHint')}
                       className="w-full px-3.5 py-2 text-xs rounded-xl milk-tea-input font-bold"
                     />
                   </div>
@@ -263,17 +271,17 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                   className="w-full mt-2 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md disabled:opacity-50 cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
-                  <span>送出猜測</span>
+                  <span>{t('answer.sendGuess')}</span>
                 </button>
               </div>
             ) : (
               <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-2">
                 <div className="text-xs font-bold text-emerald-900 flex items-center justify-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  已送出猜測
+                  {t('answer.sentGuess')}
                 </div>
                 <p className="text-[11px] text-emerald-700 font-medium">
-                  等待對方作答，結果會顯示在對話框
+                  {t('answer.waitAnswerResult')}
                 </p>
                 <div className="pt-1 flex items-center justify-center gap-2">
                   <button
@@ -281,14 +289,14 @@ export const CoPlayActiveQuestionModal: React.FC<CoPlayActiveQuestionModalProps>
                     onClick={onDismissModal}
                     className="px-3 py-1.5 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-xs font-bold transition-colors cursor-pointer"
                   >
-                    關閉
+                    {t('common.close')}
                   </button>
                   <button
                     type="button"
                     onClick={onCancelActiveQuestion}
                     className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-colors cursor-pointer"
                   >
-                    取消這題
+                    {t('answer.cancelQuestion')}
                   </button>
                 </div>
               </div>
@@ -310,6 +318,7 @@ const OptionButton: React.FC<{
   fullWidth?: boolean;
   onClick: () => void;
 }> = ({ label, rank, accent, fullWidth, onClick }) => {
+  const t = useT();
   const isPicked = rank >= 0;
 
   return (
@@ -330,7 +339,7 @@ const OptionButton: React.FC<{
       {isPicked && (
         <span
           className="absolute top-2 right-2 w-5 h-5 rounded-full bg-white/25 text-white text-[10px] font-bold flex items-center justify-center"
-          aria-label={`第 ${rank + 1} 順位`}
+          aria-label={t('answer.rankAria', { n: rank + 1 })}
         >
           {rank + 1}
         </span>

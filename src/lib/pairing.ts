@@ -10,6 +10,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { t } from '../i18n';
 
 /**
  * Who is around, and how two people agree to start talking.
@@ -230,4 +231,4 @@ export const listMyRooms = async (name: string): Promise<PairRoomSummary[]> => {
 
 /** The other person in a pair room. */
 export const partnerOf = (participants: string[], me: string) =>
-  participants.find((p) => !sameName(p, me)) || '對方';
+  participants.find((p) => !sameName(p, me)) || t('common.otherPerson');

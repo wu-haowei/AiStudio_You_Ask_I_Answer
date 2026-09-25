@@ -675,9 +675,8 @@ export const subscribeToRoomFaqs = (code: string, onUpdate: (items: FAQItem[]) =
 
 export const saveRoomFaq = async (code: string, item: FAQItem) => {
   try {
-    await setDoc(doc(roomFaqsRef(code), item.id), sanitizeForFirestore(item, false), {
-      merge: true,
-    });
+    // Replace, not merge — see saveItem: an edit must be able to remove an option or a translation.
+    await setDoc(doc(roomFaqsRef(code), item.id), sanitizeForFirestore(item, false));
   } catch (err) {
     console.warn('[firestore] failed to save room faq:', err);
   }
@@ -957,9 +956,15 @@ export const subscribeToCollection = <T extends { id: string }>(
     (err) => console.warn(`[firestore] ${name} snapshot error:`, err)
   );
 
-export const saveItem = async <T extends { id: string }>(name: string, item: T) => {
+/**
+ * `replace` writes the item as the whole document instead of merging into it.
+ * A merge cannot remove anything — a cleared field is simply left out, and a
+ * nested map like a question's translations is merged key by key — so an edit
+ * that deletes an option or a translation would silently keep the old one.
+ */
+export const saveItem = async <T extends { id: string }>(name: string, item: T, replace = false) => {
   try {
-    await setDoc(doc(db, name, item.id), sanitizeForFirestore(item, false), { merge: true });
+    await setDoc(doc(db, name, item.id), sanitizeForFirestore(item, false), { merge: !replace });
   } catch (err) {
     console.warn(`[firestore] failed to save ${name}/${item.id}:`, err);
   }
@@ -1045,7 +1050,7 @@ export const loadDefaultFaqs = async (): Promise<FAQItem[]> => {
 export const subscribeToDefaultFaqs = (cb: (items: FAQItem[]) => void) =>
   subscribeToCollection<FAQItem>(COLLECTIONS.FAQS, cb);
 
-export const saveDefaultFaq = (item: FAQItem) => saveItem(COLLECTIONS.FAQS, item);
+export const saveDefaultFaq = (item: FAQItem) => saveItem(COLLECTIONS.FAQS, item, true);
 export const saveDefaultFaqs = (items: FAQItem[]) => saveItems(COLLECTIONS.FAQS, items);
 export const deleteDefaultFaq = (id: string) => deleteItem(COLLECTIONS.FAQS, id);
 export const deleteDefaultFaqs = (ids: string[]) => deleteItems(COLLECTIONS.FAQS, ids);

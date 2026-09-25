@@ -1,0 +1,47 @@
+export const zh = {
+  'header.pickConversation': '請先選擇一個對話',
+  'header.libraryPerConversation': '題庫是每組對話各自獨立的',
+  'header.backToList': '回到對話列表',
+  'header.logoHint': '連點三下可顯示／收起預設題庫切換',
+  'header.waitingPartner': '等待對方進入房間',
+  'header.challenge': '考驗',
+  'header.tabChat': '對話',
+  'header.tabAdmin': '後台',
+  'header.online': '線上 {count} 人',
+  'header.chatBackground': '聊天背景',
+  'header.recoveryEmail': '救援 Email',
+  'header.howToUse': '使用說明',
+  'header.signOut': '登出',
+} as const;
+
+export const en: Record<keyof typeof zh, string> = {
+  'header.pickConversation': 'Pick a conversation first',
+  'header.libraryPerConversation': 'Each conversation has its own question library',
+  'header.backToList': 'Back to conversations',
+  'header.logoHint': 'Triple-tap to show or hide the default-library switch',
+  'header.waitingPartner': 'Waiting for the other person to join',
+  'header.challenge': 'Challenge',
+  'header.tabChat': 'Chat',
+  'header.tabAdmin': 'Admin',
+  'header.online': '{count} online',
+  'header.chatBackground': 'Chat background',
+  'header.recoveryEmail': 'Recovery email',
+  'header.howToUse': 'How to use',
+  'header.signOut': 'Sign out',
+};
+
+export const ja: Record<keyof typeof zh, string> = {
+  'header.pickConversation': '先に会話を選んでください',
+  'header.libraryPerConversation': '問題ライブラリは会話ごとに独立しています',
+  'header.backToList': '会話一覧に戻る',
+  'header.logoHint': '3回連続タップで、初期ライブラリの切り替えを表示／非表示',
+  'header.waitingPartner': '相手の入室を待っています',
+  'header.challenge': '出題',
+  'header.tabChat': '会話',
+  'header.tabAdmin': '管理',
+  'header.online': 'オンライン {count} 人',
+  'header.chatBackground': 'チャット背景',
+  'header.recoveryEmail': '復旧用メール',
+  'header.howToUse': '使い方',
+  'header.signOut': 'ログアウト',
+};

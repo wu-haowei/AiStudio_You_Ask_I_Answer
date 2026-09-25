@@ -6,6 +6,7 @@ import {
   updatePassword,
 } from 'firebase/auth';
 import { auth, db, ensureSignedIn } from './firebase';
+import { t } from '../i18n';
 
 /**
  * Name-and-password accounts.
@@ -80,7 +81,7 @@ const emailKey = (email: string): string => email.trim().toLowerCase();
  */
 const friendlyEmailSendError = (err: unknown, fallbackMessage: string): AuthError => {
   if ((err as { code?: string })?.code === 'auth/quota-exceeded') {
-    return new AuthError('今天寄信次數已經達上限了，這是 Firebase 的每日配額限制，請明天再試一次');
+    return new AuthError(t('auth.quotaExceeded'));
   }
   return new AuthError(fallbackMessage);
 };
@@ -91,11 +92,11 @@ const friendlyEmailSendError = (err: unknown, fallbackMessage: string): AuthErro
  */
 export const assertUsableName = (name: string): string => {
   const clean = name.trim();
-  if (!clean) throw new AuthError('請輸入姓名');
-  if (clean.includes('/')) throw new AuthError('姓名不能包含斜線');
-  if (clean === '.' || clean === '..') throw new AuthError('這個姓名不能使用');
-  if (/^__.*__$/.test(clean)) throw new AuthError('這個姓名不能使用');
-  if (new TextEncoder().encode(clean).length > 200) throw new AuthError('姓名太長');
+  if (!clean) throw new AuthError(t('auth.nameRequired'));
+  if (clean.includes('/')) throw new AuthError(t('auth.nameNoSlash'));
+  if (clean === '.' || clean === '..') throw new AuthError(t('auth.nameUnusable'));
+  if (/^__.*__$/.test(clean)) throw new AuthError(t('auth.nameUnusable'));
+  if (new TextEncoder().encode(clean).length > 200) throw new AuthError(t('auth.nameTooLong'));
   return clean;
 };
 
@@ -151,7 +152,7 @@ export const lookupAccount = async (name: string): Promise<AccountRecord> => {
     };
   } catch (err) {
     console.warn('[accounts] lookup failed:', err);
-    throw new AuthError('無法連線，請檢查網路');
+    throw new AuthError(t('auth.offline'));
   }
 };
 
@@ -168,7 +169,7 @@ export const signInWithPassword = async (
   password: string
 ): Promise<AccountRecord> => {
   const clean = assertUsableName(name);
-  if (!password) throw new AuthError('請輸入密碼');
+  if (!password) throw new AuthError(t('auth.passwordRequired'));
 
   const key = accountKey(clean);
   const user = await ensureSignedIn();
@@ -179,7 +180,7 @@ export const signInWithPassword = async (
 
   if (!account.exists) {
     if (password !== DEFAULT_PASSWORD) {
-      throw new AuthError(`這是新帳號，請用預設密碼 ${DEFAULT_PASSWORD} 登入`);
+      throw new AuthError(t('auth.newAccountUseDefault', { password: DEFAULT_PASSWORD }));
     }
 
     /*
@@ -217,7 +218,7 @@ export const signInWithPassword = async (
   } catch (err) {
     console.warn('[accounts] password rejected:', err);
     throw new AuthError(
-      account.exists ? '密碼不正確' : '無法建立帳號，這個名字可能已被使用'
+      account.exists ? t('auth.wrongPassword') : t('auth.cannotCreate')
     );
   }
 
@@ -242,9 +243,9 @@ export const changePassword = async (
 ): Promise<void> => {
   const clean = assertUsableName(name);
   const key = accountKey(clean);
-  if (nextPassword.length < 4) throw new AuthError('新密碼至少 4 個字元');
-  if (nextPassword === DEFAULT_PASSWORD) throw new AuthError('請不要沿用預設密碼');
-  if (nextPassword === currentPassword) throw new AuthError('新密碼不能和目前的一樣');
+  if (nextPassword.length < 4) throw new AuthError(t('auth.newPasswordTooShort'));
+  if (nextPassword === DEFAULT_PASSWORD) throw new AuthError(t('auth.noDefaultPassword'));
+  if (nextPassword === currentPassword) throw new AuthError(t('auth.newPasswordSame'));
 
   const user = await ensureSignedIn();
   const nextHash = await hashPassword(key, nextPassword);
@@ -259,7 +260,7 @@ export const changePassword = async (
     );
   } catch (err) {
     console.warn('[accounts] change password rejected:', err);
-    throw new AuthError('無法變更密碼，請重新登入後再試');
+    throw new AuthError(t('auth.changeFailed'));
   }
 
   // The session carries the old hash; leaving it stale would fail later checks
@@ -352,7 +353,7 @@ export const setRecoveryEmail = async (
   const clean = assertUsableName(name);
   const key = accountKey(clean);
   const trimmedEmail = email.trim();
-  if (!isValidEmail(trimmedEmail)) throw new AuthError('請輸入有效的 Email');
+  if (!isValidEmail(trimmedEmail)) throw new AuthError(t('auth.emailInvalid'));
 
   const priorSnap = await getDoc(doc(db, USERS, key));
   const priorEmail = (priorSnap.data()?.email as string | undefined)?.trim();
@@ -361,7 +362,7 @@ export const setRecoveryEmail = async (
   }
 
   const dupKey = await findAccountKeyUsingEmail(trimmedEmail);
-  if (dupKey && dupKey !== key) throw new AuthError('這個 Email 已經被使用，換一個試試');
+  if (dupKey && dupKey !== key) throw new AuthError(t('auth.emailTaken'));
 
   if (priorEmail) {
     try {
@@ -371,7 +372,7 @@ export const setRecoveryEmail = async (
       await sendSignInLinkToEmail(auth, priorEmail, { url: continueUrl, handleCodeInApp: true });
     } catch (err) {
       console.warn('[accounts] sending reauth link failed:', err);
-      throw friendlyEmailSendError(err, '寄送確認信失敗，請稍後再試');
+      throw friendlyEmailSendError(err, t('auth.confirmSendFailed'));
     }
     return 'reauth-required';
   }
@@ -383,7 +384,7 @@ export const setRecoveryEmail = async (
     await sendSignInLinkToEmail(auth, trimmedEmail, { url: continueUrl, handleCodeInApp: true });
   } catch (err) {
     console.warn('[accounts] sending new-email confirmation failed:', err);
-    throw friendlyEmailSendError(err, '寄送確認信失敗，請稍後再試');
+    throw friendlyEmailSendError(err, t('auth.confirmSendFailed'));
   }
   return 'verification-sent';
 };
@@ -426,16 +427,16 @@ export const isNewEmailConfirmationLink = (url: string): boolean => {
  * account signs in for real.
  */
 export const completeNewEmailConfirmation = async (link: string): Promise<string> => {
-  if (!isNewEmailConfirmationLink(link)) throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+  if (!isNewEmailConfirmationLink(link)) throw new AuthError(t('auth.linkInvalid'));
 
   const pendingEmail = new URL(link).searchParams.get('pendingEmail') || '';
-  if (!pendingEmail) throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+  if (!pendingEmail) throw new AuthError(t('auth.linkInvalid'));
 
   try {
     await signInWithEmailLink(auth, pendingEmail, link);
   } catch (err) {
     console.warn('[accounts] confirming new email failed:', err);
-    throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+    throw new AuthError(t('auth.linkInvalid'));
   }
 
   return pendingEmail;
@@ -504,7 +505,7 @@ const RESET_EMAIL_STORAGE_KEY = 'youaskianswer_reset_email';
  */
 export const requestPasswordReset = async (email: string): Promise<void> => {
   const trimmed = email.trim();
-  if (!isValidEmail(trimmed)) throw new AuthError('請輸入有效的 Email');
+  if (!isValidEmail(trimmed)) throw new AuthError(t('auth.emailInvalid'));
 
   try {
     const continueUrl = `${window.location.origin}${window.location.pathname}?email=${encodeURIComponent(trimmed)}`;
@@ -516,7 +517,7 @@ export const requestPasswordReset = async (email: string): Promise<void> => {
     }
   } catch (err) {
     console.warn('[accounts] password reset request failed:', err);
-    throw friendlyEmailSendError(err, '寄送失敗，請檢查網路後再試');
+    throw friendlyEmailSendError(err, t('auth.resetSendFailed'));
   }
 };
 
@@ -531,9 +532,9 @@ export const requestPasswordReset = async (email: string): Promise<void> => {
 export const requestPasswordResetForName = async (name: string): Promise<void> => {
   const clean = assertUsableName(name);
   const account = await lookupAccount(clean);
-  if (!account.exists) throw new AuthError('查無這個姓名的帳號');
+  if (!account.exists) throw new AuthError(t('auth.noSuchAccount'));
   if (!account.hasRecoveryEmail || !account.email) {
-    throw new AuthError('這個帳號還沒設定救援 Email，請用密碼登入後到設定裡新增');
+    throw new AuthError(t('auth.noRecoveryEmail'));
   }
   await requestPasswordReset(account.email);
 };
@@ -564,18 +565,18 @@ export const isEmailChangeReauthLink = (url: string): boolean => {
  * this account signs in for real.
  */
 export const completeEmailChangeReauth = async (link: string): Promise<string> => {
-  if (!isEmailChangeReauthLink(link)) throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+  if (!isEmailChangeReauthLink(link)) throw new AuthError(t('auth.linkInvalid'));
 
   const params = new URL(link).searchParams;
   const email = params.get('email') || '';
   const pendingEmail = params.get('pendingEmail') || '';
-  if (!email || !pendingEmail) throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+  if (!email || !pendingEmail) throw new AuthError(t('auth.linkInvalid'));
 
   try {
     await signInWithEmailLink(auth, email, link);
   } catch (err) {
     console.warn('[accounts] reauth email-link sign-in failed:', err);
-    throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+    throw new AuthError(t('auth.linkInvalid'));
   }
 
   try {
@@ -585,7 +586,7 @@ export const completeEmailChangeReauth = async (link: string): Promise<string> =
     await sendSignInLinkToEmail(auth, pendingEmail, { url: continueUrl, handleCodeInApp: true });
   } catch (err) {
     console.warn('[accounts] sending change-email confirmation after reauth failed:', err);
-    throw friendlyEmailSendError(err, '身份驗證成功，但寄送新 Email 的確認信失敗，請回到設定裡重新試一次');
+    throw friendlyEmailSendError(err, t('auth.reauthSentButFailed'));
   }
 
   return pendingEmail;
@@ -606,9 +607,9 @@ export const completePasswordReset = async (
   link: string,
   newPassword: string
 ): Promise<AccountRecord> => {
-  if (newPassword.length < 4) throw new AuthError('新密碼至少 4 個字元');
-  if (newPassword === DEFAULT_PASSWORD) throw new AuthError('請不要使用預設密碼');
-  if (!isPasswordResetLink(link)) throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+  if (newPassword.length < 4) throw new AuthError(t('auth.newPasswordTooShort'));
+  if (newPassword === DEFAULT_PASSWORD) throw new AuthError(t('auth.noDefaultPassword'));
+  if (!isPasswordResetLink(link)) throw new AuthError(t('auth.linkInvalid'));
 
   let email = '';
   try {
@@ -624,7 +625,7 @@ export const completePasswordReset = async (
     }
   }
   if (!email) {
-    throw new AuthError('無法確認這個連結是哪個帳號的，請回到原本申請的裝置上開啟');
+    throw new AuthError(t('auth.linkWrongDevice'));
   }
 
   let uid: string;
@@ -635,7 +636,7 @@ export const completePasswordReset = async (
     signedInUser = credential.user;
   } catch (err) {
     console.warn('[accounts] email-link sign-in failed:', err);
-    throw new AuthError('這個連結已經失效或不存在，請重新申請一次');
+    throw new AuthError(t('auth.linkInvalid'));
   }
   try {
     window.localStorage.removeItem(RESET_EMAIL_STORAGE_KEY);
@@ -645,7 +646,7 @@ export const completePasswordReset = async (
 
   const indexSnap = await getDoc(doc(db, EMAILS, emailKey(email)));
   if (!indexSnap.exists()) {
-    throw new AuthError('找不到這個 Email 對應的帳號，請聯絡對方協助處理');
+    throw new AuthError(t('auth.emailAccountMissing'));
   }
   const key = indexSnap.data().key as string;
 

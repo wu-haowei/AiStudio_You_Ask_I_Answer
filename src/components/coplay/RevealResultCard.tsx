@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Award, ListChecks, Reply } from 'lucide-react';
 import { RoomQuestion } from '../../types';
 import { isOtherPick, readPicks } from '../../lib/firebase';
+import { getLang, t, useLang, useT, type Lang } from '../../i18n';
+import { localizedOptions, localizedQuestion } from '../../i18n/content';
 
 /**
  * The reveal message is stored as plain text so rounds written by older builds
@@ -87,8 +89,12 @@ interface OptionRow {
  * The custom "其他" text only survives inside targetAnswerText /
  * initiatorGuessText, and those labels are written in the same order as the
  * stored index list — so zipping the two recovers it.
+ *
+ * Option labels come from the round's own snapshot in the reader's language
+ * (see localizedOptions), not from the answer text: that text was written in
+ * the submitter's language, and every reader should see their own.
  */
-export const buildOptionRows = (question: RoomQuestion): OptionRow[] => {
+export const buildOptionRows = (question: RoomQuestion, lang: Lang): OptionRow[] => {
   const targetPicks = readPicks(question, 'target');
   const guessPicks = readPicks(question, 'initiator');
 
@@ -103,7 +109,8 @@ export const buildOptionRows = (question: RoomQuestion): OptionRow[] => {
   collect(question.targetAnswerText, targetPicks);
   collect(question.initiatorGuessText, guessPicks);
 
-  const rows: OptionRow[] = (question.options || []).map((label, index) => ({ index, label }));
+  const shownOptions = localizedOptions(question.options, question.translations, lang) || [];
+  const rows: OptionRow[] = shownOptions.map((label, index) => ({ index, label }));
 
   /*
    * "其他" is appended only if somebody actually picked it. Which number stands
@@ -112,7 +119,13 @@ export const buildOptionRows = (question: RoomQuestion): OptionRow[] => {
    */
   const otherIndex = [...targetPicks, ...guessPicks].find((idx) => isOtherPick(question, idx));
   if (otherIndex !== undefined) {
-    rows.push({ index: otherIndex, isOther: true, label: customLabels.get(otherIndex) || '其他' });
+    // "其他" is what the submitter's form stored when they typed nothing — a placeholder, not their words.
+    const custom = customLabels.get(otherIndex);
+    rows.push({
+      index: otherIndex,
+      isOther: true,
+      label: custom && custom !== '其他' ? custom : t('reveal.other'),
+    });
   }
 
   return rows.map((row) => {
@@ -179,6 +192,7 @@ interface PickChipProps {
   hasHover: boolean;
 }
 
+// Sub-components below read `t` directly: RevealResultCard subscribes to language changes and re-renders them.
 const PickChip: React.FC<PickChipProps> = ({
   pick,
   tone,
@@ -193,7 +207,7 @@ const PickChip: React.FC<PickChipProps> = ({
     onMouseEnter={() => hasHover && isInteractive && onRequestOpen(true)}
     onMouseLeave={() => hasHover && isInteractive && onRequestOpen(false)}
     aria-expanded={isInteractive ? isActive : undefined}
-    aria-label={isInteractive ? `${pick.label}（查看全部選項）` : undefined}
+    aria-label={isInteractive ? t('reveal.viewAll', { label: pick.label }) : undefined}
     className={`inline-flex max-w-[11rem] items-center gap-1.5 rounded-xl border px-2 py-1 text-left transition-colors sm:max-w-[18rem] ${
       tone.chip
     } ${isInteractive ? 'cursor-pointer hover:bg-white' : 'cursor-default'} ${
@@ -214,16 +228,18 @@ const PickChip: React.FC<PickChipProps> = ({
 
 interface OptionsPanelProps {
   question: RoomQuestion;
+  /** The question text in the reader's language. */
+  questionText: string;
   rows: OptionRow[];
   /** Option index of the chip that was tapped, highlighted in the list. */
   activeIndex?: number;
   tone: Tone;
 }
 
-const OptionsPanel: React.FC<OptionsPanelProps> = ({ question, rows, activeIndex, tone }) => (
+const OptionsPanel: React.FC<OptionsPanelProps> = ({ questionText, rows, activeIndex, tone }) => (
   <>
     <div className="mb-1.5 border-b border-black/10 pb-1.5 text-[10px] leading-snug font-bold break-words opacity-70">
-      {question.question}
+      {questionText}
     </div>
     <ul className="space-y-0.5">
       {rows.map((row) => (
@@ -234,7 +250,7 @@ const OptionsPanel: React.FC<OptionsPanelProps> = ({ question, rows, activeIndex
           }`}
         >
           <span className="mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-md bg-black/10 text-[9px] font-bold">
-            {row.isOther ? '他' : row.index + 1}
+            {row.isOther ? t('reveal.otherShort') : row.index + 1}
           </span>
           <span className="min-w-0 flex-1 break-words">{row.label}</span>
           <span className="flex shrink-0 flex-wrap justify-end gap-1">
@@ -242,14 +258,16 @@ const OptionsPanel: React.FC<OptionsPanelProps> = ({ question, rows, activeIndex
               <span
                 className={`rounded-md border px-1 py-px text-[9px] font-bold ${tone.targetBadge}`}
               >
-                真心話{rows.some((r) => r.targetRank === 2) ? ` ${row.targetRank}` : ''}
+                {t('reveal.honest')}
+                {rows.some((r) => r.targetRank === 2) ? ` ${row.targetRank}` : ''}
               </span>
             )}
             {row.guessRank !== undefined && (
               <span
                 className={`rounded-md border px-1 py-px text-[9px] font-bold ${tone.guessBadge}`}
               >
-                猜測{rows.some((r) => r.guessRank === 2) ? ` ${row.guessRank}` : ''}
+                {t('reveal.guess')}
+                {rows.some((r) => r.guessRank === 2) ? ` ${row.guessRank}` : ''}
               </span>
             )}
           </span>
@@ -300,13 +318,17 @@ const RevealLineRow: React.FC<RevealLineRowProps> = ({
   return (
     <div ref={rowRef} className="relative">
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="shrink-0">{line.label}：</span>
+        <span className="shrink-0">{line.label === '真心話' ? t('reveal.honest') : t('reveal.guess')}：</span>
         {line.picks.map((pick, pickIdx) => {
           const key = `${lineIdx}:${pickIdx}`;
           return (
             <PickChip
               key={key}
-              pick={pick}
+              pick={{
+                ...pick,
+                // The chip names the option the way this reader sees it, not the way it was typed.
+                label: rows.find((r) => r.index === pickedIndexes[pickIdx])?.label ?? pick.label,
+              }}
               tone={tone}
               isActive={activeKey === key}
               isInteractive={canShowOptions}
@@ -318,7 +340,7 @@ const RevealLineRow: React.FC<RevealLineRowProps> = ({
       </div>
 
       {line.note && (
-        <div className="mt-1 text-[11px] font-medium break-words opacity-70">說明：{line.note}</div>
+        <div className="mt-1 text-[11px] font-medium break-words opacity-70">{t('reveal.note', { note: line.note })}</div>
       )}
 
       {isOpen && question && (
@@ -330,6 +352,7 @@ const RevealLineRow: React.FC<RevealLineRowProps> = ({
         >
           <OptionsPanel
             question={question}
+            questionText={localizedQuestion(question.question, question.translations, getLang())}
             rows={rows}
             activeIndex={pickedIndexes[activePickIdx]}
             tone={tone}
@@ -354,6 +377,8 @@ export const RevealResultCard: React.FC<RevealResultCardProps> = ({
   question,
   onReply,
 }) => {
+  const t = useT();
+  const lang = useLang();
   const tone = TONES[isCorrect ? 'correct' : 'wrong'];
   const hasHover = useHasHover();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -361,7 +386,7 @@ export const RevealResultCard: React.FC<RevealResultCardProps> = ({
   const [activeKey, setActiveKey] = useState<string | null>(null);
 
   const lines = useMemo(() => parseRevealText(text), [text]);
-  const rows = useMemo(() => (question ? buildOptionRows(question) : []), [question]);
+  const rows = useMemo(() => (question ? buildOptionRows(question, lang) : []), [question, lang]);
   const targetPicks = useMemo(() => (question ? readPicks(question, 'target') : []), [question]);
   const guessPicks = useMemo(() => (question ? readPicks(question, 'initiator') : []), [question]);
 
@@ -398,12 +423,12 @@ export const RevealResultCard: React.FC<RevealResultCardProps> = ({
       <div className="flex items-center justify-between border-b border-black/10 pb-2">
         <div className="flex items-center gap-2 text-xs font-bold">
           <Award className="h-4 w-4" />
-          <span>揭曉結果</span>
+          <span>{t('reveal.title')}</span>
         </div>
         <button
           type="button"
           onClick={onReply}
-          aria-label="回覆這則結果"
+          aria-label={t('reveal.replyAria')}
           className="cursor-pointer rounded-lg p-1.5 transition-colors hover:bg-black/5"
         >
           <Reply className="h-3.5 w-3.5" />
@@ -413,10 +438,12 @@ export const RevealResultCard: React.FC<RevealResultCardProps> = ({
       <div className="space-y-1.5 pt-1 text-xs font-black leading-relaxed sm:text-sm">
         {lines.map((line, lineIdx) => {
           if (line.picks.length === 0) {
-            // Verdict line, or anything written by an older build.
+            // Verdict line, or anything written by an older build. The verdict is the one
+            // stored line that says the same thing in every language, so it is rebuilt.
+            const verdict = line.raw.startsWith('猜對了') ? 'reveal.correct' : line.raw.startsWith('沒猜中') ? 'reveal.wrong' : null;
             return line.raw.trim() ? (
               <div key={lineIdx} className="whitespace-pre-line">
-                {line.raw}
+                {verdict ? t(verdict) : line.raw}
               </div>
             ) : null;
           }

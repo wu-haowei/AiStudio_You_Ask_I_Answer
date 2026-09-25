@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, ShieldCheck, XCircle } from 'lucide-react';
 import { AuthError, completeEmailChangeReauth } from '../lib/accounts';
+import { useT } from '../i18n';
+import { LanguageSwitcher } from './LanguageSwitcher';
 
 interface EmailChangeReauthViewProps {
   /** The full URL this app was opened with — carries Firebase's oobCode plus this app's own purpose/email params. */
@@ -21,6 +23,7 @@ type Phase = 'working' | 'done' | 'invalid';
  * sign-in — same as the direct (non-reauth) path.
  */
 export const EmailChangeReauthView: React.FC<EmailChangeReauthViewProps> = ({ link, onDone }) => {
+  const t = useT();
   const [phase, setPhase] = useState<Phase>('working');
   const [pendingEmail, setPendingEmail] = useState('');
   const [error, setError] = useState('');
@@ -46,7 +49,7 @@ export const EmailChangeReauthView: React.FC<EmailChangeReauthViewProps> = ({ li
         setPhase('done');
       })
       .catch((err) => {
-        setError(err instanceof AuthError ? err.message : '發生錯誤，請稍後再試');
+        setError(err instanceof AuthError ? err.message : t('common.genericError'));
         setPhase('invalid');
       });
   }, [link]);
@@ -59,8 +62,9 @@ export const EmailChangeReauthView: React.FC<EmailChangeReauthViewProps> = ({ li
         paddingTop: 'max(1rem, env(safe-area-inset-top))',
         paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
       }}
-      className="h-full bg-[#F5E6D3] flex items-center justify-center px-4 font-sans text-[#4A3F35]"
+      className="relative h-full bg-[#F5E6D3] flex items-center justify-center px-4 font-sans text-[#4A3F35]"
     >
+      <LanguageSwitcher className="absolute top-3 right-3" />
       <div className="bg-[#FAF7F2] border border-[#D9C5B2] rounded-3xl p-6 sm:p-8 max-w-sm w-full shadow-lg space-y-6">
         <div className="text-center space-y-3">
           <div className="w-14 h-14 bg-[#A68B6D] text-white rounded-2xl mx-auto flex items-center justify-center">
@@ -79,8 +83,8 @@ export const EmailChangeReauthView: React.FC<EmailChangeReauthViewProps> = ({ li
   if (phase === 'working') {
     return shell(
       <ShieldCheck className="w-7 h-7" />,
-      '確認身份中…',
-      '請稍候',
+      t('reauth.working'),
+      t('common.waitMoment'),
       <div className="h-1.5 rounded-full bg-[#E8DFD3] overflow-hidden">
         <div className="h-full w-1/3 bg-[#8C6D53] animate-pulse" />
       </div>
@@ -90,20 +94,20 @@ export const EmailChangeReauthView: React.FC<EmailChangeReauthViewProps> = ({ li
   if (phase === 'invalid') {
     return shell(
       <XCircle className="w-7 h-7" />,
-      '連結失效了',
+      t('common.linkExpired'),
       error,
       <button type="button" onClick={onDone} className={submit}>
-        回到登入畫面
+        {t('common.backToSignIn')}
       </button>
     );
   }
 
   return shell(
     <CheckCircle2 className="w-7 h-7" />,
-    '身份確認完成',
-    `驗證信已經寄到新的 Email（${pendingEmail}）了，去那邊點連結完成最後一步，下次登入這裡就會換成新的救援 Email。`,
+    t('reauth.done'),
+    t('reauth.doneBody', { email: pendingEmail }),
     <button type="button" onClick={onDone} className={submit}>
-      回到登入畫面
+      {t('common.backToSignIn')}
     </button>
   );
 };

@@ -13,6 +13,7 @@ import {
   type FolderFetchProgress,
 } from '../../lib/googleDrive';
 import { UNFILED_CATEGORY } from '../../types';
+import { useLang, useT } from '../../i18n';
 
 interface AdminJsonImportModalProps {
   isOpen: boolean;
@@ -79,6 +80,8 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
   onToggleAnsweredText,
   showToast,
 }) => {
+  const t = useT();
+  const lang = useLang();
   const [pastedJsonText, setPastedJsonText] = useState('');
   const [isFetchingDrive, setIsFetchingDrive] = useState(false);
   const [driveProgress, setDriveProgress] = useState<FolderFetchProgress | null>(null);
@@ -112,7 +115,11 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
   /** The folder's files in display order, grouped by AI and type. The flat list stays unsorted; only what is shown and read follows this. */
-  const fileGroups = useMemo(() => (driveFolderFiles ? groupAndSortDriveFiles(driveFolderFiles) : []), [driveFolderFiles]);
+  // `lang` is a dependency because the group titles ("General", "Other") are built in the current language.
+  const fileGroups = useMemo(
+    () => (driveFolderFiles ? groupAndSortDriveFiles(driveFolderFiles) : []),
+    [driveFolderFiles, lang]
+  );
 
   /** One pass over every item rather than re-filtering the whole array per category in the dropdown. */
   const categoryCounts = useMemo(() => {
@@ -157,12 +164,12 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
 
   const handleFetchFromDrive = async () => {
     if (!DEFAULT_DRIVE_LINK) {
-      showToast('尚未設定雲端連結', '請先設定 VITE_GOOGLE_API_URL', 'warning');
+      showToast(t('import.noLink'), t('import.setEnv'), 'warning');
       return;
     }
     const target = resolveDriveInput(DEFAULT_DRIVE_LINK);
     if (!target) {
-      showToast('看不出這是 Google Drive 的連結或 ID', '', 'error');
+      showToast(t('import.badLink'), '', 'error');
       return;
     }
 
@@ -172,7 +179,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
       if (target.type === 'folder') {
         const files = (await listDriveFolderFiles(target.id)).filter(isJsonDriveFile);
         if (files.length === 0) {
-          showToast('這個資料夾裡沒有 JSON 檔案', '', 'warning');
+          showToast(t('import.noJson'), '', 'warning');
           return;
         }
         setDriveFolderFiles(files);
@@ -187,20 +194,20 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
           parsed = JSON.parse(text);
         } catch {
           setPastedJsonText(text);
-          showToast('已讀取雲端檔案', '內容看起來不是合法的 JSON，請在下方文字框檢查內容', 'warning');
+          showToast(t('import.readOk'), t('import.notJson'), 'warning');
           return;
         }
         if (!Array.isArray(parsed)) {
           setPastedJsonText(text);
-          showToast('已讀取雲端檔案', '內容不是題目陣列，請在下方文字框檢查內容', 'warning');
+          showToast(t('import.readOk'), t('import.notArray'), 'warning');
           return;
         }
         setDriveFolderFiles(null);
         loadDriveItems(parsed);
-        showToast('已讀取雲端檔案', `共讀到 ${parsed.length} 筆資料，請在下方勾選要匯入的題目`, 'success');
+        showToast(t('import.readOk'), t('import.readCount', { count: parsed.length }), 'success');
       }
     } catch (err: any) {
-      showToast('讀取雲端檔案失敗', err?.message, 'error');
+      showToast(t('import.readFailed'), err?.message, 'error');
     } finally {
       setIsFetchingDrive(false);
       setDriveProgress(null);
@@ -257,26 +264,33 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
       const { items, loadedFiles, failedFiles, quotaExceeded } = await fetchDriveFiles(files, setDriveProgress);
       if (quotaExceeded) {
         showToast(
-          'Google Drive 用量已達上限',
+          t('import.driveQuota'),
           loadedFiles.length > 0
-            ? `讀到 ${loadedFiles.length} 個檔案後開始被限流，先中止其餘 ${failedFiles.length} 個，請稍後再試一次補齊`
-            : '請求被連續拒絕，這批用量大概是被之前的測試用完了，過幾分鐘再試一次',
+            ? t('import.quotaPartial', { loaded: loadedFiles.length, failed: failedFiles.length })
+            : t('import.quotaNone'),
           'warning'
         );
         if (loadedFiles.length === 0) return;
       } else if (loadedFiles.length === 0) {
-        showToast('沒有讀到任何題目', failedFiles.length > 0 ? `選取的檔案都讀取失敗：${failedFiles.join('、')}` : '', 'warning');
+        showToast(t('import.nothingRead'), failedFiles.length > 0 ? t('import.allFilesFailed', { files: failedFiles.join(t('backup.sep')) }) : '', 'warning');
         return;
       } else {
         showToast(
-          '已讀取所選檔案',
-          `讀取 ${loadedFiles.length} 個檔案，共 ${items.length} 筆資料${failedFiles.length > 0 ? `，${failedFiles.length} 個檔案讀取失敗：${failedFiles.join('、')}` : ''}，請在下方勾選要匯入的題目`,
+          t('import.filesRead'),
+          t('import.filesReadDetail', {
+            files: loadedFiles.length,
+            items: items.length,
+            failedNote:
+              failedFiles.length > 0
+                ? t('import.failedNote', { count: failedFiles.length, files: failedFiles.join(t('backup.sep')) })
+                : '',
+          }),
           failedFiles.length > 0 ? 'warning' : 'success'
         );
       }
       loadDriveItems(items);
     } catch (err: any) {
-      showToast('讀取雲端檔案失敗', err?.message, 'error');
+      showToast(t('import.readFailed'), err?.message, 'error');
     } finally {
       setIsFetchingDrive(false);
       setDriveProgress(null);
@@ -322,7 +336,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
       setDriveFolderFiles(null);
       setSelectedFileIds(new Set());
     } catch (err: any) {
-      showToast('匯入失敗', err?.message || '請檢查題目格式是否完整', 'error');
+      showToast(t('import.failed'), err?.message || t('import.checkFormat'), 'error');
     }
   };
 
@@ -332,7 +346,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
         <div className="px-6 py-5 bg-[#F5EFE6] border-b border-[#E8DFD3] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Upload className="w-5 h-5 text-[#8C6D53]" />
-            <h3 className="text-base font-bold text-[#3A2E2B]">匯入題目</h3>
+            <h3 className="text-base font-bold text-[#3A2E2B]">{t('import.title')}</h3>
           </div>
           <button
             onClick={onClose}
@@ -347,17 +361,17 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-[#3A2E2B] flex items-center gap-1.5">
                 <Sparkles className="w-4 h-4 text-[#8C6D53]" />
-                JSON 範本（options 數量不限）
+                {t('import.template')}
               </span>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
                     navigator.clipboard.writeText(sampleJsonTemplate);
-                    showToast('已複製範本', '', 'success');
+                    showToast(t('import.copied'), '', 'success');
                   }}
                   className="px-2.5 py-1 text-xs rounded-lg bg-white border border-[#D0BFAC] text-[#4A3F35] font-semibold hover:bg-[#FAF7F2] cursor-pointer"
                 >
-                  複製範本
+                  {t('import.copyTemplate')}
                 </button>
                 <button
                   onClick={() => {
@@ -368,11 +382,11 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                     a.download = 'qa_template.json';
                     a.click();
                     URL.revokeObjectURL(url);
-                    showToast('已下載範本檔', '', 'info');
+                    showToast(t('import.downloaded'), '', 'info');
                   }}
                   className="px-2.5 py-1 text-xs rounded-lg bg-[#8C6D53] text-white font-semibold hover:bg-[#785C44] cursor-pointer"
                 >
-                  下載範本
+                  {t('import.downloadTemplate')}
                 </button>
               </div>
             </div>
@@ -385,14 +399,14 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
           <div className="bg-[#F5EFE6] p-4 rounded-2xl border border-[#E8DFD3] space-y-2">
             <span className="text-xs font-bold text-[#3A2E2B] flex items-center gap-1.5">
               <Cloud className="w-4 h-4 text-[#8C6D53]" />
-              從 Google 雲端匯入
+              {t('import.fromCloud')}
             </span>
             <p className="text-[11px] text-[#7A6C65]">
-              讀取雲端資料夾或單一檔案；資料夾會先列出裡面的 JSON 檔案，可自己勾選要讀哪幾個
+              {t('import.cloudHint')}
             </p>
             {IS_MOCK_DRIVE && (
               <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
-                ⚠️ 測試模式：目前讀的是本機範本資料，不會連線 Google
+                {t('import.mockBanner')}
               </p>
             )}
             <button
@@ -402,7 +416,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
               className="px-3 py-2 text-xs rounded-lg bg-[#8C6D53] text-white font-semibold hover:bg-[#785C44] cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5 w-fit"
             >
               {isFetchingDrive ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Cloud className="w-3.5 h-3.5" />}
-              <span>從雲端讀取</span>
+              <span>{t('import.readFromCloud')}</span>
             </button>
 
             {isFetchingDrive && driveProgress && driveProgress.total > 0 && (
@@ -414,8 +428,8 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                   />
                 </div>
                 <p className="text-[11px] text-[#7A6C65]">
-                  已處理 {driveProgress.completed} / {driveProgress.total} 個檔案（
-                  {Math.round((driveProgress.completed / driveProgress.total) * 100)}%）
+                  {t('import.progress', { done: driveProgress.completed, total: driveProgress.total, percent: Math.round((driveProgress.completed / driveProgress.total) * 100) })}
+                  
                 </p>
               </div>
             )}
@@ -423,7 +437,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
             {driveFolderFiles && !driveItems && (
               <div className="space-y-2 pt-1">
                 <p className="text-[11px] text-[#7A6C65]">
-                  資料夾裡有 {driveFolderFiles.length} 個 JSON 檔案，勾選要讀取的檔案：
+                  {t('import.folderHas', { count: driveFolderFiles.length })}
                 </p>
                 <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-white border border-[#E8DFD3]">
                   <label className="flex items-center gap-2 text-xs font-semibold text-[#4A3F35] cursor-pointer select-none">
@@ -433,9 +447,9 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                       onChange={toggleSelectAllFiles}
                       className="w-4 h-4 accent-[#8C6D53] cursor-pointer"
                     />
-                    <span>全選</span>
+                    <span>{t('import.selectAll')}</span>
                   </label>
-                  <span className="text-xs text-[#7A6C65]">已選 {selectedFileIds.size} 個檔案</span>
+                  <span className="text-xs text-[#7A6C65]">{t('import.filesSelected', { count: selectedFileIds.size })}</span>
                 </div>
 
                 <div className="max-h-64 overflow-y-auto rounded-xl border border-[#E8DFD3] bg-white">
@@ -455,7 +469,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                               if (el) el.indeterminate = selectedInGroup > 0 && !allInGroup;
                             }}
                             onChange={() => toggleGroup(group.files)}
-                            aria-label={`勾選整組 ${group.label}`}
+                            aria-label={t('import.tickGroup', { label: group.label })}
                             className="w-4 h-4 accent-[#8C6D53] cursor-pointer shrink-0"
                           />
                           <button
@@ -504,7 +518,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                   className="milk-tea-btn-primary px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed w-fit"
                 >
                   {isFetchingDrive ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                  <span>讀取所選檔案（{selectedFileIds.size}）</span>
+                  <span>{t('import.readSelected', { count: selectedFileIds.size })}</span>
                 </button>
               </div>
             )}
@@ -517,7 +531,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                     onClick={() => setDriveItems(null)}
                     className="text-[11px] text-[#8C6D53] font-semibold hover:underline cursor-pointer"
                   >
-                    ← 重新選擇檔案
+                    {t('import.reselect')}
                   </button>
                 )}
                 <select
@@ -528,7 +542,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                   }}
                   className="w-full px-3 py-2 text-xs rounded-xl milk-tea-input"
                 >
-                  <option value={ALL_CATEGORIES}>全部分類 ({driveItems.length})</option>
+                  <option value={ALL_CATEGORIES}>{t('import.allCategories', { count: driveItems.length })}</option>
                   {categories.map((c) => (
                     <option key={c} value={c}>
                       {c} ({categoryCounts.get(c)})
@@ -544,7 +558,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                       onChange={toggleSelectAllVisible}
                       className="w-4 h-4 accent-[#8C6D53] cursor-pointer"
                     />
-                    <span>全選目前 {visibleIndexes.length} 題</span>
+                    <span>{t('import.selectVisible', { count: visibleIndexes.length })}</span>
                   </label>
                   {categoryFilter !== ALL_CATEGORIES && (
                     <button
@@ -552,10 +566,10 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                       onClick={toggleSelectAllItems}
                       className="text-xs font-semibold text-[#8C6D53] hover:underline cursor-pointer"
                     >
-                      {allItemsSelected ? '取消全選（全部分類）' : `全選全部 ${driveItems.length} 題`}
+                      {allItemsSelected ? t('import.deselectAllCats') : t('import.selectAllCats', { count: driveItems.length })}
                     </button>
                   )}
-                  <span className="text-xs text-[#7A6C65]">已選 {selectedIndexes.size} 題</span>
+                  <span className="text-xs text-[#7A6C65]">{t('import.itemsSelected', { count: selectedIndexes.size })}</span>
                 </div>
 
                 <div
@@ -584,7 +598,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                           />
                           <span className="line-clamp-2 min-w-0 flex-1 leading-snug">
                             <span className="text-[10px] font-semibold text-[#8C6D53]">[{categoryOf(item)}] </span>
-                            <span className="text-[#3A2E2B]">{questionText || '（沒有題目文字）'}</span>
+                            <span className="text-[#3A2E2B]">{questionText || t('import.noText')}</span>
                           </span>
                           <button
                             type="button"
@@ -596,7 +610,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                               e.stopPropagation();
                               setPreviewIndex((prev) => (prev === idx ? null : idx));
                             }}
-                            title="檢視選項"
+                            title={t('import.viewOptions')}
                             className={`shrink-0 p-1 rounded-md cursor-pointer ${
                               previewIndex === idx
                                 ? 'bg-[#E3D9CB] text-[#5C4B3A]'
@@ -615,14 +629,14 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                               onToggleAnsweredText(questionText, !isAnswered);
                             }}
                             disabled={!questionText || !onToggleAnsweredText}
-                            title={isAnswered ? '標記為還沒答過' : '標記為答過了'}
+                            title={isAnswered ? t('import.markNotAnswered') : t('import.markAnswered')}
                             className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-md inline-flex items-center gap-0.5 whitespace-nowrap cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
                               isAnswered
                                 ? 'bg-[#EFE7DC] text-[#7A6C65] hover:bg-[#E3D9CB]'
                                 : 'bg-white border border-[#D0BFAC] text-[#7A6C65] hover:bg-[#F5EFE6]'
                             }`}
                           >
-                            <CheckCheck className="w-3 h-3" /> {isAnswered ? '答過了' : '標記答過'}
+                            <CheckCheck className="w-3 h-3" /> {isAnswered ? t('import.answered') : t('import.markAnsweredShort')}
                           </button>
                         </label>
                       );
@@ -637,7 +651,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                         <span className="text-[10px] font-semibold text-[#8C6D53]">
                           [{categoryOf(driveItems[previewIndex])}]{' '}
                         </span>
-                        {questionTextOf(driveItems[previewIndex]) || '（沒有題目文字）'}
+                        {questionTextOf(driveItems[previewIndex]) || t('import.noText')}
                       </p>
                       <button
                         type="button"
@@ -671,7 +685,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                   className="milk-tea-btn-primary px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed w-fit"
                 >
                   <Check className="w-3.5 h-3.5" />
-                  <span>匯入所選（{selectedIndexes.size}）</span>
+                  <span>{t('import.importSelected', { count: selectedIndexes.size })}</span>
                 </button>
               </div>
             )}
@@ -679,9 +693,9 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="block text-xs font-bold text-[#3A2E2B]">貼上 JSON 內容</label>
+              <label className="block text-xs font-bold text-[#3A2E2B]">{t('import.pasteLabel')}</label>
               <label className="px-2.5 py-1 text-xs rounded-lg bg-white border border-[#D0BFAC] text-[#4A3F35] font-semibold hover:bg-[#FAF7F2] cursor-pointer">
-                選擇檔案
+                {t('import.chooseFile')}
                 <input
                   type="file"
                   accept=".json"
@@ -691,7 +705,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                     if (!file) return;
                     const reader = new FileReader();
                     reader.onload = (event) => setPastedJsonText((event.target?.result as string) || '');
-                    reader.onerror = () => showToast('讀取檔案失敗', undefined, 'error');
+                    reader.onerror = () => showToast(t('import.fileReadFailed'), undefined, 'error');
                     reader.readAsText(file);
                   }}
                 />
@@ -701,7 +715,7 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
               rows={6}
               value={pastedJsonText}
               onChange={(e) => setPastedJsonText(e.target.value)}
-              placeholder="貼上 JSON 陣列內容..."
+              placeholder={t('import.pastePlaceholder')}
               className="w-full px-4 py-3 text-xs font-mono rounded-xl milk-tea-input resize-none"
             />
           </div>
@@ -712,13 +726,13 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
               onClick={onClose}
               className="px-4 py-2 rounded-xl text-xs font-semibold text-[#7A6C65] hover:bg-[#F2EBE1] cursor-pointer"
             >
-              取消
+              {t('common.cancel')}
             </button>
             <button
               type="button"
               onClick={async () => {
                 if (!pastedJsonText.trim()) {
-                  showToast('請先貼上 JSON 內容', '', 'warning');
+                  showToast(t('import.pasteFirst'), '', 'warning');
                   return;
                 }
                 try {
@@ -726,13 +740,13 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                   onClose();
                   setPastedJsonText('');
                 } catch (err: any) {
-                  showToast('匯入失敗', err?.message || '請檢查 JSON 格式是否完整', 'error');
+                  showToast(t('import.failed'), err?.message || t('import.checkJson'), 'error');
                 }
               }}
               className="milk-tea-btn-primary px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
             >
               <Check className="w-4 h-4" />
-              <span>匯入</span>
+              <span>{t('import.doImport')}</span>
             </button>
           </div>
         </div>

@@ -1,5 +1,33 @@
+import type { Lang } from './i18n';
+
+/**
+ * One language's version of a question. Every field is optional: a question
+ * can be translated but keep its original options, and whatever is missing
+ * simply falls back to the original text (see i18n/content.ts).
+ */
+export interface QuestionTranslation {
+  question?: string;
+  /** Admin-only context, like the original — never reaches a round. */
+  answer?: string;
+  /**
+   * Must line up one-to-one with the original options: answers are stored as
+   * option *positions*, so a translation with a different count or order
+   * would make two players see different questions under the same numbers.
+   * A list that does not match in length is ignored, not trusted.
+   */
+  options?: string[];
+}
+
+export type QuestionTranslations = Partial<Record<Lang, QuestionTranslation>>;
+
 export interface FAQItem {
   id: string;
+  /**
+   * The original wording, in whatever language it was written or imported in —
+   * imports are stored as-is and never translated. This is also what played-
+   * question tracking matches on, so it must not change when a translation is
+   * added.
+   */
   question: string;
   /** Context or intent behind the question — shown in the admin list only. */
   answer: string;
@@ -14,6 +42,8 @@ export interface FAQItem {
    */
   /** Two or more choices. Absent means the question has no preset options. */
   options?: string[];
+  /** Other-language versions, shown to players whose language has one. Absent means original only. */
+  translations?: QuestionTranslations;
   updatedAt: string;
 }
 
@@ -106,6 +136,13 @@ export interface RoomQuestion {
   options: string[];
   /** Library question this was drawn from, when it came from the preset list. */
   sourceFaqId?: string;
+  /**
+   * Snapshot of the library question's translations at the moment it was
+   * published, for the same reason `question` and `options` are snapshots:
+   * the round has to read the same later even if the library entry is edited
+   * or deleted. Each player is shown their own language from this.
+   */
+  translations?: QuestionTranslations;
 
   /**
    * Picks are ordered by preference, at most two. Rounds created before
@@ -180,6 +217,13 @@ export interface RoomMessage {
   /** ISO timestamp — the ordering key for the Firestore messages subcollection. */
   createdAt: string;
   type?: 'chat' | 'question' | 'system' | 'invite';
+  /**
+   * For system notices: a message key and its parameters, so each person reads
+   * the notice in their own language instead of the one it was written in.
+   * `text` still carries the Chinese rendering, which is what older builds show
+   * and what rooms written before this field existed contain.
+   */
+  i18n?: { key: string; params?: Record<string, string | number> };
   questionData?: FAQItem;
   gameQuestion?: RoomQuestion;
 }

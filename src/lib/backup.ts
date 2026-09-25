@@ -11,6 +11,7 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import { DATA_SCHEMA_VERSION } from '../types';
+import { t } from '../i18n';
 
 /**
  * Backup and restore for one conversation.
@@ -104,7 +105,7 @@ export const createRoomBackup = async (
   onProgress?: (count: number) => void
 ): Promise<BackupFile> => {
   const roomSnap = await getDoc(doc(db, 'rooms', roomId));
-  if (!roomSnap.exists()) throw new Error('找不到這個對話');
+  if (!roomSnap.exists()) throw new Error(t('backup.notFound'));
 
   const roomData = roomSnap.data();
   const entry: BackupDocument = {
@@ -180,10 +181,10 @@ export const roomIdsIn = (backup: BackupFile): string[] =>
 /** Human-readable "this file belongs to …", for the mismatch message. */
 export const describeBackup = (backup: BackupFile): string => {
   if (backup.participants && backup.participants.length > 0) {
-    return backup.participants.join(' 與 ');
+    return backup.participants.join(t('backup.and'));
   }
   const ids = roomIdsIn(backup);
-  return ids.length > 0 ? ids.join('、') : '未知的對話';
+  return ids.length > 0 ? ids.join(t('backup.sep')) : t('backup.unknownRoom');
 };
 
 /** True when the file carries data for this room — the restore guard. */
@@ -204,7 +205,7 @@ export const restoreRoomBackup = async (
 ): Promise<RestoreReport> => {
   const entry = (backup.collections?.rooms || {})[roomId];
   if (!entry) {
-    throw new Error(`這份備份是【${describeBackup(backup)}】的資料，不是目前這一組對話`);
+    throw new Error(t('backup.wrongRoom', { name: describeBackup(backup) }));
   }
 
   const report: RestoreReport = { written: 0, failed: 0 };
@@ -240,7 +241,7 @@ export const restoreRoomBackup = async (
 export const parseBackupFile = (raw: string): BackupFile => {
   const parsed = JSON.parse(raw);
   if (!parsed || typeof parsed !== 'object' || !parsed.collections) {
-    throw new Error('這不是備份檔（缺少 collections 欄位）');
+    throw new Error(t('backup.notBackup'));
   }
   return parsed as BackupFile;
 };

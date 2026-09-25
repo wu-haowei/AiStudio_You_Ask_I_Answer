@@ -1,3 +1,5 @@
+import { t } from '../i18n';
+
 const env = (import.meta as any).env || {};
 
 /** Google Cloud API key, restricted to the Drive API. Required only for cloud import. */
@@ -73,7 +75,7 @@ const MOCK_FILE_CONTENTS: Record<string, unknown[]> = {
 
 const requireApiKey = () => {
   if (!DRIVE_API_KEY) {
-    throw new Error('尚未設定 Google API 金鑰（VITE_GOOGLE_API_KEY），無法從雲端讀取');
+    throw new Error(t('drive.noKey'));
   }
 };
 
@@ -140,7 +142,7 @@ const QUOTA_REASONS = new Set(['rateLimitExceeded', 'userRateLimitExceeded', 'da
 const handleDriveError = async (res: Response, notFoundMsg: string, forbiddenMsg: string): Promise<void> => {
   if (res.status === 404) throw new Error(notFoundMsg);
   if (res.status === 503 || res.status === 429) {
-    throw new DriveQuotaError('Google Drive API 用量已達上限，請稍後再試');
+    throw new DriveQuotaError(t('drive.quota'));
   }
   if (res.status === 403) {
     const reason = await res
@@ -149,11 +151,11 @@ const handleDriveError = async (res: Response, notFoundMsg: string, forbiddenMsg
       .then((body) => body?.error?.errors?.[0]?.reason as string | undefined)
       .catch(() => undefined);
     if (reason && QUOTA_REASONS.has(reason)) {
-      throw new DriveQuotaError('Google Drive API 用量已達上限，請稍後再試');
+      throw new DriveQuotaError(t('drive.quota'));
     }
     throw new Error(forbiddenMsg);
   }
-  if (!res.ok) throw new Error(`讀取失敗（HTTP ${res.status}）`);
+  if (!res.ok) throw new Error(t('drive.readFailed', { status: res.status }));
 };
 
 /** The most Drive allows per page — a folder of a few hundred files is still a single request. */
@@ -190,9 +192,9 @@ export const listDriveFolderFiles = async (folderId: string): Promise<DriveFileE
     try {
       res = await fetch(pageToken ? `${baseUrl}&pageToken=${encodeURIComponent(pageToken)}` : baseUrl);
     } catch {
-      throw new Error('連線失敗，請檢查網路連線');
+      throw new Error(t('drive.offline'));
     }
-    await handleDriveError(res, '找不到這個資料夾，請確認連結正確', '沒有權限讀取，請確認資料夾的共用設定是「知道連結的人皆可查看」');
+    await handleDriveError(res, t('drive.folderNotFound'), t('drive.folderForbidden'));
 
     const data = await res.json();
     files.push(...((data.files || []) as DriveFileEntry[]));
@@ -203,13 +205,8 @@ export const listDriveFolderFiles = async (folderId: string): Promise<DriveFileE
     }
   }
 
-  throw new Error('資料夾裡的檔案太多，無法完整列出');
+  throw new Error(t('drive.tooMany'));
 };
-
-/** Label for a file with no type in its name, so it still reads as a group of its own. */
-export const UNTYPED_LABEL = '一般';
-/** Label for the group of names that do not follow the naming convention. */
-export const UNPARSED_LABEL = '其他';
 
 export interface DriveFileGroup {
   /** Stable key for React and for comparing groups — lowercased, so "Claude" and "claude" are one group. */
@@ -284,13 +281,13 @@ export const groupAndSortDriveFiles = (files: DriveFileEntry[]): DriveFileGroup[
     if (last && last.key === key) {
       last.files.push(file);
     } else {
-      groups.push({ key, label: `${info.ai} · ${info.type || UNTYPED_LABEL}`, files: [file] });
+      groups.push({ key, label: `${info.ai} · ${info.type || t('drive.untyped')}`, files: [file] });
     }
   }
 
   if (unparsed.length > 0) {
     unparsed.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
-    groups.push({ key: '\u0000unparsed', label: UNPARSED_LABEL, files: unparsed });
+    groups.push({ key: '\u0000unparsed', label: t('drive.unparsed'), files: unparsed });
   }
 
   return groups;
@@ -318,9 +315,9 @@ export const fetchGoogleDriveFileTextById = async (fileId: string): Promise<stri
   try {
     res = await fetch(url);
   } catch {
-    throw new Error('連線失敗，請檢查網路連線');
+    throw new Error(t('drive.offline'));
   }
-  await handleDriveError(res, '找不到這個檔案，請確認連結正確', '沒有權限讀取，請確認檔案的共用設定是「知道連結的人皆可查看」');
+  await handleDriveError(res, t('drive.fileNotFound'), t('drive.fileForbidden'));
 
   return res.text();
 };
@@ -329,7 +326,7 @@ export const fetchGoogleDriveFileTextById = async (fileId: string): Promise<stri
 export const fetchGoogleDriveFileText = async (linkOrId: string): Promise<string> => {
   const fileId = extractDriveFileId(linkOrId);
   if (!fileId) {
-    throw new Error('看不出這是 Google Drive 的檔案連結或 ID');
+    throw new Error(t('drive.badLink'));
   }
   return fetchGoogleDriveFileTextById(fileId);
 };

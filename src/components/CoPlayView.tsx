@@ -50,6 +50,13 @@ import { sameName } from '../lib/pairing';
 import { CoPlayInviteModals } from './coplay/CoPlayInviteModals';
 import { CoPlayActiveQuestionModal } from './coplay/CoPlayActiveQuestionModal';
 import { RevealResultCard } from './coplay/RevealResultCard';
+import {
+  displayCategory,
+  localizedQuestion,
+  translationsForRound,
+  CUSTOM_CATEGORY_LABEL,
+} from '../i18n/content';
+import { isMessageKey, tIn, useLang, useT, type MessageKey } from '../i18n';
 
 interface CoPlayViewProps {
   /** The pair room this conversation belongs to. */
@@ -84,9 +91,6 @@ interface CoPlayViewProps {
 }
 
 const TAB_SESSION_ID_KEY = 'milktea_coplay_tab_id';
-
-/** Category label written on questions created with the custom option. */
-const CUSTOM_CATEGORY_LABEL = '自訂';
 
 /** Author label used for reveal report cards in the message stream. */
 const REVEAL_AUTHOR = '揭曉結果';
@@ -168,6 +172,22 @@ const buildMessage = (
   };
 };
 
+/** Stored on system notices as their author; shown to people as t('sys.author'). */
+const SYSTEM_AUTHOR = '系統';
+
+/**
+ * A system notice stored as a message key plus parameters, so each player
+ * reads it in their own language rather than the one it was written in. The
+ * Chinese rendering still goes in `text`: that is what older builds show, and
+ * what every room written before this existed already contains.
+ */
+const systemNotice = (key: MessageKey, params: Record<string, string | number>) => ({
+  author: SYSTEM_AUTHOR,
+  text: tIn('zh-TW', key, params),
+  type: 'system' as const,
+  i18n: { key, params },
+});
+
 export const CoPlayView: React.FC<CoPlayViewProps> = ({
   roomId,
   partnerName,
@@ -177,6 +197,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   background,
   isActive = true,
 }) => {
+  const t = useT();
+  const lang = useLang();
   // The signed-in name is the player's identity throughout the room.
   const { name: passcode } = useIdentity();
   const displayName = passcode;
@@ -190,7 +212,18 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
    * Declared up here because the notification effects below name the partner.
    */
   const partnerPasscode = partnerName.trim();
-  const partnerDisplayName = partnerPasscode || '對方';
+  const partnerDisplayName = partnerPasscode || t('common.otherPerson');
+
+  /** A message as this reader should see it: system notices are built from their code, in their language. */
+  const messageText = (m: RoomMessage): string => {
+    if (!m.i18n || !isMessageKey(m.i18n.key)) return m.text;
+    const params = { ...m.i18n.params };
+    // A new-question notice quotes the question, so it is shown in this reader's language too.
+    if (m.gameQuestion && typeof params.question === 'string') {
+      params.question = localizedQuestion(m.gameQuestion.question, m.gameQuestion.translations, lang);
+    }
+    return t(m.i18n.key, params);
+  };
 
   // Tab-unique session id so two windows on one device are separate players
   const [tabSessionId] = useState<string>(() => {
@@ -331,7 +364,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   const handleJumpToMessage = (id: string) => {
     const node = messageRefs.current[id];
     if (!node) {
-      showToast('找不到原訊息', '可能已不在載入範圍內', 'info');
+      showToast(t('coplay.origNotFound'), t('coplay.origNotFoundHint'), 'info');
       return;
     }
     node.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -524,7 +557,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     if (invite && invite.status === 'pending' && invite.sender !== passcode) {
       if (prevInviteIdRef.current !== invite.id) {
         prevInviteIdRef.current = invite.id;
-        showToast('收到考驗邀請', `來自 ${getNameByPasscode(invite.sender)}`, 'info');
+        showToast(t('coplay.gotInvite'), t('coplay.fromName', { name: getNameByPasscode(invite.sender) }), 'info');
       }
     }
 
@@ -533,7 +566,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       if (prevInviteAcceptedRef.current !== invite.id) {
         prevInviteAcceptedRef.current = invite.id;
         setIsQuestionModalDismissed(false);
-        showToast('對方已接受挑戰', '請設定考驗題目', 'success');
+        showToast(t('coplay.challengeAccepted'), t('coplay.setQuestion'), 'success');
       }
     }
 
@@ -545,7 +578,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
         setIsAnswerModalDismissed(false);
         setSelectedOptIndexes([]);
         setAnswerExplanation('');
-        showToast('收到考驗題目', `來自 ${getNameByPasscode(activeQ.initiator)}`, 'info');
+        showToast(t('coplay.gotQuestion'), t('coplay.fromName', { name: getNameByPasscode(activeQ.initiator) }), 'info');
       }
     }
   }, [currentRoom, passcode]);
@@ -571,7 +604,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       cancelledByMeRef.current = null;
       return;
     }
-    showToast('這一輪取消了', `${partnerDisplayName} 取消了這次考驗`, 'info');
+    showToast(t('coplay.roundCancelled'), t('coplay.roundCancelledBy', { name: partnerDisplayName }), 'info');
   }, [currentRoom, partnerDisplayName]);
 
   /*
@@ -585,7 +618,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     if (!invite || invite.status !== 'declined' || invite.sender !== passcode) return;
     if (prevDeclinedRef.current === invite.id) return;
     prevDeclinedRef.current = invite.id;
-    showToast('對方婉拒了考驗', `${partnerDisplayName} 這次不想玩`, 'info');
+    showToast(t('coplay.declinedToast'), t('coplay.declinedBody', { name: partnerDisplayName }), 'info');
     setGameInvitation(currentRoom.code, null);
   }, [currentRoom, passcode, partnerDisplayName]);
 
@@ -725,7 +758,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       setMyPlayerId(thisPlayerId);
     } catch (err: any) {
       console.error('Failed to enter room:', err);
-      showToast('連線失敗', err?.message || '請檢查網路連線', 'error');
+      showToast(t('coplay.connectFailed'), err?.message || t('app.checkConnection'), 'error');
     }
   };
 
@@ -764,7 +797,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
     } catch (err: any) {
       setChatMessageText(text);
       setReplyTarget(quoted);
-      showToast('發送失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('coplay.sendFailed'), err?.message || t('app.tryLater'), 'error');
     }
   };
 
@@ -791,18 +824,18 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
 
       if (!claimed.ok) {
         const reasons: Record<string, string> = {
-          invited: `${partnerDisplayName} 剛好也發起了考驗，先回應那一則吧`,
-          playing: '這一輪還沒結束，先完成或取消它',
-          missing: '找不到這個對話',
-          error: '請稍後再試',
+          invited: t('coplay.reasonInvited', { name: partnerDisplayName }),
+          playing: t('coplay.reasonPlaying'),
+          missing: t('backup.notFound'),
+          error: t('app.tryLater'),
         };
-        showToast('現在無法發起考驗', reasons[claimed.reason || 'error'], 'warning');
+        showToast(t('coplay.cantStart'), reasons[claimed.reason || 'error'], 'warning');
         return;
       }
 
-      showToast('已發出邀請', `等待 ${partnerDisplayName} 回應`, 'info');
+      showToast(t('coplay.inviteSent'), t('convo.waitingFor', { name: partnerDisplayName }), 'info');
     } catch (err: any) {
-      showToast('邀請失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('convo.inviteFailed'), err?.message || t('app.tryLater'), 'error');
     }
   };
 
@@ -821,9 +854,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
           currentRoom.code,
           buildMessage({
             id: `msg-res-${Date.now()}`,
-            author: '系統',
-            text: `${getNameByPasscode(passcode)} 接受了考驗，等待出題。`,
-            type: 'system',
+            ...systemNotice('sys.accepted', { name: getNameByPasscode(passcode) }),
           })
         );
       }
@@ -833,12 +864,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
         setIsQuestionModalDismissed(false);
         setSelectedOptIndexes([]);
         setAnswerExplanation('');
-        showToast('已接受挑戰', `等待 ${partnerDisplayName} 出題`, 'success');
+        showToast(t('coplay.acceptedToast'), t('coplay.waitingForQuestion', { name: partnerDisplayName }), 'success');
       } else {
-        showToast('已婉拒挑戰', undefined, 'info');
+        showToast(t('coplay.declinedChallenge'), undefined, 'info');
       }
     } catch (err: any) {
-      showToast('回應失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('coplay.respondFailed'), err?.message || t('app.tryLater'), 'error');
     }
   };
 
@@ -861,15 +892,13 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
         currentRoom.code,
         buildMessage({
           id: `msg-cancel-inv-${Date.now()}`,
-          author: '系統',
-          text: `${getNameByPasscode(passcode)} 取消了這一輪考驗。`,
-          type: 'system',
+          ...systemNotice('sys.cancelledRound', { name: getNameByPasscode(passcode) }),
         })
       );
-      showToast('已取消邀請', undefined, 'info');
+      showToast(t('coplay.inviteCancelled'), undefined, 'info');
     } catch (err: any) {
       cancelledByMeRef.current = null;
-      showToast('取消失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('coplay.cancelFailed'), err?.message || t('app.tryLater'), 'error');
     }
   };
 
@@ -882,15 +911,13 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
         currentRoom.code,
         buildMessage({
           id: `msg-cancel-q-${Date.now()}`,
-          author: '系統',
-          text: `${getNameByPasscode(passcode)} 取消了這題。`,
-          type: 'system',
+          ...systemNotice('sys.cancelledQuestion', { name: getNameByPasscode(passcode) }),
         })
       );
       setIsAnswerModalDismissed(false);
-      showToast('已取消題目', undefined, 'info');
+      showToast(t('coplay.questionCancelled'), undefined, 'info');
     } catch (err: any) {
-      showToast('取消失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('coplay.cancelFailed'), err?.message || t('app.tryLater'), 'error');
     }
   };
 
@@ -1004,10 +1031,10 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
      * instead and hand back a repeat.
      */
     if (isWholeLibrary) {
-      showToast('題目都玩過一輪了', '可以到後台復原作答紀錄', 'info');
+      showToast(t('coplay.allPlayed'), t('coplay.allPlayedHint'), 'info');
     } else if (currentRoom) {
       resetPlayedCategory(currentRoom.code, cat);
-      showToast('題目已全部玩過一輪', `「${cat}」重新開始`, 'info');
+      showToast(t('coplay.categoryPlayed'), t('coplay.categoryRestart', { category: displayCategory(cat) }), 'info');
     }
     return pool[Math.floor(Math.random() * pool.length)];
   };
@@ -1049,7 +1076,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   const libraryLabel = useMemo(() => {
     if (questionCategory !== RANDOM_CATEGORY_KEY) return questionCategory;
     const drawn = faqs.find((f) => f.id === sourceFaqId)?.category;
-    return drawn ? `全部類別 · ${drawn}` : '全部類別';
+    return drawn ? `${t('coplay.allCategories')} · ${drawn}` : t('coplay.allCategories');
   }, [questionCategory, faqs, sourceFaqId]);
 
   const handleCategoryChange = (cat: string) => {
@@ -1065,37 +1092,37 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
 
   const handleSelectPresetFAQ = (f: FAQItem) => {
     applyFaqToForm(f);
-    showToast('已套用題目', f.question, 'info');
+    showToast(t('coplay.applied'), localizedQuestion(f.question, f.translations, lang), 'info');
   };
 
   // Draw another unplayed question from the current category
   const handleRandomizeQuestionByCategory = () => {
     if (faqs.length === 0) {
-      showToast('題庫沒有題目', undefined, 'warning');
+      showToast(t('coplay.emptyLibrary'), undefined, 'warning');
       return;
     }
 
     const faq = pickUnplayedFaq(drawScopeFor(questionCategory));
     if (!faq) {
-      showToast('題庫沒有題目', undefined, 'warning');
+      showToast(t('coplay.emptyLibrary'), undefined, 'warning');
       return;
     }
 
     applyFaqToForm(faq);
-    showToast('已換題', faq.category || '自訂題庫', 'success');
+    showToast(t('coplay.swapped'), faq.category ? displayCategory(faq.category) : t('coplay.customLibrary'), 'success');
   };
 
   // Submit Chosen Question & Options
   const handlePublishGameQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentRoom || !questionText.trim()) {
-      showToast('請輸入題目', undefined, 'warning');
+      showToast(t('coplay.enterQuestion'), undefined, 'warning');
       return;
     }
 
     const options = questionOptions.map((o) => o.trim()).filter(Boolean);
     if (options.length < MIN_OPTIONS) {
-      showToast(`選項至少要 ${MIN_OPTIONS} 個`, undefined, 'warning');
+      showToast(t('coplay.minOptions', { min: MIN_OPTIONS }), undefined, 'warning');
       return;
     }
 
@@ -1116,6 +1143,18 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
           ? usedFaq?.category || CUSTOM_CATEGORY_LABEL
           : questionCategory;
 
+    /*
+     * The library's translations travel with the round — but only while the
+     * question is still the library's own. Hand-editing the wording or the
+     * options means they no longer describe what is being asked, so they are
+     * left off rather than shown against the wrong text.
+     */
+    const sameOptions =
+      !!usedFaq?.options &&
+      usedFaq.options.length === options.length &&
+      usedFaq.options.every((option, i) => option.trim() === options[i]);
+    const translations = faqId && sameOptions ? translationsForRound(usedFaq?.translations) : undefined;
+
     const gameQuestion: RoomQuestion = {
       id: `gq-${Date.now()}`,
       v: DATA_SCHEMA_VERSION,
@@ -1125,6 +1164,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       category: finalCategory,
       options,
       ...(faqId ? { sourceFaqId: faqId } : {}),
+      ...(translations ? { translations } : {}),
       createdAt: new Date().toISOString(),
     };
 
@@ -1149,9 +1189,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
         currentRoom.code,
         buildMessage({
           id: `msg-gq-${Date.now()}`,
-          author: '系統',
-          text: `新題目：${gameQuestion.question}\n等待 ${partnerDisplayName} 作答…`,
-          type: 'system',
+          ...systemNotice('sys.newQuestion', { question: gameQuestion.question, name: partnerDisplayName }),
           gameQuestion,
         })
       );
@@ -1162,9 +1200,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       setSelectedOptIndexes([]);
       setAnswerExplanation('');
       scrollToBottom();
-      showToast('題目已發布', finalCategory, 'success');
+      showToast(t('coplay.published'), displayCategory(finalCategory), 'success');
     } catch (err: any) {
-      showToast('發布失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('coplay.publishFailed'), err?.message || t('app.tryLater'), 'error');
     }
   };
 
@@ -1176,7 +1214,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
    */
   const handleSubmitOption = async (q: RoomQuestion) => {
     if (selectedOptIndexes.length === 0) {
-      showToast('請先選擇選項', undefined, 'warning');
+      showToast(t('coplay.pickFirst'), undefined, 'warning');
       return;
     }
     if (!currentRoom) return;
@@ -1240,12 +1278,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
       }
 
       showToast(
-        isTargetSubmitting ? '真心話已送出' : '猜測已送出',
-        isTargetSubmitting ? '等待對方猜測' : '等待對方作答',
+        isTargetSubmitting ? t('coplay.honestSent') : t('coplay.guessSent'),
+        isTargetSubmitting ? t('coplay.waitingGuess') : t('coplay.waitingAnswer'),
         'success'
       );
     } catch (err: any) {
-      showToast('作答失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('coplay.answerFailed'), err?.message || t('app.tryLater'), 'error');
     } finally {
       setIsSubmittingOpt(false);
     }
@@ -1296,9 +1334,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
 
   /** Shared by the in-card button and the phone header button. */
   const inviteHint = !hasPartner
-    ? '等待對方進入房間'
+    ? t('header.waitingPartner')
     : isRoundActive
-      ? '這一輪還沒結束，先完成或取消它'
+      ? t('coplay.reasonPlaying')
       : undefined;
 
   const showQuestionModal =
@@ -1408,7 +1446,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-xs text-emerald-900 font-bold shrink-0 shadow-2xs mb-2">
           <span className="flex items-center gap-2">
             <Clock className="w-4 h-4 animate-spin text-emerald-600" />
-            已接受挑戰，等待【{partnerDisplayName}】出題…
+            {t('coplay.acceptedWaiting', { name: partnerDisplayName })}
           </span>
         </div>
       )}
@@ -1418,7 +1456,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
         <div className="p-3 bg-amber-50 border border-amber-300 rounded-2xl flex items-center justify-between text-xs text-amber-900 font-bold shrink-0 shadow-2xs animate-fade-in mb-2">
           <span className="flex items-center gap-2 truncate pr-2">
             <Sparkles className="w-4 h-4 text-amber-600 shrink-0 animate-pulse" />
-            <span className="truncate">【{partnerDisplayName}】已接受挑戰，請出題</span>
+            <span className="truncate">{t('coplay.partnerAccepted', { name: partnerDisplayName })}</span>
           </span>
           <div className="flex items-center gap-2 shrink-0">
             <button
@@ -1429,14 +1467,14 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
               }}
               className="px-3 py-1.5 rounded-xl bg-[#A68B6D] hover:bg-[#8E7256] text-white text-xs font-bold transition-colors cursor-pointer shadow-2xs"
             >
-              出題
+              {t('coplay.ask')}
             </button>
             <button
               type="button"
               onClick={handleCancelInvite}
               className="px-2 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-colors cursor-pointer"
             >
-              取消
+              {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -1448,7 +1486,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
           <div className="flex items-center gap-2 truncate pr-2">
             <Target className="w-4 h-4 text-amber-600 shrink-0 animate-pulse" />
             <span className="truncate">
-              作答中 [{activeQ.category}]：{activeQ.question}
+              {t('coplay.answering', { category: displayCategory(activeQ.category), question: localizedQuestion(activeQ.question, activeQ.translations, lang) })}
             </span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -1457,14 +1495,14 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
               onClick={() => setIsAnswerModalDismissed(false)}
               className="px-3 py-1.5 rounded-xl bg-[#A68B6D] hover:bg-[#8E7256] text-white text-xs font-bold transition-colors cursor-pointer shadow-2xs"
             >
-              開啟作答
+              {t('coplay.openAnswer')}
             </button>
             <button
               type="button"
               onClick={handleCancelActiveQuestion}
               className="px-2 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-colors cursor-pointer"
             >
-              取消
+              {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -1521,11 +1559,11 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
               <MessageSquare className="w-4 h-4 text-[#A68B6D]" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-[#4A3F35]">對話</h3>
+              <h3 className="text-sm font-bold text-[#4A3F35]">{t('header.tabChat')}</h3>
               <p className="text-[10px] text-[#7A6C5E]">
                 {isLoadingHistory
-                  ? '載入中…'
-                  : `${visibleMessages.length} 則訊息 ‧ 3 小時內 ${recentRoundCount} 題`}
+                  ? t('convo.loading')
+                  : t('coplay.stats', { messages: visibleMessages.length, rounds: recentRoundCount })}
               </p>
             </div>
           </div>
@@ -1538,7 +1576,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
             className="px-3 py-2 rounded-xl bg-[#E8D8C4] hover:bg-[#D9C5B2] disabled:opacity-40 disabled:cursor-not-allowed text-[#4A3F35] text-xs font-bold flex items-center gap-1 transition-colors shrink-0"
           >
             <PlusCircle className="w-3.5 h-3.5" />
-            <span>發起考驗</span>
+            <span>{t('coplay.startChallenge')}</span>
           </button>
         </div>
 
@@ -1559,7 +1597,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
               className="pointer-events-auto px-4 py-2 rounded-full bg-[#A68B6D] text-white text-xs font-bold shadow-lg flex items-center gap-2 hover:bg-[#8E7256] transition-colors border border-white/20 cursor-pointer"
             >
               <ArrowDown className="w-4 h-4" />
-              <span>有新訊息</span>
+              <span>{t('coplay.newMessages')}</span>
             </button>
           </div>
         )}
@@ -1571,8 +1609,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
          */}
         <div className="sm:hidden shrink-0 flex justify-center pb-1.5 mb-1 border-b border-[#D9C5B2]/60 text-[10px] text-[#7A6C5E]">
           {isLoadingHistory
-            ? '載入中…'
-            : `${visibleMessages.length} 則訊息 ‧ 3 小時內 ${recentRoundCount} 題`}
+            ? t('convo.loading')
+            : t('coplay.stats', { messages: visibleMessages.length, rounds: recentRoundCount })}
         </div>
 
         {/* Embedded Dialogue Stream */}
@@ -1592,7 +1630,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
               {isLoadingMore ? (
                 <span className="inline-flex items-center gap-1.5 text-[11px] text-[#7A6C5E]">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  載入更早訊息…
+                  {t('coplay.loadingEarlier')}
                 </span>
               ) : hasMoreHistory ? (
                 <button
@@ -1601,10 +1639,10 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
                   className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#E8D8C4]/70 hover:bg-[#E8D8C4] text-[11px] font-semibold text-[#5C4B3A] transition-colors cursor-pointer"
                 >
                   <ChevronUp className="w-3.5 h-3.5" />
-                  載入更早訊息
+                  {t('coplay.loadEarlier')}
                 </button>
               ) : (
-                <span className="text-[11px] text-[#A69684]">已是最早的訊息</span>
+                <span className="text-[11px] text-[#A69684]">{t('coplay.atEarliest')}</span>
               )}
             </div>
           )}
@@ -1612,12 +1650,12 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
           {!currentRoom || isLoadingHistory ? (
             <div className="flex items-center justify-center h-full text-xs text-[#7A6C5E] gap-2">
               <RefreshCw className="w-4 h-4 animate-spin text-[#A68B6D]" />
-              <span>載入對話中…</span>
+              <span>{t('coplay.loadingChat')}</span>
             </div>
           ) : visibleMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full gap-1 text-xs text-[#7A6C5E]">
-              <span>還沒有任何對話</span>
-              {!hasPartner && <span className="text-[11px]">等待對方輸入姓名進入</span>}
+              <span>{t('coplay.noMessages')}</span>
+              {!hasPartner && <span className="text-[11px]">{t('coplay.waitingForName')}</span>}
             </div>
           ) : (
             visibleMessages.map((m, idx) => {
@@ -1632,7 +1670,8 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
 
               // Issue 2 Requirement: Result Report Cards in Dialogue Stream
               if (isResultReport) {
-                const isCorrect = m.text.includes('猜對了');
+                // The round itself knows; the text is the fallback for reveals written before it was attached.
+                const isCorrect = m.gameQuestion?.isCorrect ?? m.text.includes('猜對了');
                 return (
                   <div
                     key={messageKey}
@@ -1670,7 +1709,14 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
                 >
                   <div className="flex items-center gap-1.5 mb-1 text-[10px] text-[#7A6C5E]">
                     <span className="font-bold text-[#4A3F35]">
-                      {m.author === passcode ? displayName : m.author === partnerPasscode ? partnerDisplayName : m.author} {isMe && '(你)'}
+                      {isSystem
+                        ? t('sys.author')
+                        : m.author === passcode
+                          ? displayName
+                          : m.author === partnerPasscode
+                            ? partnerDisplayName
+                            : m.author}{' '}
+                      {isMe && t('coplay.you')}
                     </span>
                     <span>• {m.timestamp}</span>
                   </div>
@@ -1705,14 +1751,14 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
                           <span className="block text-[11px] truncate">{m.replyTo.text}</span>
                         </button>
                       )}
-                      <span className="whitespace-pre-line">{m.text}</span>
+                      <span className="whitespace-pre-line">{messageText(m)}</span>
                     </div>
 
                     {!isSystem && (
                       <button
                         type="button"
                         onClick={() => handleStartReply(m)}
-                        aria-label="回覆這則訊息"
+                        aria-label={t('coplay.replyMessage')}
                         className="shrink-0 p-1.5 rounded-lg text-[#A68B6D] hover:bg-[#E8D8C4]/60 transition-all cursor-pointer opacity-60 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
                       >
                         <Reply className="w-3.5 h-3.5" />
@@ -1733,14 +1779,14 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
               <Reply className="w-3.5 h-3.5 text-[#A68B6D] shrink-0" />
               <div className="min-w-0 flex-1">
                 <div className="text-[10px] font-bold text-[#4A3F35] truncate">
-                  回覆 {replyTarget.author}
+                  {t('coplay.replyingTo', { name: replyTarget.author })}
                 </div>
                 <div className="text-[11px] text-[#7A6C5E] truncate">{replyTarget.text}</div>
               </div>
               <button
                 type="button"
                 onClick={() => setReplyTarget(null)}
-                aria-label="取消回覆"
+                aria-label={t('coplay.cancelReply')}
                 className="shrink-0 p-1 rounded-lg text-[#7A6C5E] hover:bg-[#E8D8C4] transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
@@ -1754,7 +1800,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
               type="text"
               value={chatMessageText}
               onChange={(e) => setChatMessageText(e.target.value)}
-              placeholder={replyTarget ? `回覆 ${replyTarget.author}…` : '輸入訊息…'}
+              placeholder={replyTarget ? t('coplay.replyPlaceholder', { name: replyTarget.author }) : t('coplay.messagePlaceholder')}
               onKeyDown={(e) => {
                 if (e.key === 'Escape' && replyTarget) setReplyTarget(null);
               }}
@@ -1765,11 +1811,11 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
             <button
               type="submit"
               disabled={!chatMessageText.trim()}
-              aria-label="發送"
+              aria-label={t('coplay.send')}
               className="milk-tea-btn-primary px-4 sm:px-5 py-3 rounded-2xl text-xs font-bold inline-flex items-center gap-1.5 shadow-xs shrink-0 disabled:opacity-40"
             >
               <Send className="w-4 h-4" />
-              <span className="hidden sm:inline">發送</span>
+              <span className="hidden sm:inline">{t('coplay.send')}</span>
             </button>
           </form>
         </div>

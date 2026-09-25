@@ -8,6 +8,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { t } from '../i18n';
 
 /**
  * Moves the old single-room data into a pair room.
@@ -81,7 +82,7 @@ export const hasLegacyRoom = async (): Promise<boolean> => {
 
 export const migrateLegacyRoom = async (targetRoomId: string): Promise<MigrationReport> => {
   if (!targetRoomId || targetRoomId === LEGACY_ROOM) {
-    throw new Error('目標房間不正確');
+    throw new Error(t('lib.badRoom'));
   }
 
   const report: MigrationReport = { messages: 0, rounds: 0, faqs: 0, playedFaqIds: 0 };

@@ -7,6 +7,7 @@ import {
   renderCrop,
   type CropTransform,
 } from '../lib/preferences';
+import { useT } from '../i18n';
 
 interface BackgroundCropEditorProps {
   file: File;
@@ -43,6 +44,7 @@ export const BackgroundCropEditor: React.FC<BackgroundCropEditorProps> = ({
   fade,
   onFadeChange,
 }) => {
+  const t = useT();
   const [objectUrl, setObjectUrl] = useState('');
   /** Natural size of the source, needed to know how far it can be panned. */
   const [natural, setNatural] = useState({ width: 0, height: 0 });
@@ -141,7 +143,7 @@ export const BackgroundCropEditor: React.FC<BackgroundCropEditorProps> = ({
       setFailure(
         err instanceof BackgroundError
           ? { message: err.message, detail: err.detail }
-          : { message: '套用失敗', detail: String((err as Error)?.message || err) }
+          : { message: t('crop.applyFailed'), detail: String((err as Error)?.message || err) }
       );
     } finally {
       setIsApplying(false);
@@ -153,13 +155,13 @@ export const BackgroundCropEditor: React.FC<BackgroundCropEditorProps> = ({
       <div className="bg-[#FAF7F2] border border-[#D9C5B2] rounded-3xl p-5 sm:p-6 max-w-sm w-full shadow-2xl space-y-3">
         <div className="flex items-start justify-between">
           <div>
-            <h3 className="text-base font-bold text-[#4A3F35]">調整背景位置</h3>
-            <p className="text-xs text-[#7A6C5E] mt-0.5">拖曳移動，縮放調整大小</p>
+            <h3 className="text-base font-bold text-[#4A3F35]">{t('crop.title')}</h3>
+            <p className="text-xs text-[#7A6C5E] mt-0.5">{t('crop.subtitle')}</p>
           </div>
           <button
             type="button"
             onClick={onCancel}
-            aria-label="取消"
+            aria-label={t('common.cancel')}
             className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -179,7 +181,7 @@ export const BackgroundCropEditor: React.FC<BackgroundCropEditorProps> = ({
           {objectUrl && (
             <img
               src={objectUrl}
-              alt="背景預覽"
+              alt={t('bgset.previewAlt')}
               draggable={false}
               onLoad={(e) => {
                 const img = e.currentTarget;
@@ -201,16 +203,16 @@ export const BackgroundCropEditor: React.FC<BackgroundCropEditorProps> = ({
 
           <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#FAF7F2]/90 text-[11px] font-semibold text-[#4A3F35]">
             <Move className="w-3.5 h-3.5" />
-            拖曳調整
+            {t('crop.dragHint')}
           </span>
         </div>
 
-        <p className="text-[11px] text-[#A69684] text-center">框內就是對話區會顯示的範圍</p>
+        <p className="text-[11px] text-[#A69684] text-center">{t('crop.frameHint')}</p>
 
         <div className="space-y-2">
           <div className="flex items-center gap-3">
             <label htmlFor="crop-zoom" className="text-xs text-[#7A6C5E] min-w-[2.5rem]">
-              縮放
+              {t('crop.zoom')}
             </label>
             <input
               id="crop-zoom"
@@ -229,7 +231,7 @@ export const BackgroundCropEditor: React.FC<BackgroundCropEditorProps> = ({
 
           <div className="flex items-center gap-3">
             <label htmlFor="crop-fade" className="text-xs text-[#7A6C5E] min-w-[2.5rem]">
-              變淡
+              {t('crop.fade')}
             </label>
             <input
               id="crop-fade"
@@ -254,7 +256,7 @@ export const BackgroundCropEditor: React.FC<BackgroundCropEditorProps> = ({
             disabled={isApplying}
             className="px-4 py-3 rounded-2xl text-xs font-bold text-[#7A6C5E] bg-[#F2EBE1] hover:bg-[#E8D8C4] transition-colors cursor-pointer disabled:opacity-50"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -263,7 +265,7 @@ export const BackgroundCropEditor: React.FC<BackgroundCropEditorProps> = ({
             className="flex-1 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold inline-flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
           >
             <Check className="w-4 h-4" />
-            {isApplying ? '處理中…' : '套用背景'}
+            {isApplying ? t('common.processing') : t('crop.apply')}
           </button>
         </div>
 
@@ -281,7 +283,7 @@ export const BackgroundCropEditor: React.FC<BackgroundCropEditorProps> = ({
           </div>
         ) : (
           <p className="text-[11px] text-[#A69684] leading-relaxed">
-            只有框內範圍會被壓縮上傳，所以再大的原圖都能用。
+            {t('crop.footer')}
           </p>
         )}
       </div>

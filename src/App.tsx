@@ -34,6 +34,7 @@ import {
   syncVerifiedEmail,
 } from './lib/accounts';
 import { useIdentity } from './lib/identity';
+import { isLang, setLang, useT } from './i18n';
 import { clearPresence } from './lib/pairing';
 import {
   DEFAULT_PREFERENCES,
@@ -63,6 +64,7 @@ const ONBOARDING_SEEN_KEY = 'milktea_qa_onboarding_seen_v1';
 const EMPTY_QUESTION_TEXTS = new Set<string>();
 
 export default function App() {
+  const t = useT();
   const { name: userName, isSignedIn, signIn, signOut } = useIdentity();
   const [activeTab, setActiveTab] = useState<ActiveTab>('co_play');
 
@@ -210,7 +212,7 @@ export default function App() {
   useEffect(() => {
     const wasUpdated = checkAndMigrateStorageVersion();
     if (wasUpdated) {
-      showToast(`已自動升級至最新版本 (v${CURRENT_APP_VERSION})`, undefined, 'info');
+      showToast(t('app.upgraded', { version: CURRENT_APP_VERSION }), undefined, 'info');
     }
 
     (async () => {
@@ -342,7 +344,20 @@ export default function App() {
       setPreferences(DEFAULT_PREFERENCES);
       return;
     }
-    return subscribeToPreferences(userName, setPreferences);
+    /*
+     * The saved language is applied once, from the first snapshot after
+     * signing in, and never again from later ones. That is what lets it follow
+     * a name to a new device, without a change made on another device flipping
+     * this screen's language halfway through a conversation.
+     */
+    let isFirstSnapshot = true;
+    return subscribeToPreferences(userName, (prefs) => {
+      setPreferences(prefs);
+      if (isFirstSnapshot) {
+        isFirstSnapshot = false;
+        if (isLang(prefs.language)) setLang(prefs.language);
+      }
+    });
   }, [userName]);
 
   const handleSavePreferences = async (patch: Partial<UserPreferences>) => {
@@ -350,7 +365,7 @@ export default function App() {
     try {
       await savePreferences(userName, patch);
     } catch {
-      showToast('設定儲存失敗', '請檢查網路連線', 'error');
+      showToast(t('app.prefsSaveFailed'), t('app.checkConnection'), 'error');
     }
   };
 
@@ -391,8 +406,8 @@ export default function App() {
     else setLibraryTarget('room');
 
     showToast(
-      next ? '預設題庫已解鎖' : '預設題庫已收起',
-      next ? '後台管理標題下方多了一個切換' : undefined,
+      next ? t('app.defaultsUnlocked') : t('app.defaultsHidden'),
+      next ? t('app.defaultsUnlockedHint') : undefined,
       'info'
     );
   };
@@ -417,7 +432,7 @@ export default function App() {
       if (!(await hasValidSession(userName))) {
         leaveRoom();
         signOut();
-        showToast('請重新登入', '這台裝置的登入狀態已失效', 'info');
+        showToast(t('app.signInAgain'), t('app.sessionExpired'), 'info');
       }
     })();
   }, [access, isSignedIn, userName]);
@@ -454,7 +469,7 @@ export default function App() {
 
   /* Question library CRUD — always scoped to the open pair room. */
   const requireRoom = () => {
-    if (!activeRoom) throw new Error('請先選擇一個對話');
+    if (!activeRoom) throw new Error(t('header.pickConversation'));
     return activeRoom.id;
   };
 
@@ -544,7 +559,7 @@ export default function App() {
 
     await forgetPlayedFaqIds(roomId, ids);
     setPlayedFaqIds(new Set());
-    showToast('已刪除答過的題目', `共 ${ids.length} 題`, 'success');
+    showToast(t('app.deletedAnswered'), t('app.questionCount', { count: ids.length }), 'success');
   };
 
   /**
@@ -577,7 +592,7 @@ export default function App() {
       }
     } catch (err: any) {
       console.error('Toggle answered failed:', err);
-      showToast('標記失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('app.markFailed'), err?.message || t('app.tryLater'), 'error');
     }
   };
 
@@ -603,7 +618,7 @@ export default function App() {
       });
     } catch (err: any) {
       console.error('Toggle answered text failed:', err);
-      showToast('標記失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('app.markFailed'), err?.message || t('app.tryLater'), 'error');
     }
   };
 
@@ -624,7 +639,7 @@ export default function App() {
       ids.forEach((id) => next.delete(id));
       return next;
     });
-    showToast('已復原', `${ids.length} 題可以再抽到了`, 'success');
+    showToast(t('app.restored'), t('app.restoredCount', { count: ids.length }), 'success');
   };
 
   const handleExportData = () => {
@@ -645,7 +660,7 @@ export default function App() {
     a.download = `qa_backup_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast('已匯出題目備份檔', undefined, 'success');
+    showToast(t('app.exported'), undefined, 'success');
   };
 
   /** Shared by the JSON import and the logo shortcut. */
@@ -676,7 +691,7 @@ export default function App() {
     }
 
     if (toWrite.length === 0) {
-      showToast('沒有新題目', '這些題目都已經在題庫裡了', 'info');
+      showToast(t('app.noNewQuestions'), t('app.noNewQuestionsHint'), 'info');
       return;
     }
 
@@ -684,8 +699,8 @@ export default function App() {
     else await saveRoomFaqs(roomId, toWrite);
 
     showToast(
-      '已匯入題目',
-      `共新增或更新 ${toWrite.length} 題${isEditingDefaults ? '（預設題庫）' : ''}`,
+      t('app.imported'),
+      t('app.importedCount', { count: toWrite.length }) + (isEditingDefaults ? t('app.importedDefaultsSuffix') : ''),
       'success'
     );
   };
@@ -713,11 +728,11 @@ export default function App() {
         importedItems = parsed.faqs;
       }
 
-      if (importedItems.length === 0) throw new Error('未發現有效的題目列表');
+      if (importedItems.length === 0) throw new Error(t('app.importNoQuestions'));
       await importQuestions(importedItems);
     } catch (err: any) {
       console.error('Import parse error:', err);
-      throw new Error(err.message || '解析 JSON 題目檔失敗');
+      throw new Error(err.message || t('app.importParseFailed'));
     }
   };
 
@@ -727,7 +742,7 @@ export default function App() {
    */
   const handleMigrateLegacy = async () => {
     if (!activeRoom) {
-      showToast('請先選擇一個對話', undefined, 'warning');
+      showToast(t('header.pickConversation'), undefined, 'warning');
       return;
     }
 
@@ -735,14 +750,18 @@ export default function App() {
       const report = await migrateLegacyRoom(activeRoom.id);
       const faqCount = await importLegacyFaqs(activeRoom.id);
       showToast(
-        '舊資料已搬移',
-        `對話 ${report.messages} 筆、出題 ${report.rounds} 筆、題目 ${report.faqs + faqCount} 題` +
-          `、已玩過 ${report.playedFaqIds} 題`,
+        t('app.migrated'),
+        t('app.migratedDetail', {
+          messages: report.messages,
+          rounds: report.rounds,
+          faqs: report.faqs + faqCount,
+          played: report.playedFaqIds,
+        }),
         'success'
       );
     } catch (err: any) {
       console.error('Legacy migration failed:', err);
-      showToast('搬移失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('app.migrateFailed'), err?.message || t('app.tryLater'), 'error');
     }
   };
 
@@ -765,7 +784,7 @@ export default function App() {
     const defaults = await loadDefaultFaqs();
     setDefaultFaqs(defaults);
     if (defaults.length === 0) {
-      showToast('預設題庫是空的', '沒有東西可以還原，這組的題庫原封不動', 'warning');
+      showToast(t('app.defaultsEmpty'), t('app.defaultsEmptyHint'), 'warning');
       return;
     }
 
@@ -774,8 +793,8 @@ export default function App() {
     setPlayedFaqIds(new Set());
 
     showToast(
-      '已還原成預設題庫',
-      `刪除 ${removed} 題，寫入 ${defaults.length} 題`,
+      t('app.restoredDefaults'),
+      t('app.restoredDefaultsDetail', { removed, written: defaults.length }),
       'success'
     );
   };
@@ -821,7 +840,7 @@ export default function App() {
   if (access === 'checking') {
     return (
       <div className="h-full bg-[#F5E6D3] flex items-center justify-center text-sm text-[#7A6C5E]">
-        連線中…
+        {t('app.connecting')}
       </div>
     );
   }
@@ -829,8 +848,8 @@ export default function App() {
   if (access === 'offline') {
     return (
       <div className="h-full bg-[#F5E6D3] flex flex-col items-center justify-center gap-2 p-6 text-center">
-        <p className="text-sm font-bold text-[#4A3F35]">無法連線</p>
-        <p className="text-xs text-[#7A6C5E]">請檢查網路後重新整理頁面</p>
+        <p className="text-sm font-bold text-[#4A3F35]">{t('app.offlineTitle')}</p>
+        <p className="text-xs text-[#7A6C5E]">{t('app.offlineHint')}</p>
       </div>
     );
   }
@@ -867,6 +886,7 @@ export default function App() {
         onOpenBackgroundSettings={() => setIsBackgroundModalOpen(true)}
         onOpenEmailSettings={() => setIsEmailModalOpen(true)}
         onOpenOnboarding={() => setIsOnboardingOpen(true)}
+        onChangeLanguage={(language) => handleSavePreferences({ language })}
         onToggleDefaultLibrary={handleToggleDefaultLibrary}
         onSignOut={handleSignOut}
         showToast={showToast}

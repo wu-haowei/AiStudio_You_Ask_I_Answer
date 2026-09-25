@@ -1,5 +1,6 @@
 import { doc, onSnapshot, setDoc, deleteField } from 'firebase/firestore';
 import { db } from './firebase';
+import { isLang, t, type Lang } from '../i18n';
 
 /**
  * Per-person display preferences, keyed by the name used to sign in.
@@ -13,6 +14,12 @@ export interface UserPreferences {
   chatBackground: string;
   /** How much the background is washed out, 0–100. Higher means easier to read. */
   backgroundFade: number;
+  /**
+   * Interface language, saved so the same name gets the same one on any device.
+   * Absent until the person has picked one — the device's own choice stands
+   * until then, rather than being overwritten by a default.
+   */
+  language?: Lang;
 }
 
 export const DEFAULT_PREFERENCES: UserPreferences = {
@@ -55,6 +62,7 @@ export const subscribeToPreferences = (
           typeof data.backgroundFade === 'number'
             ? data.backgroundFade
             : DEFAULT_PREFERENCES.backgroundFade,
+        language: isLang(data.language) ? data.language : undefined,
       });
     },
     (err) => console.warn('[firestore] preferences snapshot error:', err)
@@ -171,10 +179,14 @@ const loadDrawable = async (
       return { source: img, width: img.naturalWidth, height: img.naturalHeight, via: '<img>' };
     } catch (imgError) {
       throw new BackgroundError(
-        '這張圖無法解碼',
-        `檔案 ${file.name || '(未命名)'}・${file.type || '未知格式'}・${describeBytes(file.size)}。` +
-          `瀏覽器兩種解碼方式都失敗了（${String(bitmapError)} / ${String(imgError)}）。` +
-          '手機拍的超大照片可能因記憶體不足而失敗，可先用相簿的編輯功能裁切後再試。'
+        t('bg.decodeFailed'),
+        t('bg.decodeDetail', {
+          name: file.name || t('bg.unnamed'),
+          type: file.type || t('bg.unknownType'),
+          size: describeBytes(file.size),
+          a: String(bitmapError),
+          b: String(imgError),
+        })
       );
     } finally {
       URL.revokeObjectURL(url);
@@ -201,7 +213,7 @@ export const renderCrop = async (
   canvas.height = CROP_HEIGHT;
   const ctx = canvas.getContext('2d');
   if (!ctx) {
-    throw new BackgroundError('瀏覽器不支援圖片處理', '無法取得 canvas 2d context。');
+    throw new BackgroundError(t('bg.noCanvas'), t('bg.noCanvasDetail'));
   }
 
   // "cover": scale so the shorter side fills the frame, then apply the zoom
@@ -217,8 +229,8 @@ export const renderCrop = async (
     ctx.drawImage(source, left, top, drawWidth, drawHeight);
   } catch (err) {
     throw new BackgroundError(
-      '繪製圖片時失敗',
-      `原圖 ${width}×${height}・${describeBytes(file.size)}・解碼方式 ${via}。${String(err)}`
+      t('bg.drawFailed'),
+      t('bg.drawDetail', { w: width, h: height, size: describeBytes(file.size), via, err: String(err) })
     );
   } finally {
     (source as ImageBitmap).close?.();
@@ -234,8 +246,8 @@ export const renderCrop = async (
     // a photo is far larger than the budget — worth naming if it happens.
     if (!dataUrl.startsWith(`data:${mime}`)) {
       throw new BackgroundError(
-        '瀏覽器無法壓縮這張圖',
-        `要求 ${mime} 但得到 ${dataUrl.slice(5, dataUrl.indexOf(';'))}。請改用其他瀏覽器再試。`
+        t('bg.encodeFailed'),
+        t('bg.encodeDetail', { wanted: mime, got: dataUrl.slice(5, dataUrl.indexOf(';')) })
       );
     }
 
@@ -244,9 +256,14 @@ export const renderCrop = async (
   }
 
   throw new BackgroundError(
-    '這張圖壓縮後仍然太大',
-    `最小壓到 ${describeBytes(smallest)}，超過 ${describeBytes(maxBytes)} 的上限。` +
-      `原圖 ${width}×${height}・${describeBytes(file.size)}・格式 ${mime}。` +
-      '試著把縮放調小一點，或換一張細節較少的圖。'
+    t('bg.tooLarge'),
+    t('bg.tooLargeDetail', {
+      smallest: describeBytes(smallest),
+      limit: describeBytes(maxBytes),
+      w: width,
+      h: height,
+      size: describeBytes(file.size),
+      mime,
+    })
   );
 };

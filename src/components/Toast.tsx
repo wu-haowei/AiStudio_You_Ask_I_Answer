@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { CheckCircle2, AlertCircle, Info, X, AlertTriangle } from 'lucide-react';
 import { ToastMessage } from '../types';
+import { useT } from '../i18n';
 
 interface ToastProps {
   toasts: ToastMessage[];
@@ -50,6 +51,7 @@ const ToastItem: React.FC<{
   onDismiss: (id: string) => void;
   isCovered: boolean;
 }> = ({ toast, onDismiss, isCovered }) => {
+  const t = useT();
   useEffect(() => {
     const timer = setTimeout(() => onDismiss(toast.id), TOAST_DURATION_MS);
     return () => clearTimeout(timer);
@@ -92,7 +94,7 @@ const ToastItem: React.FC<{
       <button
         onClick={() => onDismiss(toast.id)}
         className="pointer-events-auto shrink-0 p-1 rounded-lg text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors"
-        aria-label="關閉提示"
+        aria-label={t('toast.dismiss')}
       >
         <X className="w-4 h-4" />
       </button>

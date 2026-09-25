@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { AlertTriangle, type LucideIcon } from 'lucide-react';
+import { useT } from '../../i18n';
 
 /**
  * The admin toolbar is a row of icon-only buttons — easy to hit by accident on
@@ -45,6 +46,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   onConfirm,
   onCancel,
 }) => {
+  const t = useT();
   const isOpen = Boolean(request);
 
   useEffect(() => {
@@ -98,7 +100,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
             disabled={isBusy}
             className="flex-1 cursor-pointer rounded-xl border border-[#D0BFAC] bg-white px-4 py-2.5 text-sm font-semibold text-[#7A6C65] transition-colors hover:bg-[#F4ECE1] disabled:opacity-50"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -107,7 +109,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
             className={`inline-flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-50 ${tone.confirm}`}
           >
             <Icon className="h-4 w-4" />
-            {isBusy ? '處理中…' : request.confirmLabel}
+            {isBusy ? t('common.processing') : request.confirmLabel}
           </button>
         </div>
       </div>

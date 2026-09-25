@@ -18,7 +18,7 @@ import {
   Check,
   HelpCircle,
 } from 'lucide-react';
-import { Category, FAQItem, UNFILED_CATEGORY } from '../types';
+import { Category, FAQItem, QuestionTranslations, UNFILED_CATEGORY } from '../types';
 import { db } from '../lib/firebase';
 import {
   backupFileName,
@@ -34,6 +34,16 @@ import { clearAllStorageAndSession, CURRENT_APP_VERSION } from '../utils/storage
 import { AdminJsonImportModal } from './admin/AdminJsonImportModal';
 import { ConfirmDialog, type ConfirmRequest } from './admin/ConfirmDialog';
 import { OptionsBadge } from './admin/OptionsBadge';
+import { INTL_LOCALE, LANGS, useLang, useT, type Lang } from '../i18n';
+import { displayCategory, hasTranslations } from '../i18n/content';
+import { Rich } from './Rich';
+
+/** One language's version of a question while it is being edited — everything is a plain string here; blanks are dropped on save. */
+interface TranslationForm {
+  question: string;
+  answer: string;
+  options: string[];
+}
 
 interface AdminManageViewProps {
   faqs: FAQItem[];
@@ -93,6 +103,21 @@ interface AdminManageViewProps {
   showToast: (title: string, description?: string, type?: 'success' | 'error' | 'info' | 'warning') => void;
 }
 
+const translationsToForm = (translations: QuestionTranslations | undefined): Partial<Record<Lang, TranslationForm>> => {
+  const form: Partial<Record<Lang, TranslationForm>> = {};
+  for (const { code } of LANGS) {
+    const entry = translations?.[code];
+    if (entry) {
+      form[code] = {
+        question: entry.question ?? '',
+        answer: entry.answer ?? '',
+        options: entry.options ? [...entry.options] : [],
+      };
+    }
+  }
+  return form;
+};
+
 export const AdminManageView: React.FC<AdminManageViewProps> = ({
   faqs,
   categories,
@@ -120,6 +145,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   isLoading = false,
   showToast,
 }) => {
+  const t = useT();
+  const lang = useLang();
+  const partnerLabel = partnerName || t('admin.partnerFallback');
   const isEditingDefaults = libraryTarget === 'default';
 
   const [search, setSearch] = useState('');
@@ -134,6 +162,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   const [formAnswer, setFormAnswer] = useState('');
   const [formCategory, setFormCategory] = useState('');
   const [formOptions, setFormOptions] = useState<string[]>(['', '']);
+  // Which tab of the editor is showing: the original wording, or one language's translation
+  const [formTab, setFormTab] = useState<'original' | Lang>('original');
+  const [formTranslations, setFormTranslations] = useState<Partial<Record<Lang, TranslationForm>>>({});
 
 
   // JSON Template Modal
@@ -166,7 +197,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
       setPendingConfirm(null);
     } catch (err: any) {
       console.error('Toolbar action failed:', err);
-      showToast('操作失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('admin.opFailed'), err?.message || t('app.tryLater'), 'error');
       setPendingConfirm(null);
     } finally {
       setIsConfirmRunning(false);
@@ -191,7 +222,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
       setIsConfirmingAnswered(false);
     } catch (err: any) {
       console.error('Delete answered failed:', err);
-      showToast('刪除失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('admin.deleteFailed'), err?.message || t('app.tryLater'), 'error');
     } finally {
       setIsDeletingAnswered(false);
     }
@@ -254,9 +285,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
       await onDeleteFAQs(ids);
       setSelectedIds(new Set());
       setIsBulkDeleteOpen(false);
-      showToast('已刪除題目', `共刪除 ${ids.length} 題`, 'info');
+      showToast(t('admin.deletedQuestions'), t('admin.deletedCount', { count: ids.length }), 'info');
     } catch (err: any) {
-      showToast('刪除失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('admin.deleteFailed'), err?.message || t('app.tryLater'), 'error');
     } finally {
       setIsBulkDeleting(false);
     }
@@ -281,10 +312,10 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
       link.click();
       URL.revokeObjectURL(url);
 
-      showToast('備份已下載', `共 ${backup.documentCount} 筆文件`, 'success');
+      showToast(t('admin.backupDownloaded'), t('admin.backupDocs', { count: backup.documentCount }), 'success');
     } catch (err: any) {
       console.error('Backup failed:', err);
-      showToast('備份失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('admin.backupFailed'), err?.message || t('app.tryLater'), 'error');
     } finally {
       setIsBackingUp(false);
     }
@@ -307,8 +338,8 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
        */
       if (!backupMatchesRoom(backup, roomId)) {
         showToast(
-          '這份備份不屬於這個對話',
-          `檔案裡是【${describeBackup(backup)}】的資料，請切換到那組對話再還原`,
+          t('admin.wrongBackup'),
+          t('admin.wrongBackupBody', { name: describeBackup(backup) }),
           'error'
         );
         return;
@@ -316,7 +347,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
 
       setPendingRestore(backup);
     } catch (err: any) {
-      showToast('無法讀取備份檔', err?.message || '檔案格式不正確', 'error');
+      showToast(t('admin.cantReadBackup'), err?.message || t('admin.badFormat'), 'error');
     }
   };
 
@@ -326,28 +357,54 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
 
     setIsRestoring(true);
     try {
-      setRestoreStatus('清空這組對話…');
+      setRestoreStatus(t('admin.clearing'));
       const removed = await wipeRoom(db, roomId, (count) =>
-        setRestoreStatus(`清空這組對話… 已刪除 ${count} 筆`)
+        setRestoreStatus(t('admin.clearingCount', { count }))
       );
 
-      setRestoreStatus('寫回備份資料…');
+      setRestoreStatus(t('admin.writing'));
       const report = await restoreRoomBackup(db, roomId, pendingRestore);
 
       setPendingRestore(null);
       showToast(
-        '還原完成',
-        `刪除 ${removed} 筆，寫入 ${report.written} 筆` +
-          (report.failed > 0 ? `，失敗 ${report.failed} 筆` : ''),
+        t('admin.restored'),
+        t('admin.restoredDetail', {
+          removed,
+          written: report.written,
+          failedNote: report.failed > 0 ? t('admin.restoredFailedNote', { count: report.failed }) : '',
+        }),
         report.failed > 0 ? 'warning' : 'success'
       );
     } catch (err: any) {
       console.error('Restore failed:', err);
-      showToast('還原失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('admin.restoreFailed'), err?.message || t('app.tryLater'), 'error');
     } finally {
       setIsRestoring(false);
       setRestoreStatus('');
     }
+  };
+
+  /** The options a translation has to line up with: the original's non-blank ones, in order. */
+  const originalOptions = formOptions.map((o) => o.trim()).filter(Boolean);
+
+  const updateTranslation = (lang: Lang, patch: Partial<TranslationForm>) => {
+    setFormTranslations((prev) => ({
+      ...prev,
+      [lang]: { ...(prev[lang] ?? { question: '', answer: '', options: [] }), ...patch },
+    }));
+  };
+
+  const updateTranslationOption = (lang: Lang, index: number, value: string) => {
+    const options = [...(formTranslations[lang]?.options ?? [])];
+    while (options.length <= index) options.push('');
+    options[index] = value;
+    updateTranslation(lang, { options });
+  };
+
+  /** True when a language has anything typed in it, for the dot on its tab. */
+  const tabHasContent = (lang: Lang) => {
+    const form = formTranslations[lang];
+    return !!form && !!(form.question.trim() || form.answer.trim() || form.options.some((o) => o.trim()));
   };
 
   const handleOpenAddModal = () => {
@@ -356,6 +413,8 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     setFormAnswer('');
     setFormCategory(categories[0]?.name || UNFILED_CATEGORY);
     setFormOptions(['', '']);
+    setFormTab('original');
+    setFormTranslations({});
     setIsEditModalOpen(true);
   };
 
@@ -365,6 +424,8 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     setFormAnswer(faq.answer);
     setFormCategory(faq.category);
     setFormOptions(faq.options?.length ? [...faq.options] : ['', '']);
+    setFormTab('original');
+    setFormTranslations(translationsToForm(faq.translations));
     setIsEditModalOpen(true);
   };
 
@@ -382,16 +443,41 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
   const handleSaveForm = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formQuestion.trim() || !formAnswer.trim()) {
-      showToast('請填寫題目與說明', undefined, 'warning');
+      showToast(t('admin.fillRequired'), undefined, 'warning');
       return;
     }
 
     const optionsArray = formOptions.map((o) => o.trim()).filter(Boolean);
 
     if (optionsArray.length === 1) {
-      showToast('選項至少要兩個', '請再補一個選項，或全部留白', 'warning');
+      showToast(t('admin.optionsMin'), t('admin.optionsMinHint'), 'warning');
       return;
     }
+
+    /*
+     * Translated options are used all-or-nothing and must match the original one
+     * to one (answers are stored as option positions). Catch a half-filled list
+     * here, on the tab it is on, rather than saving something players would
+     * silently never see.
+     */
+    const translations: QuestionTranslations = {};
+    for (const { code, label } of LANGS) {
+      const form = formTranslations[code];
+      if (!form) continue;
+      const options = optionsArray.map((_, i) => (form.options[i] ?? '').trim());
+      const filled = options.filter(Boolean).length;
+      if (filled > 0 && filled !== optionsArray.length) {
+        setFormTab(code);
+        showToast(t('tr.optionsMismatch', { language: label }), undefined, 'warning');
+        return;
+      }
+      const entry: NonNullable<QuestionTranslations[Lang]> = {};
+      if (form.question.trim()) entry.question = form.question.trim();
+      if (form.answer.trim()) entry.answer = form.answer.trim();
+      if (filled > 0) entry.options = options;
+      if (Object.keys(entry).length > 0) translations[code] = entry;
+    }
+    const savedTranslations = hasTranslations(translations) ? translations : undefined;
 
     if (editingFaq) {
       onUpdateFAQ({
@@ -400,17 +486,19 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         answer: formAnswer.trim(),
         category: formCategory,
         options: optionsArray.length > 0 ? optionsArray : undefined,
+        translations: savedTranslations,
         updatedAt: new Date().toISOString(),
       });
-      showToast('已更新', undefined, 'success');
+      showToast(t('admin.updated'), undefined, 'success');
     } else {
       onAddFAQ({
         question: formQuestion.trim(),
         answer: formAnswer.trim(),
         category: formCategory,
         options: optionsArray.length > 0 ? optionsArray : undefined,
+        translations: savedTranslations,
       });
-      showToast('已新增題目', undefined, 'success');
+      showToast(t('admin.added'), undefined, 'success');
     }
 
     setIsEditModalOpen(false);
@@ -422,9 +510,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-3xl bg-white border border-[#E8DFD3] shadow-xs">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-[#3A2E2B] flex items-center gap-2">
-            <span>後台管理</span>
+            <span>{t('admin.title')}</span>
             <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#F3E8DC] text-[#7A5230] font-semibold">
-              {isLoading ? '雲端載入中…' : `共 ${faqs.length} 題`}
+              {isLoading ? t('admin.loading') : t('app.questionCount', { count: faqs.length })}
             </span>
           </h1>
 
@@ -442,7 +530,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                       : 'text-[#7A6C65] hover:text-[#3A2E2B]'
                   }`}
                 >
-                  {target === 'room' ? '這組的題庫' : '預設題庫'}
+                  {target === 'room' ? t('admin.libRoom') : t('admin.libDefault')}
                 </button>
               ))}
             </div>
@@ -450,10 +538,10 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
 
           <p className="text-xs sm:text-sm text-[#7A6C65] mt-2">
             {isEditingDefaults
-              ? '所有對話共用這一份。新的一組還沒有自己的題庫時就用它，改動立即生效，不用重新部署網站。'
+              ? t('admin.descDefault')
               : isUsingDefaults
-                ? '這組還沒有自己的題庫，目前借用預設題庫。新增或匯入之後就會變成你們專屬的。'
-                : `這是你與${partnerName || '對方'}專屬的題庫，不會影響其他對話。`}
+                ? t('admin.descBorrowing')
+                : t('admin.descOwn', { name: partnerLabel })}
           </p>
         </div>
 
@@ -464,7 +552,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             className="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-[#E6D8C8] text-[#4A3F35] hover:bg-[#DBC9B5] transition-all inline-flex items-center gap-1.5 border border-[#D0BFAC]"
           >
             <Upload className="w-4 h-4" />
-            <span>匯入題目</span>
+            <span>{t('import.title')}</span>
           </button>
 
           <button
@@ -472,16 +560,16 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             className="milk-tea-btn-primary px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 shadow-sm"
           >
             <Plus className="w-4 h-4" />
-            <span>新增題目</span>
+            <span>{t('admin.add')}</span>
           </button>
 
           <button
             onClick={onOpenOnboarding}
-            title="重新打開你問我答怎麼玩的說明"
+            title={t('admin.helpTitle')}
             className="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-white text-[#7A6C65] border border-[#D0BFAC] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-all inline-flex items-center gap-1.5 cursor-pointer"
           >
             <HelpCircle className="w-4 h-4" />
-            <span>使用說明</span>
+            <span>{t('header.howToUse')}</span>
           </button>
 
           {onDeleteAnswered && (
@@ -490,13 +578,13 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
               disabled={answeredFaqs.length === 0}
               title={
                 answeredFaqs.length === 0
-                  ? '這組還沒有答過的題目'
-                  : '刪除這組已經答過的題目'
+                  ? t('admin.noAnswered')
+                  : t('admin.deleteAnsweredTitle')
               }
               className="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-white text-[#7A6C65] border border-[#D0BFAC] hover:text-rose-700 hover:border-rose-300 hover:bg-rose-50 disabled:opacity-40 disabled:hover:text-[#7A6C65] disabled:hover:border-[#D0BFAC] disabled:hover:bg-white transition-all inline-flex items-center gap-1.5 cursor-pointer"
             >
               <CheckCheck className="w-4 h-4" />
-              <span>刪除答過的 ({answeredFaqs.length})</span>
+              <span>{t('admin.deleteAnswered', { count: answeredFaqs.length })}</span>
             </button>
           )}
 
@@ -505,21 +593,15 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             <button
               onClick={() =>
                 setPendingConfirm({
-                  title: '匯出題庫？',
-                  description: (
-                    <>
-                      會下載一個 JSON 檔，內含目前的
-                      <span className="font-bold text-[#3A2E2B]"> {faqs.length} </span>
-                      題與 {categories.length} 個分類。
-                    </>
-                  ),
-                  note: '只有題目與分類，不含對話紀錄與出題歷史——那些請用旁邊的備份鈕。',
-                  confirmLabel: '下載題庫',
+                  title: t('admin.exportTitle'),
+                  description: <Rich text={t('admin.exportBody', { faqs: faqs.length, cats: categories.length })} />,
+                  note: t('admin.exportNote'),
+                  confirmLabel: t('admin.exportConfirm'),
                   icon: Download,
                   run: onExportData,
                 })
               }
-              title="匯出題庫 (只含題目與分類)"
+              title={t('admin.exportTip')}
               className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors cursor-pointer"
             >
               <Download className="w-4 h-4" />
@@ -532,23 +614,22 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
               <button
                 onClick={() =>
                   setPendingConfirm({
-                    title: '下載完整備份？',
-                    description:
-                      '會走訪整組資料庫再打包成 JSON：房間狀態、對話紀錄、出題歷史與題庫。資料多的話要等一下。',
-                    note: `範圍只限你與 ${partnerName || '對方'} 這一組，其他人的對話不會在裡面。`,
-                    confirmLabel: '開始備份',
+                    title: t('admin.backupTitle'),
+                    description: t('admin.backupBody'),
+                    note: t('admin.backupNote', { name: partnerLabel }),
+                    confirmLabel: t('admin.backupConfirm'),
                     icon: DatabaseBackup,
                     run: handleFullBackup,
                   })
                 }
                 disabled={isBackingUp}
-                title="下載這組對話的備份 (含對話紀錄與出題歷史)"
+                title={t('admin.backupTip')}
                 className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors disabled:opacity-50 cursor-pointer"
               >
                 <DatabaseBackup className={`w-4 h-4 ${isBackingUp ? 'animate-pulse' : ''}`} />
               </button>
               <label
-                title="從備份還原 (只清空並還原這組對話)"
+                title={t('admin.restoreTip')}
                 className="p-2 rounded-xl text-[#7A6C65] hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
               >
                 <ArchiveRestore className="w-4 h-4" />
@@ -562,25 +643,16 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
               <button
                 onClick={() =>
                   setPendingConfirm({
-                    title: '還原成預設題庫？',
-                    description: (
-                      <>
-                        會<span className="font-bold text-rose-700">先刪除</span>
-                        這一組現在的
-                        <span className="font-bold text-[#3A2E2B]"> {faqs.length} </span>
-                        題，再整份寫入預設題庫。不是合併，是取代。
-                      </>
-                    ),
-                    note: isUsingDefaults
-                      ? '這組還沒有自己的題庫，所以沒有東西會被刪掉——還原之後就會有一份專屬的，跟其他對話互不影響。'
-                      : '「答過了」的紀錄也會一起清空，因為那些題目已經不存在了。對話紀錄與出題歷史不受影響。',
-                    confirmLabel: '清空並還原',
+                    title: t('admin.resetTitle'),
+                    description: <Rich text={t('admin.resetBody', { count: faqs.length })} />,
+                    note: isUsingDefaults ? t('admin.resetNoteBorrowing') : t('admin.resetNoteOwn'),
+                    confirmLabel: t('admin.resetConfirm'),
                     tone: isUsingDefaults ? 'neutral' : 'danger',
                     icon: RotateCcw,
                     run: onImportDefaults,
                   })
                 }
-                title="還原成預設題庫（會先清空這組現有的題目）"
+                title={t('admin.resetTip')}
                 className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors cursor-pointer"
               >
                 <RotateCcw className="w-4 h-4" />
@@ -588,16 +660,15 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
               <button
                 onClick={() =>
                   setPendingConfirm({
-                    title: '搬移舊版共用房間的資料？',
-                    description:
-                      '會把舊的共用房間 (MAIN-ROOM) 的對話紀錄、出題紀錄、題庫與已玩過的題目複製到這一組。',
-                    note: '是複製不是搬移，舊資料原封不動保留。重複執行不會產生重複資料，兩個人其中一個做一次就好。',
-                    confirmLabel: '開始搬移',
+                    title: t('admin.migrateTitle'),
+                    description: t('admin.migrateBody'),
+                    note: t('admin.migrateNote'),
+                    confirmLabel: t('admin.migrateConfirm'),
                     icon: History,
                     run: onMigrateLegacy,
                   })
                 }
-                title="搬移舊版共用房間的資料"
+                title={t('admin.migrateTip')}
                 className="p-2 rounded-xl text-[#7A6C65] hover:text-[#3A2E2B] hover:bg-[#F4ECE1] transition-colors cursor-pointer"
               >
                 <History className="w-4 h-4" />
@@ -607,10 +678,10 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             <button
               onClick={() =>
                 setPendingConfirm({
-                  title: '清除本機快取？',
-                  description: '會清掉這台裝置上存的本機資料，然後重新載入頁面。',
-                  note: `雲端題庫與對話紀錄完全不受影響，重新載入後照常使用。目前版本 v${CURRENT_APP_VERSION}。`,
-                  confirmLabel: '清除並重新載入',
+                  title: t('admin.cacheTitle'),
+                  description: t('admin.cacheBody'),
+                  note: t('admin.cacheNote', { version: CURRENT_APP_VERSION }),
+                  confirmLabel: t('admin.cacheConfirm'),
                   tone: 'danger',
                   icon: Trash2,
                   run: () => {
@@ -619,7 +690,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                   },
                 })
               }
-              title={`一鍵清除本機快取（不影響雲端題庫，目前版本 v${CURRENT_APP_VERSION}）`}
+              title={t('admin.cacheTip', { version: CURRENT_APP_VERSION })}
               className="p-2 rounded-xl text-amber-700 hover:bg-amber-100 transition-colors cursor-pointer"
             >
               <Trash2 className="w-4 h-4" />
@@ -636,7 +707,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜尋題目或標籤"
+            placeholder={t('admin.search')}
             className="w-full pl-10 pr-4 py-2.5 text-sm rounded-xl milk-tea-input"
           />
         </div>
@@ -646,10 +717,10 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
           onChange={(e) => setSelectedCategory(e.target.value)}
           className="w-full sm:w-48 px-3.5 py-2.5 text-sm rounded-xl milk-tea-input shrink-0"
         >
-          <option value="all">全部分類 ({faqs.length})</option>
+          <option value="all">{t('import.allCategories', { count: faqs.length })}</option>
           {categories.map((c) => (
             <option key={c.id} value={c.name}>
-              {c.name}
+              {displayCategory(c.name)}
             </option>
           ))}
         </select>
@@ -665,18 +736,18 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
               onChange={toggleSelectAllFiltered}
               className="w-4 h-4 accent-[#8C6D53] cursor-pointer"
             />
-            <span>全選目前 {filteredFaqs.length} 題</span>
+            <span>{t('import.selectVisible', { count: filteredFaqs.length })}</span>
           </label>
 
           {selectedCount > 0 && (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-[#7A6C65]">已選 {selectedCount} 題</span>
+              <span className="text-xs text-[#7A6C65]">{t('import.itemsSelected', { count: selectedCount })}</span>
               <button
                 type="button"
                 onClick={() => setSelectedIds(new Set())}
                 className="px-3 py-1.5 rounded-xl text-xs font-semibold text-[#7A6C65] hover:bg-[#F4ECE1] transition-colors cursor-pointer"
               >
-                取消選取
+                {t('admin.deselect')}
               </button>
 
               {onRestoreAnswered && (
@@ -685,24 +756,23 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                   disabled={selectedAnsweredIds.length === 0}
                   onClick={() =>
                     setPendingConfirm({
-                      title: `復原 ${selectedAnsweredIds.length} 題的作答紀錄？`,
-                      description:
-                        '這些題目會從「答過了」變回沒答過，之後隨機抽題會再抽到它們。',
-                      note: '只清掉紀錄，題目本身不會被改動或刪除。做錯了再標記回去就好。',
-                      confirmLabel: `復原 ${selectedAnsweredIds.length} 題`,
+                      title: t('admin.restoreAnsweredTitle', { count: selectedAnsweredIds.length }),
+                      description: t('admin.restoreAnsweredBody'),
+                      note: t('admin.restoreAnsweredNote'),
+                      confirmLabel: t('admin.restoreAnsweredConfirm', { count: selectedAnsweredIds.length }),
                       icon: RotateCcw,
                       run: () => onRestoreAnswered(selectedAnsweredIds),
                     })
                   }
                   title={
                     selectedAnsweredIds.length === 0
-                      ? '選取的題目裡沒有答過的'
+                      ? t('admin.noAnsweredSelected')
                       : undefined
                   }
                   className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-[#E6D8C8] text-[#4A3F35] border border-[#D0BFAC] hover:bg-[#DBC9B5] disabled:opacity-40 disabled:hover:bg-[#E6D8C8] transition-colors cursor-pointer disabled:cursor-not-allowed inline-flex items-center gap-1.5"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  復原答過 ({selectedAnsweredIds.length})
+                  {t('admin.restoreAnswered', { count: selectedAnsweredIds.length })}
                 </button>
               )}
 
@@ -712,7 +782,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white transition-colors cursor-pointer inline-flex items-center gap-1.5"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                刪除所選
+                {t('admin.deleteSelected')}
               </button>
             </div>
           )}
@@ -723,7 +793,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
       <div className="space-y-3">
         {filteredFaqs.length === 0 ? (
           <div className="text-center py-12 bg-white rounded-3xl border border-[#E8DFD3] text-[#7A6C65]">
-            沒有符合條件的題目。
+            {t('admin.noMatch')}
           </div>
         ) : (
           filteredFaqs.map((faq) => {
@@ -741,22 +811,31 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 type="checkbox"
                 checked={selectedIds.has(faq.id)}
                 onChange={() => toggleSelected(faq.id)}
-                aria-label={`選取「${faq.question}」`}
+                aria-label={t('admin.selectQuestion', { question: faq.question })}
                 className="w-4 h-4 accent-[#8C6D53] cursor-pointer shrink-0 self-start sm:self-center"
               />
 
               <div className="space-y-1.5 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#F3E8DC] text-[#7A5230] font-semibold border border-[#E6D4C2]">
-                    {faq.category}
+                    {displayCategory(faq.category)}
                   </span>
                   {isAnswered && (
                     <span className="text-[10px] font-bold text-[#7A6C65] bg-[#EFE7DC] px-2 py-0.5 rounded-md inline-flex items-center gap-0.5">
-                      <CheckCheck className="w-3 h-3" /> 答過了
+                      <CheckCheck className="w-3 h-3" /> {t('import.answered')}
                     </span>
                   )}
                   {faq.options && faq.options.length > 0 && (
                     <OptionsBadge options={faq.options} />
+                  )}
+                  {hasTranslations(faq.translations) && (
+                    <span className="text-[10px] font-bold text-[#7A5230] bg-[#F3E8DC] px-2 py-0.5 rounded-md">
+                      {t('tr.badge', {
+                        languages: LANGS.filter((l) => hasTranslations({ [l.code]: faq.translations?.[l.code] }))
+                          .map((l) => l.short)
+                          .join(' · '),
+                      })}
+                    </span>
                   )}
                 </div>
 
@@ -777,8 +856,8 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                     }`}
                     title={
                       isAnswered
-                        ? '標記為還沒答過（之後抽題會再抽到）'
-                        : '標記為答過了（之後抽題會跳過）'
+                        ? t('admin.markUnanswered')
+                        : t('admin.markAnswered')
                     }
                   >
                     {isAnswered ? (
@@ -792,7 +871,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 <button
                   onClick={() => handleOpenEditModal(faq)}
                   className="p-2 rounded-xl text-[#8C6D53] hover:bg-[#F4ECE1] transition-colors"
-                  title="編輯"
+                  title={t('admin.edit')}
                 >
                   <Edit2 className="w-4 h-4" />
                 </button>
@@ -800,7 +879,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 <button
                   onClick={() => setDeletingId(faq.id)}
                   className="p-2 rounded-xl text-rose-600 hover:bg-rose-50 transition-colors"
-                  title="刪除"
+                  title={t('admin.delete')}
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -817,7 +896,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
           <div className="bg-[#FCFAF6] rounded-3xl border border-[#E8DFD3] shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden my-auto">
             <div className="px-6 py-5 bg-[#F5EFE6] border-b border-[#E8DFD3] flex items-center justify-between">
               <h3 className="text-base font-bold text-[#3A2E2B]">
-                {editingFaq ? '編輯題目' : '新增題目'}
+                {editingFaq ? t('admin.editTitle') : t('admin.add')}
               </h3>
               <button
                 onClick={() => setIsEditModalOpen(false)}
@@ -828,37 +907,66 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             </div>
 
             <form onSubmit={handleSaveForm} className="p-6 space-y-4 overflow-y-auto flex-1">
+              {/* Original wording, plus one tab per language it can be translated into */}
+              <div className="flex flex-wrap gap-1.5" role="tablist">
+                {(['original', ...LANGS.map((l) => l.code)] as const).map((tab) => {
+                  const active = formTab === tab;
+                  const label = tab === 'original' ? t('tr.tabOriginal') : LANGS.find((l) => l.code === tab)!.label;
+                  return (
+                    <button
+                      key={tab}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setFormTab(tab)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
+                        active
+                          ? 'bg-[#8C6D53] text-white border-[#8C6D53]'
+                          : 'bg-white text-[#7A6C65] border-[#D0BFAC] hover:bg-[#F4ECE1]'
+                      }`}
+                    >
+                      {label}
+                      {tab !== 'original' && tabHasContent(tab) && (
+                        <span className={`w-1.5 h-1.5 rounded-full ${active ? 'bg-white' : 'bg-[#8C6D53]'}`} />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {formTab === 'original' ? (
+              <>
               <div>
                 <label className="block text-xs font-semibold text-[#3A2E2B] mb-1.5">
-                  題目名稱 <span className="text-rose-500">*</span>
+                  {t('admin.fieldQuestion')} <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
                   value={formQuestion}
                   onChange={(e) => setFormQuestion(e.target.value)}
-                  placeholder="例如：假日最喜歡的放鬆度過方式是什麼？"
+                  placeholder={t('admin.questionPh')}
                   className="w-full px-4 py-2.5 text-sm rounded-xl milk-tea-input"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-[#3A2E2B] mb-1.5">
-                  題目解析與說明 <span className="text-rose-500">*</span>
+                  {t('admin.fieldNote')} <span className="text-rose-500">*</span>
                 </label>
                 <textarea
                   required
                   rows={3}
                   value={formAnswer}
                   onChange={(e) => setFormAnswer(e.target.value)}
-                  placeholder="題目說明或背景"
+                  placeholder={t('admin.notePh')}
                   className="w-full px-4 py-2.5 text-sm rounded-xl milk-tea-input resize-none"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-[#3A2E2B] mb-1.5">
-                  題目方向分類
+                  {t('admin.fieldCategory')}
                 </label>
                 <select
                   value={formCategory}
@@ -867,7 +975,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 >
                   {categories.map((c) => (
                     <option key={c.id} value={c.name}>
-                      {c.name}
+                      {displayCategory(c.name)}
                     </option>
                   ))}
                 </select>
@@ -878,7 +986,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-[#8C6D53]">
                     <Sparkles className="w-4 h-4" />
-                    <span>題目選項 ({formOptions.filter((o) => o.trim()).length} 個)</span>
+                    <span>{t('admin.fieldOptions', { count: formOptions.filter((o) => o.trim()).length })}</span>
                   </div>
                   <button
                     type="button"
@@ -886,7 +994,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                     className="px-2.5 py-1 rounded-lg text-xs font-semibold text-[#8C6D53] hover:bg-[#F4ECE1] transition-colors inline-flex items-center gap-1 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    新增選項
+                    {t('invite.addOption')}
                   </button>
                 </div>
 
@@ -900,14 +1008,14 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                         type="text"
                         value={opt}
                         onChange={(e) => updateOption(idx, e.target.value)}
-                        placeholder={`選項 ${String.fromCharCode(65 + idx)}`}
+                        placeholder={t('admin.optionPh', { letter: String.fromCharCode(65 + idx) })}
                         className="flex-1 min-w-0 px-3.5 py-2 text-sm rounded-xl milk-tea-input"
                       />
                       <button
                         type="button"
                         onClick={() => removeOption(idx)}
                         disabled={formOptions.length <= 2}
-                        aria-label={`移除選項 ${String.fromCharCode(65 + idx)}`}
+                        aria-label={t('admin.removeOption', { letter: String.fromCharCode(65 + idx) })}
                         className="shrink-0 p-2 rounded-xl text-[#7A6C65] hover:text-rose-600 hover:bg-rose-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -917,24 +1025,94 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 </div>
 
                 <p className="text-[11px] text-[#7A6C65]">
-                  留白代表不設定選項；若要設定，至少需要兩個。
+                  {t('admin.optionsBlankHint')}
                 </p>
               </div>
 
+              </>
+              ) : (
+                (() => {
+                  const lang = formTab;
+                  const language = LANGS.find((l) => l.code === lang)!.label;
+                  const form = formTranslations[lang] ?? { question: '', answer: '', options: [] };
+                  return (
+                    <div className="space-y-4">
+                      <p className="text-[11px] text-[#7A6C65]">{t('tr.tabHint')}</p>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-[#3A2E2B] mb-1.5">
+                          {t('tr.question', { language })}
+                        </label>
+                        <input
+                          type="text"
+                          value={form.question}
+                          onChange={(e) => updateTranslation(lang, { question: e.target.value })}
+                          placeholder={formQuestion}
+                          className="w-full px-4 py-2.5 text-sm rounded-xl milk-tea-input"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-[#3A2E2B] mb-1.5">
+                          {t('tr.note', { language })}
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={form.answer}
+                          onChange={(e) => updateTranslation(lang, { answer: e.target.value })}
+                          placeholder={formAnswer}
+                          className="w-full px-4 py-2.5 text-sm rounded-xl milk-tea-input resize-none"
+                        />
+                      </div>
+
+                      <div className="border-t border-[#E8DFD3] pt-4 space-y-2.5">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-[#8C6D53]">
+                          <Sparkles className="w-4 h-4" />
+                          <span>{t('tr.options', { language })}</span>
+                        </div>
+
+                        {originalOptions.length === 0 ? (
+                          <p className="text-[11px] text-[#7A6C65]">{t('tr.noOptions')}</p>
+                        ) : (
+                          <>
+                            <div className="space-y-2">
+                              {originalOptions.map((original, idx) => (
+                                <div key={idx} className="flex items-center gap-2">
+                                  <span className="w-5 shrink-0 text-xs font-bold text-[#A68B6D] text-center">
+                                    {String.fromCharCode(65 + idx)}
+                                  </span>
+                                  <input
+                                    type="text"
+                                    value={form.options[idx] ?? ''}
+                                    onChange={(e) => updateTranslationOption(lang, idx, e.target.value)}
+                                    placeholder={original}
+                                    className="flex-1 min-w-0 px-3.5 py-2 text-sm rounded-xl milk-tea-input"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                            <p className="text-[11px] text-[#7A6C65]">{t('tr.optionsHint')}</p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()
+              )}
               <div className="pt-4 flex items-center justify-end gap-3 border-t border-[#E8DFD3]">
                 <button
                   type="button"
                   onClick={() => setIsEditModalOpen(false)}
                   className="px-4 py-2 rounded-xl text-sm font-medium text-[#7A6C65] hover:bg-[#F2EBE1]"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
                 <button
                   type="submit"
                   className="milk-tea-btn-primary px-5 py-2.5 rounded-xl text-sm font-semibold inline-flex items-center gap-1.5"
                 >
                   <Check className="w-4 h-4" />
-                  <span>儲存變更</span>
+                  <span>{t('admin.saveChanges')}</span>
                 </button>
               </div>
             </form>
@@ -969,21 +1147,16 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-[#3A2E2B]">刪除答過的題目？</h3>
+                <h3 className="text-base font-bold text-[#3A2E2B]">{t('admin.delAnsweredTitle')}</h3>
                 <p className="text-xs text-[#7A6C65] mt-1 leading-relaxed">
-                  這組已經答過
-                  <span className="font-bold text-[#3A2E2B]"> {answeredFaqs.length} </span>
-                  題，刪除後<span className="font-bold text-rose-700">無法復原</span>
-                  。已經聊過的對話紀錄不受影響。
+                  <Rich text={t('admin.delAnsweredBody', { count: answeredFaqs.length })} />
                 </p>
               </div>
             </div>
 
             {isUsingDefaults && (
               <p className="text-[11px] text-[#7A6C65] leading-relaxed rounded-2xl bg-[#F5EFE6] border border-[#E8DFD3] p-3">
-                目前用的是內建預設題庫。刪除會先把剩下的
-                {' '}{faqs.length - answeredFaqs.length}{' '}
-                題存成你們專屬的題庫，之後就跟其他對話互不影響。
+                {t('admin.delAnsweredDefaults', { count: faqs.length - answeredFaqs.length })}
               </p>
             )}
 
@@ -995,7 +1168,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
               ))}
               {answeredFaqs.length > 8 && (
                 <p className="text-[11px] text-[#7A6C65]">
-                  …還有 {answeredFaqs.length - 8} 題
+                  {t('admin.andMore', { count: answeredFaqs.length - 8 })}
                 </p>
               )}
             </div>
@@ -1006,7 +1179,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 disabled={isDeletingAnswered}
                 className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold bg-white border border-[#D0BFAC] text-[#7A6C65] hover:bg-[#F4ECE1] disabled:opacity-50 transition-colors cursor-pointer"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleDeleteAnswered}
@@ -1014,7 +1187,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold bg-rose-600 hover:bg-rose-700 text-white disabled:opacity-50 transition-colors inline-flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Trash2 className="w-4 h-4" />
-                {isDeletingAnswered ? '刪除中…' : `刪除 ${answeredFaqs.length} 題`}
+                {isDeletingAnswered ? t('admin.deleting') : t('admin.deleteN', { count: answeredFaqs.length })}
               </button>
             </div>
           </div>
@@ -1030,36 +1203,34 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-[#3A2E2B]">確認從備份還原？</h3>
+                <h3 className="text-base font-bold text-[#3A2E2B]">{t('admin.restoreConfirmTitle')}</h3>
                 <p className="text-xs text-[#7A6C65] mt-1 leading-relaxed">
-                  這會<span className="font-bold text-rose-700">先刪除</span>
-                  你與 {partnerName || '對方'} 這一組的對話、出題紀錄與題庫，
-                  再寫入備份內容。無法復原。
+                  <Rich text={t('admin.restoreConfirmBody', { name: partnerLabel })} />
                 </p>
               </div>
             </div>
 
             <div className="rounded-2xl bg-[#F5EFE6] border border-[#E8DFD3] p-3.5 space-y-1 text-xs">
               <div className="flex justify-between">
-                <span className="text-[#7A6C65]">備份時間</span>
+                <span className="text-[#7A6C65]">{t('admin.backupTime')}</span>
                 <span className="font-semibold text-[#3A2E2B]">
-                  {new Date(pendingRestore.exportedAt).toLocaleString()}
+                  {new Date(pendingRestore.exportedAt).toLocaleString(INTL_LOCALE[lang])}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[#7A6C65]">文件數量</span>
+                <span className="text-[#7A6C65]">{t('admin.docCount')}</span>
                 <span className="font-semibold text-[#3A2E2B]">
-                  {pendingRestore.documentCount ?? '—'} 筆
+                  {pendingRestore.documentCount != null ? t('admin.docCountValue', { count: pendingRestore.documentCount }) : '—'}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[#7A6C65]">備份對象</span>
+                <span className="text-[#7A6C65]">{t('admin.backupOf')}</span>
                 <span className="font-semibold text-[#3A2E2B]">
                   {describeBackup(pendingRestore)}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[#7A6C65]">結構版本</span>
+                <span className="text-[#7A6C65]">{t('admin.schemaVersion')}</span>
                 <span className="font-semibold text-[#3A2E2B]">
                   v{pendingRestore.schemaVersion ?? '?'}
                 </span>
@@ -1067,8 +1238,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
             </div>
 
             <p className="text-[11px] text-[#7A6C65] leading-relaxed">
-              範圍只限這一組對話：房間狀態、對話紀錄、出題歷史、題庫。
-              其他對話完全不受影響。建議先按左邊的備份鈕保存一份目前的狀態。
+              {t('admin.restoreScope')}
             </p>
 
             {restoreStatus && (
@@ -1081,14 +1251,14 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 disabled={isRestoring}
                 className="px-4 py-2 rounded-xl text-xs font-semibold text-[#7A6C65] hover:bg-[#F2EBE1] disabled:opacity-50"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleConfirmRestore}
                 disabled={isRestoring}
                 className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 shadow-xs disabled:opacity-50"
               >
-                {isRestoring ? '處理中…' : '清空並還原'}
+                {isRestoring ? t('common.processing') : t('admin.resetConfirm')}
               </button>
             </div>
           </div>
@@ -1099,9 +1269,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
       {isBulkDeleteOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-fade-in">
           <div className="bg-[#FCFAF6] rounded-3xl border border-[#E8DFD3] p-6 max-w-sm w-full space-y-4">
-            <h3 className="text-base font-bold text-[#3A2E2B]">確認刪除所選題目？</h3>
+            <h3 className="text-base font-bold text-[#3A2E2B]">{t('admin.bulkTitle')}</h3>
             <p className="text-xs text-[#7A6C65] leading-relaxed">
-              將永久刪除 {selectedCount} 題，所有裝置都會同步移除，此動作無法復原。
+              {t('admin.bulkBody', { count: selectedCount })}
             </p>
             <div className="flex items-center justify-end gap-3 pt-2">
               <button
@@ -1109,14 +1279,14 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                 disabled={isBulkDeleting}
                 className="px-4 py-2 rounded-xl text-xs font-semibold text-[#7A6C65] hover:bg-[#F2EBE1] disabled:opacity-50"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleBulkDelete}
                 disabled={isBulkDeleting}
                 className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 shadow-xs disabled:opacity-50"
               >
-                {isBulkDeleting ? '刪除中…' : `刪除 ${selectedCount} 題`}
+                {isBulkDeleting ? t('admin.deleting') : t('admin.deleteN', { count: selectedCount })}
               </button>
             </div>
           </div>
@@ -1127,23 +1297,23 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
       {deletingId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-fade-in">
           <div className="bg-[#FCFAF6] rounded-3xl border border-[#E8DFD3] p-6 max-w-sm w-full space-y-4">
-            <h3 className="text-base font-bold text-[#3A2E2B]">確認要刪除此題目嗎？</h3>
+            <h3 className="text-base font-bold text-[#3A2E2B]">{t('admin.delOneTitle')}</h3>
             <div className="flex items-center justify-end gap-3 pt-2">
               <button
                 onClick={() => setDeletingId(null)}
                 className="px-4 py-2 rounded-xl text-xs font-semibold text-[#7A6C65] hover:bg-[#F2EBE1]"
               >
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 onClick={() => {
                   onDeleteFAQ(deletingId);
                   setDeletingId(null);
-                  showToast('已刪除題目', undefined, 'info');
+                  showToast(t('admin.deletedQuestions'), undefined, 'info');
                 }}
                 className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 shadow-xs"
               >
-                確認刪除
+                {t('admin.confirmDelete')}
               </button>
             </div>
           </div>

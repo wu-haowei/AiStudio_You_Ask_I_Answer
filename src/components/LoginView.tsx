@@ -8,6 +8,8 @@ import {
   requestPasswordResetForName,
   signInWithPassword,
 } from '../lib/accounts';
+import { useT } from '../i18n';
+import { LanguageSwitcher } from './LanguageSwitcher';
 
 interface LoginViewProps {
   onSignedIn: (name: string) => void;
@@ -26,10 +28,12 @@ type Step = 'name' | 'password' | 'change' | 'forgot-sent';
  * would lock someone out of their own conversation over a step they might
  * simply not want to do yet.
  *
- * "忘記密碼" on the password step already knows the name (it's right there on
- * screen), so it fires straight to forgot-sent — there is nothing left to ask.
+ * "Forgot password" on the password step already knows the name (it's right
+ * there on screen), so it fires straight to forgot-sent — there is nothing
+ * left to ask.
  */
 export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
+  const t = useT();
   const [step, setStep] = useState<Step>('name');
   const [name, setName] = useState('');
   const [isNewAccount, setIsNewAccount] = useState(false);
@@ -39,10 +43,16 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
   const [confirmPassword, setConfirmPassword] = useState('');
 
   const [busy, setBusy] = useState(false);
+  /*
+   * Finished text, not a message key: AuthError messages are translated at the
+   * moment they are thrown. An error already on screen therefore stays in the
+   * language it was raised in if the person switches — the next attempt shows
+   * the new one.
+   */
   const [error, setError] = useState('');
 
   const fail = (err: unknown) => {
-    setError(err instanceof AuthError ? err.message : '發生錯誤，請稍後再試');
+    setError(err instanceof AuthError ? err.message : t('common.genericError'));
     console.warn('[login]', err);
   };
 
@@ -90,7 +100,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
     if (busy) return;
 
     if (nextPassword !== confirmPassword) {
-      setError('兩次輸入的新密碼不一致');
+      setError(t('login.mismatch'));
       return;
     }
 
@@ -128,8 +138,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
         paddingTop: 'max(1rem, env(safe-area-inset-top))',
         paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
       }}
-      className="h-full bg-[#F5E6D3] flex items-center justify-center px-4 font-sans text-[#4A3F35]"
+      className="relative h-full bg-[#F5E6D3] flex items-center justify-center px-4 font-sans text-[#4A3F35]"
     >
+      <LanguageSwitcher className="absolute top-3 right-3" />
       <div className="bg-[#FAF7F2] border border-[#D9C5B2] rounded-3xl p-6 sm:p-8 max-w-sm w-full shadow-lg space-y-6">
         <div className="text-center space-y-3">
           <div className="w-14 h-14 bg-[#A68B6D] text-white rounded-2xl mx-auto flex items-center justify-center">
@@ -156,26 +167,26 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
   if (step === 'name') {
     return shell(
       <UserRound className="w-7 h-7" />,
-      '你問我答',
-      '輸入姓名開始',
+      t('app.name'),
+      t('login.subtitleName'),
       <form onSubmit={handleNameSubmit} className="space-y-3">
         <div className="space-y-1.5">
           <label htmlFor="login-name" className="block text-xs font-bold text-[#7A6C5E]">
-            姓名
+            {t('login.nameLabel')}
           </label>
           <input
             id="login-name"
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="輸入你的姓名"
+            placeholder={t('login.namePlaceholder')}
             autoComplete="username"
             maxLength={20}
             className={field}
           />
         </div>
         <button type="submit" disabled={!name.trim() || busy} className={submit}>
-          {busy ? '確認中…' : '下一步'}
+          {busy ? t('login.checking') : t('login.next')}
         </button>
       </form>
     );
@@ -185,25 +196,25 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
     return shell(
       <KeyRound className="w-7 h-7" />,
       name.trim(),
-      isNewAccount ? `新帳號，請用預設密碼 ${DEFAULT_PASSWORD}` : '輸入你的密碼',
+      isNewAccount ? t('login.newAccountHint', { password: DEFAULT_PASSWORD }) : t('login.enterPassword'),
       <form onSubmit={handlePasswordSubmit} className="space-y-3">
         <div className="space-y-1.5">
           <label htmlFor="login-password" className="block text-xs font-bold text-[#7A6C5E]">
-            密碼
+            {t('login.passwordLabel')}
           </label>
           <input
             id="login-password"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="輸入密碼"
+            placeholder={t('login.passwordPlaceholder')}
             autoComplete="current-password"
             autoFocus
             className={field}
           />
         </div>
         <button type="submit" disabled={!password || busy} className={submit}>
-          {busy ? '登入中…' : '登入'}
+          {busy ? t('login.signingIn') : t('login.signIn')}
         </button>
         <div className="flex items-center justify-between">
           <button
@@ -215,7 +226,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
             }}
             className="py-2 text-xs font-semibold text-[#7A6C5E] hover:text-[#4A3F35] cursor-pointer"
           >
-            換一個姓名
+            {t('login.changeName')}
           </button>
           {!isNewAccount && (
             <button
@@ -224,7 +235,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
               disabled={busy}
               className="py-2 text-xs font-semibold text-[#7A6C5E] hover:text-[#4A3F35] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {busy ? '寄送中…' : '忘記密碼？'}
+              {busy ? t('login.sending') : t('login.forgot')}
             </button>
           )}
         </div>
@@ -235,56 +246,54 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
   if (step === 'change') {
     return shell(
       <ShieldCheck className="w-7 h-7" />,
-      '設定新密碼',
-      '第一次登入需要換掉預設密碼',
-    <form onSubmit={handleChangeSubmit} className="space-y-3">
-      <div className="space-y-1.5">
-        <label htmlFor="new-password" className="block text-xs font-bold text-[#7A6C5E]">
-          新密碼
-        </label>
-        <input
-          id="new-password"
-          type="password"
-          value={nextPassword}
-          onChange={(e) => setNextPassword(e.target.value)}
-          placeholder="至少 4 個字元"
-          autoComplete="new-password"
-          autoFocus
-          className={field}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <label htmlFor="confirm-password" className="block text-xs font-bold text-[#7A6C5E]">
-          再輸入一次
-        </label>
-        <input
-          id="confirm-password"
-          type="password"
-          value={confirmPassword}
-          onChange={(e) => setConfirmPassword(e.target.value)}
-          placeholder="確認新密碼"
-          autoComplete="new-password"
-          className={field}
-        />
-      </div>
-      <button type="submit" disabled={!nextPassword || !confirmPassword || busy} className={submit}>
-        {busy ? '設定中…' : '設定並進入'}
-      </button>
-    </form>
+      t('login.setNewPassword'),
+      t('login.mustChangeDefault'),
+      <form onSubmit={handleChangeSubmit} className="space-y-3">
+        <div className="space-y-1.5">
+          <label htmlFor="new-password" className="block text-xs font-bold text-[#7A6C5E]">
+            {t('login.newPasswordLabel')}
+          </label>
+          <input
+            id="new-password"
+            type="password"
+            value={nextPassword}
+            onChange={(e) => setNextPassword(e.target.value)}
+            placeholder={t('login.newPasswordPlaceholder')}
+            autoComplete="new-password"
+            autoFocus
+            className={field}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label htmlFor="confirm-password" className="block text-xs font-bold text-[#7A6C5E]">
+            {t('login.confirmLabel')}
+          </label>
+          <input
+            id="confirm-password"
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            placeholder={t('login.confirmPlaceholder')}
+            autoComplete="new-password"
+            className={field}
+          />
+        </div>
+        <button type="submit" disabled={!nextPassword || !confirmPassword || busy} className={submit}>
+          {busy ? t('login.saving') : t('login.saveAndEnter')}
+        </button>
+      </form>
     );
   }
 
   return shell(
     <MailCheck className="w-7 h-7" />,
-    '信寄出了',
-    '請到信箱收信',
+    t('login.sentTitle'),
+    t('login.sentSubtitle'),
     <div className="space-y-3">
       <p className="text-xs text-[#7A6C5E] text-center leading-relaxed">
-        重設密碼的信件已經寄到 {name.trim()} 設定的 Email 了。點信裡的連結，就能直接設定新密碼。
+        {t('login.sentBody', { name: name.trim() })}
       </p>
-      <p className="text-xs text-[#A68B6D] text-center leading-relaxed">
-        沒看到信嗎？也可能在垃圾信箱內，記得去看一下。
-      </p>
+      <p className="text-xs text-[#A68B6D] text-center leading-relaxed">{t('login.sentSpam')}</p>
       <button
         type="button"
         onClick={() => {
@@ -294,7 +303,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
         }}
         className={submit}
       >
-        返回登入
+        {t('login.backToSignIn')}
       </button>
     </div>
   );

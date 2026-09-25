@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Mail } from 'lucide-react';
 import { AuthError, lookupAccount, setRecoveryEmail } from '../lib/accounts';
+import { useT } from '../i18n';
 
 interface EmailSettingsModalProps {
   isOpen: boolean;
@@ -30,6 +31,10 @@ export const EmailSettingsModal: React.FC<EmailSettingsModalProps> = ({
   name,
   showToast,
 }) => {
+  const t = useT();
+  // The address sits in its own bold span mid-sentence, so the sentence is split around a marker
+  // instead of concatenated — other languages put it in a different place.
+  const [beforeEmail, afterEmail] = t('email.currentIs', { email: '@@EMAIL@@' }).split('@@EMAIL@@');
   const [currentEmail, setCurrentEmail] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [nextEmail, setNextEmail] = useState('');
@@ -72,21 +77,21 @@ export const EmailSettingsModal: React.FC<EmailSettingsModalProps> = ({
       setNextEmail('');
       if (result === 'reauth-required') {
         showToast(
-          '請先到目前的 Email 確認',
-          '為了安全，換 Email 要先經過目前設定的信箱同意——確認信已經寄過去了，點裡面的連結後，才會繼續寄驗證信到新的 Email',
+          t('email.confirmOldTitle'),
+          t('email.confirmOldBody'),
           'info'
         );
       } else if (result === 'verification-sent') {
         showToast(
-          '請至信箱收信',
-          `確認信已經寄到 ${submitted} 了，點裡面的連結才算真的設定完成`,
+          t('email.checkInboxTitle'),
+          t('email.checkInboxBody', { email: submitted }),
           'info'
         );
       } else {
-        showToast('沒有變化', '這已經是目前設定的 Email 了', 'info');
+        showToast(t('email.noChange'), t('email.noChangeBody'), 'info');
       }
     } catch (err) {
-      setError(err instanceof AuthError ? err.message : '發生錯誤，請稍後再試');
+      setError(err instanceof AuthError ? err.message : t('common.genericError'));
       console.warn('[email-settings]', err);
     } finally {
       setBusy(false);
@@ -99,7 +104,7 @@ export const EmailSettingsModal: React.FC<EmailSettingsModalProps> = ({
         <div className="px-6 py-5 bg-[#F5EFE6] border-b border-[#E8DFD3] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Mail className="w-5 h-5 text-[#8C6D53]" />
-            <h3 className="text-base font-bold text-[#3A2E2B]">救援 Email</h3>
+            <h3 className="text-base font-bold text-[#3A2E2B]">{t('header.recoveryEmail')}</h3>
           </div>
           <button
             onClick={onClose}
@@ -112,23 +117,23 @@ export const EmailSettingsModal: React.FC<EmailSettingsModalProps> = ({
         <div className="p-6 space-y-4">
           <p className="text-xs text-[#7A6C65]">
             {isLoading
-              ? '讀取中…'
+              ? t('email.loading')
               : currentEmail
-              ? <>目前設定的是 <span className="font-semibold text-[#4A3F35]">{currentEmail}</span>，忘記密碼時會寄重設信到這裡。</>
-              : '目前還沒有設定救援 Email——設定好之後，忘記密碼時才能自己寄信重設，不用麻煩對方幫忙改。'}
+              ? <>{beforeEmail}<span className="font-semibold text-[#4A3F35]">{currentEmail}</span>{afterEmail}</>
+              : t('email.none')}
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-3">
             <div className="space-y-1.5">
               <label htmlFor="settings-email" className="block text-xs font-bold text-[#7A6C5E]">
-                {currentEmail ? '換成新的 Email' : '設定 Email'}
+                {currentEmail ? t('email.changeLabel') : t('email.setLabel')}
               </label>
               <input
                 id="settings-email"
                 type="email"
                 value={nextEmail}
                 onChange={(e) => setNextEmail(e.target.value)}
-                placeholder="輸入 Email"
+                placeholder={t('email.placeholder')}
                 autoComplete="email"
                 className="w-full px-4 py-2.5 rounded-2xl border border-[#D9C5B2] bg-white text-sm font-semibold text-[#4A3F35] focus:outline-none focus:ring-2 focus:ring-[#8E7256]"
               />
@@ -144,14 +149,14 @@ export const EmailSettingsModal: React.FC<EmailSettingsModalProps> = ({
                 onClick={onClose}
                 className="px-4 py-2 rounded-xl text-xs font-semibold text-[#7A6C65] hover:bg-[#F2EBE1] cursor-pointer"
               >
-                {currentEmail ? '關閉' : '先不要，之後再說'}
+                {currentEmail ? t('common.close') : t('email.notNow')}
               </button>
               <button
                 type="submit"
                 disabled={!nextEmail.trim() || busy}
                 className="milk-tea-btn-primary px-5 py-2.5 rounded-xl text-xs font-semibold disabled:opacity-50 cursor-pointer"
               >
-                {busy ? '儲存中…' : '儲存'}
+                {busy ? t('common.saving') : t('common.save')}
               </button>
             </div>
           </form>

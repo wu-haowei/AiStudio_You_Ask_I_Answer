@@ -10,9 +10,12 @@ import {
   ArrowLeft,
   PlusCircle,
   HelpCircle,
+  Languages,
 } from 'lucide-react';
 import { ActiveTab } from '../types';
 import { useIdentity } from '../lib/identity';
+import { useT, type Lang } from '../i18n';
+import { LanguageSwitcher } from './LanguageSwitcher';
 
 /**
  * How long after a tap the burst is considered over. Restarted by every tap, so
@@ -32,6 +35,8 @@ interface HeaderProps {
   onOpenEmailSettings: () => void;
   /** Re-opens the first-run app explainer on demand. */
   onOpenOnboarding: () => void;
+  /** Saves a language choice against the signed-in name, so it follows them to other devices. */
+  onChangeLanguage: (lang: Lang) => void;
   /** Shows or hides the admin screen's default-library switch. */
   onToggleDefaultLibrary: () => void;
   onSignOut: () => void;
@@ -60,6 +65,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenBackgroundSettings,
   onOpenEmailSettings,
   onOpenOnboarding,
+  onChangeLanguage,
   onToggleDefaultLibrary,
   onSignOut,
   partnerName,
@@ -69,6 +75,7 @@ export const Header: React.FC<HeaderProps> = ({
   challengeHint,
   showToast,
 }) => {
+  const t = useT();
   const { name, isSignedIn } = useIdentity();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -107,7 +114,7 @@ export const Header: React.FC<HeaderProps> = ({
       logoTapRef.current = 0;
       logoTimerRef.current = null;
       if (!partnerName) {
-        showToast('請先選擇一個對話', '題庫是每組對話各自獨立的', 'warning');
+        showToast(t('header.pickConversation'), t('header.libraryPerConversation'), 'warning');
         return;
       }
       onToggleDefaultLibrary();
@@ -158,7 +165,7 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={onLeaveRoom}
-                aria-label="回到對話列表"
+                aria-label={t('header.backToList')}
                 className="p-2 -ml-1 rounded-xl text-[#7A6C5E] hover:text-[#4A3F35] hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer shrink-0"
               >
                 <ArrowLeft className="w-5 h-5" />
@@ -168,14 +175,14 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={handleLogoTap}
-              title="連點三下可顯示／收起預設題庫切換"
+              title={t('header.logoHint')}
               className="flex items-center gap-2 shrink-0 cursor-pointer select-none"
             >
               <div className="w-9 h-9 rounded-2xl bg-[#A68B6D] flex items-center justify-center text-white">
                 <Coffee className="w-5 h-5" />
               </div>
               <span className="text-base sm:text-lg font-bold text-[#4A3F35] tracking-tight truncate">
-                {partnerName || '你問我答'}
+                {partnerName || t('app.name')}
               </span>
             </button>
           </div>
@@ -188,11 +195,11 @@ export const Header: React.FC<HeaderProps> = ({
                   type="button"
                   onClick={onStartChallenge}
                   disabled={!canStartChallenge}
-                  title={canStartChallenge ? undefined : challengeHint || '等待對方進入房間'}
+                  title={canStartChallenge ? undefined : challengeHint || t('header.waitingPartner')}
                   className="sm:hidden px-2.5 py-1.5 rounded-xl bg-[#E8D8C4] hover:bg-[#D9C5B2] disabled:opacity-40 text-[#4A3F35] text-xs font-bold inline-flex items-center gap-1 transition-colors cursor-pointer shrink-0"
                 >
                   <PlusCircle className="w-3.5 h-3.5" />
-                  考驗
+                  {t('header.challenge')}
                 </button>
               )}
 
@@ -204,14 +211,14 @@ export const Header: React.FC<HeaderProps> = ({
                   className={tabClass(activeTab === 'co_play')}
                 >
                   <Users className="w-4 h-4" />
-                  <span className="hidden sm:inline">對話</span>
+                  <span className="hidden sm:inline">{t('header.tabChat')}</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('admin_manage')}
                   className={tabClass(activeTab === 'admin_manage')}
                 >
                   <Settings className="w-4 h-4" />
-                  <span className="hidden sm:inline">後台</span>
+                  <span className="hidden sm:inline">{t('header.tabAdmin')}</span>
                 </button>
               </nav>
               )}
@@ -237,7 +244,7 @@ export const Header: React.FC<HeaderProps> = ({
                     <div className="px-4 py-3 border-b border-[#EFE5D8]">
                       <div className="text-sm font-bold text-[#4A3F35] truncate">{name}</div>
                       <div className="text-[11px] text-[#7A6C5E] mt-0.5">
-                        線上 {onlineCount || 1} 人
+                        {t('header.online', { count: onlineCount || 1 })}
                       </div>
                     </div>
 
@@ -257,7 +264,7 @@ export const Header: React.FC<HeaderProps> = ({
                           }`}
                         >
                           <Users className="w-4 h-4 text-[#A68B6D]" />
-                          對話
+                          {t('header.tabChat')}
                         </button>
                         <button
                           type="button"
@@ -272,12 +279,19 @@ export const Header: React.FC<HeaderProps> = ({
                           }`}
                         >
                           <Settings className="w-4 h-4 text-[#A68B6D]" />
-                          後台
+                          {t('header.tabAdmin')}
                         </button>
                       </div>
                     )}
 
                     <div className="py-1">
+                      <div className="px-4 py-2 flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-2.5 text-xs font-semibold text-[#4A3F35]">
+                          <Languages className="w-4 h-4 text-[#A68B6D]" />
+                          {t('lang.label')}
+                        </span>
+                        <LanguageSwitcher onChange={onChangeLanguage} />
+                      </div>
                       <button
                         type="button"
                         onClick={() => {
@@ -287,7 +301,7 @@ export const Header: React.FC<HeaderProps> = ({
                         className="w-full px-4 py-2.5 text-left text-xs font-semibold text-[#4A3F35] hover:bg-[#F5EFE6] transition-colors flex items-center gap-2.5 cursor-pointer"
                       >
                         <Image className="w-4 h-4 text-[#A68B6D]" />
-                        聊天背景
+                        {t('header.chatBackground')}
                       </button>
                       <button
                         type="button"
@@ -298,7 +312,7 @@ export const Header: React.FC<HeaderProps> = ({
                         className="w-full px-4 py-2.5 text-left text-xs font-semibold text-[#4A3F35] hover:bg-[#F5EFE6] transition-colors flex items-center gap-2.5 cursor-pointer"
                       >
                         <Mail className="w-4 h-4 text-[#A68B6D]" />
-                        救援 Email
+                        {t('header.recoveryEmail')}
                       </button>
                       <button
                         type="button"
@@ -309,7 +323,7 @@ export const Header: React.FC<HeaderProps> = ({
                         className="w-full px-4 py-2.5 text-left text-xs font-semibold text-[#4A3F35] hover:bg-[#F5EFE6] transition-colors flex items-center gap-2.5 cursor-pointer"
                       >
                         <HelpCircle className="w-4 h-4 text-[#A68B6D]" />
-                        使用說明
+                        {t('header.howToUse')}
                       </button>
                       <button
                         type="button"
@@ -320,7 +334,7 @@ export const Header: React.FC<HeaderProps> = ({
                         className="w-full px-4 py-2.5 text-left text-xs font-semibold text-[#4A3F35] hover:bg-[#F5EFE6] transition-colors flex items-center gap-2.5 cursor-pointer"
                       >
                         <LogOut className="w-4 h-4 text-[#A68B6D]" />
-                        登出
+                        {t('header.signOut')}
                       </button>
                     </div>
                   </div>

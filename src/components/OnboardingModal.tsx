@@ -9,38 +9,20 @@ import {
   HelpCircle,
   X,
 } from 'lucide-react';
+import { useT, type MessageKey } from '../i18n';
 
 interface OnboardingModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-const steps: { icon: React.ReactNode; title: string; body: string }[] = [
-  {
-    icon: <UserPlus className="w-5 h-5" />,
-    title: '邀請對方',
-    body: '從「現在線上」名單邀請一個人，對方按下「同意並開始」，就會開一間你們倆專屬的房間。之後每次登入都能直接從「我的對話」點回去，不用重新配對。',
-  },
-  {
-    icon: <HeartHandshake className="w-5 h-5" />,
-    title: '發起考驗',
-    body: '在對話頁按「發起考驗」，等對方按下「接受挑戰」才正式開始——沒接受之前題目不會出現，可以先聊聊天再開始。',
-  },
-  {
-    icon: <MessageCircleQuestion className="w-5 h-5" />,
-    title: '出題與真心話',
-    body: '發起的一方從題庫（自己的，或還沒有時借用的預設題庫）挑一題送出去；對方要先誠實寫下自己的真心話，這時候出題者還看不到內容，避免用猜的作弊。',
-  },
-  {
-    icon: <Sparkles className="w-5 h-5" />,
-    title: '猜測與結果',
-    body: '真心話送出鎖定後，換出題者猜猜對方會怎麼答，兩邊答案同時揭曉——猜對了就是「這麼懂你」的證據，猜錯了也是多認識彼此一點的機會。',
-  },
-  {
-    icon: <BookOpen className="w-5 h-5" />,
-    title: '題庫是你們的',
-    body: '還沒有自己的題庫時先借用預設題庫；之後到「後台」新增、貼上 JSON、上傳檔案，或從 Google 雲端資料夾匯入，匯入過就會變成你們專屬的題庫。',
-  },
+/** Message keys rather than text, so the steps read in whichever language is current. */
+const steps: { icon: React.ReactNode; title: MessageKey; body: MessageKey }[] = [
+  { icon: <UserPlus className="w-5 h-5" />, title: 'onboard.step1.title', body: 'onboard.step1.body' },
+  { icon: <HeartHandshake className="w-5 h-5" />, title: 'onboard.step2.title', body: 'onboard.step2.body' },
+  { icon: <MessageCircleQuestion className="w-5 h-5" />, title: 'onboard.step3.title', body: 'onboard.step3.body' },
+  { icon: <Sparkles className="w-5 h-5" />, title: 'onboard.step4.title', body: 'onboard.step4.body' },
+  { icon: <BookOpen className="w-5 h-5" />, title: 'onboard.step5.title', body: 'onboard.step5.body' },
 ];
 
 /**
@@ -51,12 +33,13 @@ const steps: { icon: React.ReactNode; title: string; body: string }[] = [
  * admin screen's help button, which the closing note below points back to.
  */
 export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClose }) => {
+  const t = useT();
   if (!isOpen) return null;
 
   return (
     <div
       role="dialog"
-      aria-label="你問我答怎麼玩"
+      aria-label={t('onboard.title')}
       style={{
         paddingBottom: 'env(safe-area-inset-bottom)',
         paddingRight: 'env(safe-area-inset-right)',
@@ -71,14 +54,14 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
               <Coffee className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-base font-bold text-[#4A3F35]">你問我答怎麼玩</h2>
-              <p className="text-xs text-[#7A6C5E] truncate">跟另一半／好朋友一起玩的猜心問答</p>
+              <h2 className="text-base font-bold text-[#4A3F35]">{t('onboard.title')}</h2>
+              <p className="text-xs text-[#7A6C5E] truncate">{t('onboard.tagline')}</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="關閉"
+            aria-label={t('common.close')}
             className="p-1.5 rounded-xl text-[#7A6C5E] hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer shrink-0"
           >
             <X className="w-5 h-5" />
@@ -94,9 +77,9 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
                 </div>
                 <div className="min-w-0 pt-1">
                   <p className="text-sm font-bold text-[#4A3F35]">
-                    {i + 1}. {step.title}
+                    {i + 1}. {t(step.title)}
                   </p>
-                  <p className="text-xs text-[#7A6C5E] leading-relaxed mt-1">{step.body}</p>
+                  <p className="text-xs text-[#7A6C5E] leading-relaxed mt-1">{t(step.body)}</p>
                 </div>
               </li>
             ))}
@@ -105,8 +88,8 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
           <div className="flex items-start gap-2.5 rounded-2xl bg-[#F1E7D6] px-4 py-3.5">
             <HelpCircle className="w-4 h-4 text-[#8C6D53] mt-0.5 shrink-0" />
             <p className="text-xs text-[#5C4B3A] leading-relaxed">
-              <b className="font-bold">忘記怎麼玩了也沒關係</b>
-              ——右上角你的名字點開來，選單裡的「使用說明」隨時可以再打開這份導覽。
+              <b className="font-bold">{t('onboard.forgetBold')}</b>
+              {t('onboard.forgetRest')}
             </p>
           </div>
         </div>
@@ -117,7 +100,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({ isOpen, onClos
             onClick={onClose}
             className="milk-tea-btn-primary w-full py-3 rounded-2xl text-sm font-bold shadow-sm cursor-pointer"
           >
-            知道了，開始玩
+            {t('onboard.gotIt')}
           </button>
         </div>
       </div>

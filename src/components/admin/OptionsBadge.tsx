@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ListChecks } from 'lucide-react';
+import { useT } from '../../i18n';
 
 /**
  * The "N 個選項" badge, with the options themselves one tap away.
@@ -10,6 +11,7 @@ import { ListChecks } from 'lucide-react';
  * never appears on a touch screen.
  */
 export const OptionsBadge: React.FC<{ options: string[] }> = ({ options }) => {
+  const t = useT();
   const [isOpen, setIsOpen] = useState(false);
   const [placeAbove, setPlaceAbove] = useState(false);
   const wrapRef = useRef<HTMLSpanElement | null>(null);
@@ -48,14 +50,14 @@ export const OptionsBadge: React.FC<{ options: string[] }> = ({ options }) => {
         type="button"
         onClick={() => setIsOpen((v) => !v)}
         aria-expanded={isOpen}
-        aria-label={`查看 ${options.length} 個選項`}
+        aria-label={t('options.view', { count: options.length })}
         className={`inline-flex cursor-pointer items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold transition-colors ${
           isOpen
             ? 'bg-purple-200 text-purple-900'
             : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
         }`}
       >
-        {options.length} 個選項
+        {t('options.count', { count: options.length })}
         <ListChecks className="h-3 w-3 opacity-70" />
       </button>
 

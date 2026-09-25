@@ -16,6 +16,7 @@ import {
   subscribeToInvites,
   subscribeToPresence,
 } from '../lib/pairing';
+import { useT } from '../i18n';
 
 interface ConversationListViewProps {
   me: string;
@@ -39,6 +40,7 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
   onOpenRoom,
   showToast,
 }) => {
+  const t = useT();
   const [rooms, setRooms] = useState<PairRoomSummary[]>([]);
   const [people, setPeople] = useState<PresenceRecord[]>([]);
   const [incoming, setIncoming] = useState<ChatInvite[]>([]);
@@ -87,7 +89,7 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
     (async () => {
       const roomId = await ensurePairRoom(me, accepted.to);
       await dismissInvite(accepted.id);
-      showToast('對方已同意', `開始跟 ${accepted.to} 聊天`, 'success');
+      showToast(t('convo.accepted'), t('convo.acceptedBody', { name: accepted.to }), 'success');
       onOpenRoom(roomId, accepted.to);
     })();
   }, [outgoing, me]);
@@ -95,7 +97,7 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
   const declined = outgoing.find((i) => i.status === 'declined');
   useEffect(() => {
     if (!declined) return;
-    showToast('對方婉拒了邀請', declined.to, 'info');
+    showToast(t('convo.declined'), declined.to, 'info');
     dismissInvite(declined.id);
   }, [declined]);
 
@@ -104,9 +106,9 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
     setBusyWith(target);
     try {
       await sendChatInvite(me, target);
-      showToast('已送出邀請', `等待 ${target} 回應`, 'info');
+      showToast(t('convo.inviteSent'), t('convo.waitingFor', { name: target }), 'info');
     } catch (err: any) {
-      showToast('邀請失敗', err?.message || '請稍後再試', 'error');
+      showToast(t('convo.inviteFailed'), err?.message || t('app.tryLater'), 'error');
     } finally {
       setBusyWith('');
     }
@@ -153,9 +155,9 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
             </span>
             <div className="min-w-0">
               <p className="text-sm font-bold text-[#4A3F35] truncate">
-                {invite.from} 想跟你聊天
+                {t('convo.wantsToChat', { name: invite.from })}
               </p>
-              <p className="text-[11px] text-[#7A6C5E]">同意後就會開一間你們兩個的房間</p>
+              <p className="text-[11px] text-[#7A6C5E]">{t('convo.acceptHint')}</p>
             </div>
           </div>
           <div className="flex items-center justify-end gap-2">
@@ -165,7 +167,7 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
               className="px-4 py-2 rounded-xl border border-[#D9C5B2] bg-white text-[#7A6C5E] text-xs font-bold hover:bg-[#F5EFE6] transition-colors cursor-pointer inline-flex items-center gap-1.5"
             >
               <X className="w-3.5 h-3.5" />
-              婉拒
+              {t('convo.decline')}
             </button>
             {/* Full width on a phone, sized to its label on anything wider */}
             <button
@@ -174,23 +176,23 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
               className="flex-1 sm:flex-none sm:px-6 milk-tea-btn-primary py-2 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Check className="w-3.5 h-3.5" />
-              同意並開始
+              {t('convo.accept')}
             </button>
           </div>
         </div>
       ))}
 
       <section className="space-y-2">
-        <h2 className="text-xs font-bold text-[#7A6C5E] px-1">我的對話</h2>
+        <h2 className="text-xs font-bold text-[#7A6C5E] px-1">{t('convo.myChats')}</h2>
 
         {isLoading ? (
           <div className={`${card} p-6 flex items-center justify-center gap-2 text-xs text-[#7A6C5E]`}>
             <RefreshCw className="w-4 h-4 animate-spin" />
-            載入中…
+            {t('convo.loading')}
           </div>
         ) : rooms.length === 0 ? (
           <div className={`${card} p-6 text-center text-xs text-[#A69684]`}>
-            還沒有對話，從下面邀請一個人開始
+            {t('convo.empty')}
           </div>
         ) : (
           rooms.map((room) => {
@@ -208,7 +210,7 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-bold text-[#4A3F35] truncate">{partner}</div>
-                  <div className="text-[11px] text-[#7A6C5E]">{online ? '線上' : '離線'}</div>
+                  <div className="text-[11px] text-[#7A6C5E]">{online ? t('convo.online') : t('convo.offline')}</div>
                 </div>
                 <span
                   className={`w-2 h-2 rounded-full shrink-0 ${
@@ -222,11 +224,11 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-xs font-bold text-[#7A6C5E] px-1">現在線上</h2>
+        <h2 className="text-xs font-bold text-[#7A6C5E] px-1">{t('convo.onlineNow')}</h2>
 
         {invitable.length === 0 ? (
           <div className={`${card} p-6 text-center text-xs text-[#A69684]`}>
-            目前沒有其他人在線上
+            {t('convo.nobodyOnline')}
           </div>
         ) : (
           invitable.map((person) => {
@@ -248,7 +250,7 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
                   className="px-3 py-2 rounded-xl bg-[#E8D8C4] text-[#4A3F35] text-xs font-bold hover:bg-[#D9C5B2] disabled:opacity-50 transition-colors cursor-pointer inline-flex items-center gap-1.5 shrink-0"
                 >
                   <Send className="w-3.5 h-3.5" />
-                  {pending ? '等待回應' : '邀請'}
+                  {pending ? t('convo.pending') : t('convo.invite')}
                 </button>
               </div>
             );

@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Gamepad2, X, ThumbsUp, Clock, XCircle, Target, Sparkles, Dices, Shuffle, Edit3, Plus } from 'lucide-react';
 import { CUSTOM_CATEGORY_KEY, FAQItem, MIN_OPTIONS, RANDOM_CATEGORY_KEY } from '../../types';
+import { useLang, useT } from '../../i18n';
+import { displayCategory, localizedOptions, localizedQuestion } from '../../i18n/content';
 
 interface CoPlayInviteModalsProps {
   // Modal 1: Invitation Request for recipient
@@ -74,6 +76,8 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
   availableCategories,
   libraryLabel,
 }) => {
+  const t = useT();
+  const lang = useLang();
   /*
    * Questions for the picker: this category only, unplayed first.
    *
@@ -90,6 +94,22 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
     const played = inCategory.filter((f) => playedFaqIds.has(f.id));
     return [...fresh, ...played];
   }, [faqs, questionCategory, playedFaqIds]);
+
+  /*
+   * The preview reads in the player's own language, while the fields under it
+   * keep editing the original wording (see FAQItem.question). The source is
+   * found by its wording, so a hand-edited question — no longer the library's —
+   * simply previews as typed.
+   */
+  const sourceFaq = faqs.find((f) => f.question === questionText.trim());
+  const optionsMatchSource =
+    !!sourceFaq?.options &&
+    sourceFaq.options.length === options.length &&
+    sourceFaq.options.every((o, i) => o.trim() === options[i].trim());
+  const previewQuestion = sourceFaq
+    ? localizedQuestion(sourceFaq.question, sourceFaq.translations, lang)
+    : questionText;
+  const previewOptions = optionsMatchSource ? localizedOptions(options, sourceFaq?.translations, lang) : options;
 
   /*
    * Rendered into <body> rather than in place.
@@ -112,22 +132,22 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   <Gamepad2 className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-[#4A3F35]">考驗邀請</h3>
-                  <p className="text-xs text-[#7A6C5E]">來自 {getNameByPasscode(inviteStateSender)}</p>
+                  <h3 className="text-base font-bold text-[#4A3F35]">{t('invite.title')}</h3>
+                  <p className="text-xs text-[#7A6C5E]">{t('coplay.fromName', { name: getNameByPasscode(inviteStateSender) })}</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => onRespondInvite(false)}
                 className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
-                title="關閉 / 婉拒"
+                title={t('invite.closeDecline')}
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <p className="text-xs sm:text-sm font-bold text-[#4A3F35] leading-relaxed bg-white p-4 rounded-2xl border border-[#D9C5B2]">
-              {getNameByPasscode(inviteStateSender)} 向你發起考驗，要接受嗎？
+              {t('invite.body', { name: getNameByPasscode(inviteStateSender) })}
             </p>
 
             <div className="flex items-center gap-3 pt-2">
@@ -136,7 +156,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                 onClick={() => onRespondInvite(false)}
                 className="flex-1 py-3 rounded-2xl text-xs font-bold text-[#7A6C5E] bg-[#E8D8C4]/60 hover:bg-[#D9C5B2] transition-colors cursor-pointer"
               >
-                婉拒
+                {t('convo.decline')}
               </button>
               <button
                 type="button"
@@ -144,7 +164,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                 className="flex-1 milk-tea-btn-primary py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
               >
                 <ThumbsUp className="w-4 h-4" />
-                <span>接受挑戰</span>
+                <span>{t('invite.acceptChallenge')}</span>
               </button>
             </div>
           </div>
@@ -161,15 +181,15 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   <Clock className="w-5 h-5 animate-spin" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-[#4A3F35]">等待回應…</h3>
-                  <p className="text-xs text-[#7A6C5E]">已邀請 {partnerDisplayName}</p>
+                  <h3 className="text-base font-bold text-[#4A3F35]">{t('invite.waiting')}</h3>
+                  <p className="text-xs text-[#7A6C5E]">{t('invite.invited', { name: partnerDisplayName })}</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={onCancelInvite}
                 className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
-                title="取消邀請"
+                title={t('invite.cancelInvite')}
               >
                 <X className="w-5 h-5" />
               </button>
@@ -182,7 +202,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                 className="w-full py-3 rounded-2xl text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
               >
                 <XCircle className="w-4 h-4" />
-                <span>取消邀請</span>
+                <span>{t('invite.cancelInvite')}</span>
               </button>
             </div>
           </div>
@@ -199,15 +219,15 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   <Target className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm sm:text-base font-bold text-[#4A3F35]">出題</h3>
-                  <p className="text-[11px] text-[#7A6C5E]">設定題目後由你猜 {partnerDisplayName} 的選擇</p>
+                  <h3 className="text-sm sm:text-base font-bold text-[#4A3F35]">{t('coplay.ask')}</h3>
+                  <p className="text-[11px] text-[#7A6C5E]">{t('invite.askHint', { name: partnerDisplayName })}</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={onCloseQuestionModal}
                 className="text-[#7A6C5E] hover:text-[#4A3F35] p-1.5 rounded-xl hover:bg-[#E8D8C4]/60 transition-colors cursor-pointer"
-                title="關閉視窗"
+                title={t('invite.closeWindow')}
               >
                 <X className="w-5 h-5" />
               </button>
@@ -219,7 +239,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                 <div className="flex items-center justify-between gap-2">
                   <label className="text-xs font-bold text-[#4A3F35] flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4" />
-                    <span>題目種類</span>
+                    <span>{t('invite.category')}</span>
                   </label>
                   <select
                     value={questionCategory}
@@ -227,13 +247,13 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                     className="text-xs px-3 py-1.5 rounded-xl bg-white border border-[#D9C5B2] text-[#4A3F35] font-bold cursor-pointer hover:border-[#A68B6D] transition-colors"
                   >
                     {/* Not a category — a way of drawing from all of them */}
-                    <option value={RANDOM_CATEGORY_KEY}>隨機（全部類別）</option>
+                    <option value={RANDOM_CATEGORY_KEY}>{t('invite.random')}</option>
                     {availableCategories.map((cat) => (
                       <option key={cat} value={cat}>
-                        {cat}
+                        {displayCategory(cat)}
                       </option>
                     ))}
-                    <option value={CUSTOM_CATEGORY_KEY}>自訂種類</option>
+                    <option value={CUSTOM_CATEGORY_KEY}>{t('invite.customCategory')}</option>
                   </select>
                 </div>
               </div>
@@ -245,7 +265,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                     <div className="flex items-center justify-between border-b border-dashed border-[#D9C5B2] pb-2">
                       <span className="text-xs font-bold text-[#A68B6D] flex items-center gap-1">
                         <Dices className="w-4 h-4" />
-                        來自「{libraryLabel}」題庫
+                        {t('invite.fromLibrary', { library: libraryLabel })}
                       </span>
                       <button
                         type="button"
@@ -253,21 +273,21 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                         className="px-2.5 py-1.5 rounded-xl bg-[#A68B6D] text-white text-[11px] font-bold hover:bg-[#8E7256] transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
                       >
                         <Shuffle className="w-3.5 h-3.5" />
-                        <span>換一題</span>
+                        <span>{t('invite.shuffle')}</span>
                       </button>
                     </div>
 
                     <div>
-                      <span className="text-[11px] font-bold text-[#7A6C5E] block mb-1">題目</span>
+                      <span className="text-[11px] font-bold text-[#7A6C5E] block mb-1">{t('invite.questionLabel')}</span>
                       <p className="text-xs sm:text-sm font-bold text-[#4A3F35] leading-relaxed bg-[#FAF7F2] p-3 rounded-xl border border-[#E8D8C4]">
-                        {questionText || '題庫沒有可用題目'}
+                        {previewQuestion || t('invite.noQuestions')}
                       </p>
                     </div>
 
                     <div>
-                      <span className="text-[11px] font-bold text-[#7A6C5E] block mb-1">選項</span>
+                      <span className="text-[11px] font-bold text-[#7A6C5E] block mb-1">{t('invite.optionsLabel')}</span>
                       <div className="grid grid-cols-2 gap-2 text-xs">
-                        {options.map((opt, idx) =>
+                        {previewOptions.map((opt, idx) =>
                           opt.trim() ? (
                             <div
                               key={idx}
@@ -290,7 +310,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                         className="text-[#A68B6D] hover:underline font-bold flex items-center gap-1 cursor-pointer"
                       >
                         <Edit3 className="w-3.5 h-3.5" />
-                        <span>{isEditingPreset ? '收起編輯' : '編輯題目與選項'}</span>
+                        <span>{isEditingPreset ? t('invite.hideEdit') : t('invite.edit')}</span>
                       </button>
                     </div>
                   </div>
@@ -298,7 +318,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   {isEditingPreset && (
                     <div className="space-y-3 bg-amber-50/70 p-3.5 rounded-2xl border border-amber-200/80 animate-fade-in">
                       <div>
-                        <label className="text-xs font-bold text-[#4A3F35] mb-1 block">題目</label>
+                        <label className="text-xs font-bold text-[#4A3F35] mb-1 block">{t('invite.questionLabel')}</label>
                         <input
                           type="text"
                           required
@@ -317,8 +337,8 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
 
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <label className="text-[11px] font-bold text-[#7A6C5E] block">從題庫選擇</label>
-                      <span className="text-[10px] text-[#A69684]">淡色 = 玩過了，排在後面</span>
+                      <label className="text-[11px] font-bold text-[#7A6C5E] block">{t('invite.pickFromLibrary')}</label>
+                      <span className="text-[10px] text-[#A69684]">{t('invite.playedHint')}</span>
                     </div>
                     <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
                       {pickableFaqs.map((f) => {
@@ -328,14 +348,14 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                               key={f.id}
                               type="button"
                               onClick={() => handleSelectPresetFAQ(f)}
-                              title={isPlayed ? '這題已經玩過了' : undefined}
+                              title={isPlayed ? t('invite.playedTitle') : undefined}
                               className={`text-[11px] px-2.5 py-1 rounded-xl border font-medium transition-colors text-left truncate max-w-full cursor-pointer ${
                                 isPlayed
                                   ? 'bg-[#F2EDE6] border-[#E4DACE] text-[#A69684] hover:text-[#7A6C5E] hover:border-[#D9C5B2]'
                                   : 'bg-white border-[#D9C5B2] text-[#4A3F35] hover:border-[#A68B6D] hover:bg-[#E8D8C4]/40'
                               }`}
                             >
-                              {f.question}
+                              {localizedQuestion(f.question, f.translations, lang)}
                             </button>
                           );
                         })}
@@ -346,14 +366,14 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                 <div className="space-y-3 bg-white p-4 rounded-2xl border border-[#D9C5B2] shadow-2xs animate-fade-in">
                   <div>
                     <label className="text-xs font-bold text-[#4A3F35] mb-1 block">
-                      題目
+                      {t('invite.questionLabel')}
                     </label>
                     <input
                       type="text"
                       required
                       value={questionText}
                       onChange={(e) => setQuestionText(e.target.value)}
-                      placeholder="輸入要問對方的題目"
+                      placeholder={t('invite.typeQuestion')}
                       className="w-full px-3.5 py-2.5 text-xs rounded-xl milk-tea-input font-bold"
                     />
                   </div>
@@ -372,7 +392,7 @@ export const CoPlayInviteModals: React.FC<CoPlayInviteModalsProps> = ({
                   className="w-full milk-tea-btn-primary py-3.5 rounded-2xl text-sm font-bold flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
                 >
                   <Sparkles className="w-4 h-4" />
-                  <span>發布題目</span>
+                  <span>{t('invite.publish')}</span>
                 </button>
               </div>
             </form>
@@ -397,6 +417,7 @@ const OptionListEditor: React.FC<{
   setOptions: React.Dispatch<React.SetStateAction<string[]>>;
   inputClassName: string;
 }> = ({ options, setOptions, inputClassName }) => {
+  const t = useT();
   const setAt = (index: number, value: string) =>
     setOptions((prev) => prev.map((opt, i) => (i === index ? value : opt)));
 
@@ -407,9 +428,9 @@ const OptionListEditor: React.FC<{
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <label className="block text-xs font-bold text-[#4A3F35]">
-          選項
+          {t('invite.optionsLabel')}
           <span className="ml-1 font-medium text-[#7A6C5E]">
-            （至少 {MIN_OPTIONS} 個，上不封頂）
+            {t('invite.optionsHint', { min: MIN_OPTIONS })}
           </span>
         </label>
         <button
@@ -418,7 +439,7 @@ const OptionListEditor: React.FC<{
           className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-[#D9C5B2] bg-white px-2.5 py-1 text-[11px] font-bold text-[#4A3F35] transition-colors hover:bg-[#F5EFE6]"
         >
           <Plus className="h-3 w-3" />
-          新增選項
+          {t('invite.addOption')}
         </button>
       </div>
 
@@ -433,14 +454,14 @@ const OptionListEditor: React.FC<{
               required={idx < MIN_OPTIONS}
               value={opt}
               onChange={(e) => setAt(idx, e.target.value)}
-              placeholder={idx < MIN_OPTIONS ? `選項 ${idx + 1}` : '可留白'}
+              placeholder={idx < MIN_OPTIONS ? t('invite.optionPlaceholder', { n: idx + 1 }) : t('invite.optionBlank')}
               className={`min-w-0 flex-1 ${inputClassName}`}
             />
             <button
               type="button"
               onClick={() => removeAt(idx)}
               disabled={options.length <= MIN_OPTIONS}
-              aria-label={`刪除選項 ${idx + 1}`}
+              aria-label={t('invite.deleteOption', { n: idx + 1 })}
               className="shrink-0 cursor-pointer rounded-lg p-1 text-[#A69684] transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[#A69684]"
             >
               <X className="h-3.5 w-3.5" />
