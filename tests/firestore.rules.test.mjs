@@ -17,7 +17,7 @@ import {
 } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'node:fs';
 import {
-  doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where, setLogLevel,
+  doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where, limit, deleteField, setLogLevel,
 } from 'firebase/firestore';
 
 // Denied writes are the point of most of these tests; the SDK logging each one
@@ -133,7 +133,7 @@ await test('an unverified email cannot reset anything, even if it matches', () =
 await test('a verified email nobody linked cannot reset anything', () =>
   assertFails(setDoc(doc(verifiedStranger, 'secrets/amy'), { passwordHash: 'reset-hash' }, { merge: true })));
 await test('the email/account mapping is unreadable without a matching verified email', () =>
-  assertFails(getDoc(doc(amy, 'emails/amy@example.com'))));
+  assertFails(getDoc(doc(eve, 'emails/amy@example.com'))));
 await test('the email/account mapping is unreadable by an unverified match', () =>
   assertFails(getDoc(doc(unverifiedAsAmy, 'emails/amy@example.com'))));
 await test('a verified matching email may read its own mapping', () =>
@@ -214,6 +214,53 @@ await test('preferences are keyed by the lowercased name', () =>
   assertFails(setDoc(doc(amy, 'userPrefs/Amy'), { chatBackground: '' })));
 await test('someone else\'s preferences are not', () =>
   assertFails(setDoc(doc(eve, 'userPrefs/amy'), { chatBackground: 'x' })));
+
+console.log('\nAccount enumeration and private data');
+const anonymous = env.unauthenticatedContext().firestore();
+await test('a signed-out visitor may look up one name (the login screen needs it)', () =>
+  assertSucceeds(getDoc(doc(anonymous, 'users/amy'))));
+await test('a signed-out visitor cannot list the users collection', () =>
+  assertFails(getDocs(collection(anonymous, 'users'))));
+await test('a signed-out list with a limit is refused too', () =>
+  assertFails(getDocs(query(collection(anonymous, 'users'), limit(1)))));
+await test('a signed-in stranger cannot list the users collection', () =>
+  assertFails(getDocs(collection(eve, 'users'))));
+await test('a signed-in stranger cannot search users by email', () =>
+  assertFails(getDocs(query(collection(eve, 'users'), where('email', '==', 'amy@example.com')))));
+await test('the private email is unreadable when signed out', () =>
+  assertFails(getDoc(doc(anonymous, 'accountPrivate/amy'))));
+await test('the private email is unreadable by another account', () =>
+  assertFails(getDoc(doc(eve, 'accountPrivate/amy'))));
+await test('the private email cannot be overwritten by another account', () =>
+  assertFails(setDoc(doc(eve, 'accountPrivate/amy'), { email: 'evil@example.com' })));
+await test('the owner may store and read their own private email', async () => {
+  await assertSucceeds(setDoc(doc(amy, 'accountPrivate/amy'), { email: 'amy@example.com' }));
+  await assertSucceeds(getDoc(doc(amy, 'accountPrivate/amy')));
+});
+await test('nobody can list the private emails', () =>
+  assertFails(getDocs(collection(amy, 'accountPrivate'))));
+await test('an address nobody has claimed can be checked (it is not taken)', () =>
+  assertSucceeds(getDoc(doc(amy, 'emails/free@example.com'))));
+await test('checking an address that is mine succeeds', () =>
+  assertSucceeds(getDoc(doc(amy, 'emails/amy@example.com'))));
+await test('checking an address somebody else holds is refused, not revealed', () =>
+  assertFails(getDoc(doc(eve, 'emails/amy@example.com'))));
+await test('a signed-out visitor cannot check addresses', () =>
+  assertFails(getDoc(doc(anonymous, 'emails/free@example.com'))));
+await test('the addresses on file cannot be listed', () =>
+  assertFails(getDocs(collection(amy, 'emails'))));
+await test('a verified reset may write the salt on the account it resets', () =>
+  assertSucceeds(setDoc(doc(verifiedAsAmy, 'users/amy'), { name: 'Amy', salt: 'abc', hashVersion: 2 }, { merge: true })));
+await test("a verified reset may not touch another account's record", () =>
+  assertFails(setDoc(doc(verifiedAsAmy, 'users/bob'), { name: 'bob', salt: 'abc' }, { merge: true })));
+await test("a stranger cannot rewrite somebody else's account record", () =>
+  assertFails(setDoc(doc(eve, 'users/amy'), { name: 'Amy', salt: 'attacker' }, { merge: true })));
+await test('an account may remove the legacy public email from its own record', () =>
+  assertSucceeds(setDoc(doc(amy, 'users/amy'), { name: 'Amy', email: deleteField() }, { merge: true })));
+await test("nobody can read another account's preferences", () =>
+  assertFails(getDoc(doc(eve, 'userPrefs/amy'))));
+await test('my own preferences are readable', () =>
+  assertSucceeds(getDoc(doc(amy, 'userPrefs/amy'))));
 
 console.log('\nSigned out');
 const anon = env.unauthenticatedContext().firestore();

@@ -2,7 +2,7 @@
 
 ## 這一版改了什麼（重要）
 
-- 登入改成**姓名 + 密碼**，預設密碼 `0101`，第一次登入強制修改
+- 登入改成**姓名 + 密碼**；新名字第一次進來時自己設定密碼（至少 8 個字元），**已經沒有共用的預設密碼**
 - 聊天室改成**兩人一組**：從線上名單邀請對方，對方同意才開始
 - **對話紀錄只有那兩個人看得到**，每一組各自獨立
 - **題庫也是每組獨立**，沒有自己的題庫時就用內建預設題目
@@ -40,10 +40,11 @@ firebase deploy --only firestore:rules
 
 | 集合 | 文件 ID | 內容 | 誰讀得到 |
 | --- | --- | --- | --- |
-| `users` | 姓名 | `name`、`mustChangePassword`、`hasRecoveryEmail` | 所有人（只有這裡是公開的） |
+| `users` | 姓名 | `name`、`hasRecoveryEmail`、`salt`、`hashVersion`、`mustChangePassword` | 所有人**單筆查詢**（不能列出整個集合），裡面沒有任何私人資料 |
+| `accountPrivate` | 姓名 | `email`（救援 Email 本人） | 只有本人 |
 | `secrets` | 姓名 | `passwordHash` | **沒有人**，只有安全規則讀得到 |
 | `sessions` | 匿名 UID | `name`、`passwordHash` | 只有自己 |
-| `emails` | Email（小寫） | `key`（對應哪個姓名） | 只有剛用該 Email 完成 Firebase 驗證信流程的瀏覽器 |
+| `emails` | Email（小寫） | `key`（對應哪個姓名） | 只有剛用該 Email 完成 Firebase 驗證信流程的瀏覽器；已登入的人可以查「這個地址是不是已被別人用」，但看不到是誰 |
 
 沒有後端可以驗密碼，所以驗證放在規則裡：登入時把雜湊寫進 `sessions/{uid}`，
 規則會拿它跟 `secrets/{姓名}` 比對，**不一致就整筆寫入被拒絕**。
@@ -51,8 +52,8 @@ firebase deploy --only firestore:rules
 
 - **姓名不分大小寫**：`Amy`、`amy`、`AMY` 是同一個帳號。文件 ID 一律用小寫，顯示名稱則保留註冊時的寫法
 - 姓名同時是文件 ID，所以**不能包含斜線**（規則沒辦法做 URL 編碼，只好從源頭限制）
-- **忘記密碼**：如果這個帳號有設定救援 Email，登入畫面的「忘記密碼？」就能自己重設，見下方〈忘記密碼〉一節。沒設定過的話，還是只能到 Console 手動刪掉 `secrets/{姓名}` 與 `users/{姓名}`，下次登入等於新帳號（`0101`）
-- **手動清掉救援 Email 記得連 Auth 一起清**：光刪 Firestore 的 `users/{姓名}.email` 沒用，下次登入會被 `syncVerifiedEmail` 自動補回來——因為 Firebase Auth 那邊還連著一組已驗證的憑證。要連 Authentication → Users 裡對應的匿名使用者（uid 可以從 `sessions` 集合裡該姓名那筆文件的 ID 找到）一起刪掉
+- **忘記密碼**：如果這個帳號有設定救援 Email，登入畫面的「忘記密碼？」就能自己重設，見下方〈忘記密碼〉一節。沒設定過的話，還是只能到 Console 手動刪掉 `secrets/{姓名}` 與 `users/{姓名}`，下次登入等於新帳號（要重新設定密碼）
+- **手動清掉救援 Email 記得連 Auth 一起清**：光刪 Firestore 的 `accountPrivate/{姓名}` 沒用，下次登入會被 `syncVerifiedEmail` 自動補回來——因為 Firebase Auth 那邊還連著一組已驗證的憑證。要連 Authentication → Users 裡對應的匿名使用者（uid 可以從 `sessions` 集合裡該姓名那筆文件的 ID 找到）一起刪掉
 - 清掉瀏覽器資料後匿名 UID 會換一組，`sessions` 就對不上，App 會請你重新登入——密碼還是原來那組
 
 ### 一個瀏覽器只能登入一個帳號
@@ -67,13 +68,13 @@ firebase deploy --only firestore:rules
 
 ## 忘記密碼
 
-登入畫面（既有帳號的密碼那一步）多了「忘記密碼？」；登入後每次也會被（可跳過的）彈窗提醒設定救援 Email——沒有 Email，忘記密碼就真的沒辦法自救。
+登入畫面（既有帳號的密碼那一步）多了「忘記密碼？」，點進去要**輸入自己的救援 Email**（Email 現在是私人資料，不能再用姓名去查）；登入後每次也會被（可跳過的）彈窗提醒設定救援 Email——沒有 Email，忘記密碼就真的沒辦法自救。
 
 寄信這件事完全靠 **Firebase Authentication 內建的 Email 連結（passwordless email link）機制**，沒有裝任何寄信套件、沒有自己的後端、也不需要另外申請 Email 服務。之所以不是更直覺的「密碼重設信」（`sendPasswordResetEmail`），是因為那種信的連結預設會先跳到 Firebase 自己的托管頁面完成重設，要跳過那個頁面、直接進這個網站，需要在 Console 開「自訂動作網址」（Customize action URL）——而這個專案的範本編輯功能被 Firebase 鎖住過，鎖不鎖是帳號層級的限制，不保證解得開。Email 連結登入的信件天生就沒有 Firebase 自己的頁面可以顯示，一定會直接跳回這個網站，才能繞過這個限制。代價是**信件內容本身固定用 Firebase 的預設格式，Console 改不了**。
 
 運作方式，依情境分三種：
 
-**設定 Email 前**：不管是第一次設定還是改成另一個，都會先查一次 `users` 集合裡有沒有別的帳號已經填過一模一樣的地址，有就直接擋下來、不寄任何信（`accounts.ts` 的 `findAccountKeyUsingEmail`）。這只是字串完全比對、不分大小寫檢查不出來的那種還是要靠下面 `emails/{email}` 的建立規則兜底。
+**設定 Email 前**：不管是第一次設定還是改成另一個，都會先查一次 `emails/{email}`：地址沒人用或是自己的就繼續；是別人的，規則會拒絕這次查詢，App 就當作「已被使用」擋下來、不寄任何信（`accounts.ts` 的 `isEmailTaken`）。真正保證不重複的還是 `emails/{email}` 的建立規則。
 
 **第一次設定救援 Email**：呼叫 `sendSignInLinkToEmail` 寄一封確認信到這個新 Email；點裡面的連結會回到這個網站，做一次 `signInWithEmailLink`（純粹只是「證明這個地址是我的」，跟這個瀏覽器原本的登入狀態無關，任何裝置點開都行）。原本想用 `EmailAuthProvider.credentialWithLink` + `linkWithCredential` 把憑證直接掛到目前這個匿名帳號上、當場寫 Firestore——實測（對著 Auth 模擬器）發現這個組合並不會真的「掛上去」，而是默默登入成另一個獨立帳號，導致後續步驟必定失敗（`auth/invalid-action-code`），所以放棄這條路，改成跟下面「改 Email」共用同一套機制：先不碰 Firestore，靠 `syncVerifiedEmail` 事後補上。
 
@@ -83,7 +84,7 @@ firebase deploy --only firestore:rules
 
 > 這兩個「點連結後自動觸發下一步」的畫面（`EmailChangeReauthView`、`NewEmailConfirmationView`）在 `useEffect` 裡呼叫的都是**一次性**的動作碼（用過就失效）。React 的 `<StrictMode>` 在開發模式會刻意把 effect 重複呼叫一次，藉此抓出這種「呼叫兩次會壞掉」的副作用——第一次呼叫其實會成功，但緊接著的第二次呼叫會因為動作碼已經用過而失敗，如果沒有特別處理，畫面顯示的會是那個誤導人的第二次失敗，讓人誤以為整個功能壞了。兩個元件都用一個 `useRef` 擋掉第二次呼叫，只保留真正成功的第一次結果——如果之後要再寫類似「點連結自動執行一次性動作」的畫面，記得比照辦理。
 
-「忘記密碼？」本身則是：查出這個姓名對應的 Email，直接寄一封 Email 連結登入信過去（不用再輸入一次 Email）；點連結進到這個網站的「設定新密碼」畫面，同時完成三件事：Firebase 那邊的密碼、這個 App 自己用的密碼雜湊（`secrets/{姓名}`）、還有登入這個瀏覽器——一步到位，不用再手動登入一次。
+「忘記密碼？」本身則是：輸入救援 Email，寄一封 Email 連結登入信過去（畫面一律回答「已寄出」，不會透露這個地址有沒有對應到帳號）；點連結進到這個網站的「設定新密碼」畫面，同時完成三件事：Firebase 那邊的密碼、這個 App 自己用的密碼雜湊（`secrets/{姓名}`）、還有登入這個瀏覽器——一步到位，不用再手動登入一次。
 
 ### 需要在 Firebase Console 做的一次性設定
 
@@ -98,6 +99,46 @@ firebase deploy --only firestore:rules
 設定 / 更改救援 Email 的兩種確認連結（見上方〈忘記密碼〉），任何裝置點開都行，不需要跟原本申請的瀏覽器一樣——它們只負責向 Firebase 證明「這個地址是我的」，從不直接碰 Firestore，真正落地永遠是 `syncVerifiedEmail` 在下一次正常登入時做的，那時候當然是在使用者自己已登入的裝置上，`hasSession()` 自然成立。
 
 ---
+
+## 資安加固（弱點測試報告之後）
+
+這一節記錄 `security/fixes` 這批修補做了什麼、要照什麼順序上線、還剩什麼沒處理。詳細的逐項結果在 `SECURITY-REPORT.md`。
+
+### 上線順序（很重要）
+
+1. **先部署 Firestore 規則**（Firebase Console → Firestore → 規則，貼上 `firestore.rules` 全文 → 發布；或 `firebase deploy --only firestore:rules`）。
+   新規則對「還沒更新的舊版網站」是相容的：舊版查 Email 重複的那段會失敗、但它本來就是「失敗就放行」；其餘功能照常。
+2. **再合併 `security/fixes` 到 `main`**，GitHub Actions 會自動部署新版網站。
+3. 之後每個舊帳號**下次登入時會自己升級**：密碼改存加鹽 + PBKDF2、公開的 Email 搬到私人文件。不需要手動搬資料。
+
+反過來（先發網站、後發規則）會有一段時間新版網站的「Email 重複檢查」一律被舊規則拒絕、把任何地址都判成「已被使用」，所以請照上面的順序。
+
+### 上線後請檢查
+
+- Console → Firestore → `users`：找 **`mustChangePassword` 為 `true`** 的帳號。這些是還停在舊預設密碼 `0101` 的帳號，**任何人都能用 `0101` 登入**。沒在用的直接刪掉（連同 `secrets/{姓名}`），還在用的請本人盡快登入改密碼。這是舊資料的問題，程式碼改完後才不會再產生新的，但舊的只能人工清。
+- `users` 文件裡如果還看得到 `email` 欄位，代表那個帳號還沒再登入過；等本人下次登入就會自動移走。想更快處理，可以請對方登入一次。
+- 已經公開過的 Email 沒辦法收回。如果覺得需要，可以請大家換一組救援 Email。
+
+### App Check（擋掉站外腳本直接打 Firebase）
+
+程式已經內建，但**預設不啟用**（沒有金鑰就完全不動作）。要開的話：
+
+1. Firebase Console → App Check → Apps → 這個網頁應用程式 → 選 **reCAPTCHA v3**（或 Enterprise），依指示到 reCAPTCHA 後台建立金鑰，網域填 `wu-haowei.github.io`。
+2. 把**網站金鑰（site key）**填到 GitHub → Settings → Secrets and variables → Actions → Variables，名稱 `VITE_APPCHECK_SITE_KEY`；密鑰（secret key）貼回 Firebase Console。
+3. 重新部署。先**不要按「強制執行」**，到 App Check 的指標頁看「已驗證的請求」比例，正常使用一兩天、確認幾乎都被驗證了，再對 **Cloud Firestore** 按強制執行。
+4. 本機對著正式專案開發時，把 App Check → 管理偵錯權杖 產生的 token 放進 `VITE_APPCHECK_DEBUG_TOKEN`。模擬器不受影響。
+
+Authentication（匿名登入）要不要強制 App Check，需要升級 Identity Platform，不建議現在做。改用下面這個更便宜的做法：
+
+- Google Cloud Console → 帳單 → **預算與快訊**，設一個低額預算與 50% / 90% / 100% 通知。
+- Firebase Console → Authentication → 使用情況，偶爾看一下匿名帳號數量有沒有異常暴增。
+
+### 安全標頭
+
+GitHub Pages 不能自訂回應標頭，所以：
+
+- 已用 `<meta>` 加上 **Content Security Policy**（只限打包出來的網站本身、Firebase／Google API、reCAPTCHA），與 `Referrer-Policy: strict-origin-when-cross-origin`；只在正式 build 生效，開發模式不受影響。CSP 寫在 `vite.config.ts` 的 `contentSecurityPolicy`。**之後如果新增外部服務（字型、圖片來源、其他 API）而網站壞掉，是要把那個網域加進這裡。**
+- `frame-ancestors`、`X-Frame-Options`、`X-Content-Type-Options: nosniff` 這幾個 meta 標籤無效，做不到。點擊劫持的部分用 `public/frame-guard.js` 補：被別人的網頁用 iframe 包起來時，會把頁面藏起來並嘗試跳出。這是盡力而為的做法（框住的一方可以用 `sandbox` 讓腳本不執行），真正的做法是搬到能設標頭的主機（例如 Firebase Hosting，`firebase.json` 就能設）。
 
 ## 配對聊天室
 
@@ -451,7 +492,7 @@ npm run dev:local   # 終端機 B：讓網站連到模擬器
   不一致的話 App 寫進一個命名空間、UI 顯示另一個，看起來就像完全沒資料
 - 資料是**暫時的**，關掉就沒了。要保留下次接著用：
   `npx firebase-tools@14 emulators:start --project rules-test --only firestore,auth --import ./.emulator-data --export-on-exit`
-- 模擬器裡是空的資料庫，所以帳號要重新註冊一次（一樣是預設密碼 `0101`）
+- 模擬器裡是空的資料庫，所以帳號要重新註冊一次（自己設定密碼，至少 8 個字元）
 - 邀請碼閘門在模擬器裡預設是關的（沒有 `config/access` 這份文件）
 
 `firebase-tools` 體積很大（連帶幾百個套件），所以**沒有**放進 `devDependencies`——

@@ -2,10 +2,10 @@ import React, { useState } from 'react';
 import { UserRound, KeyRound, ShieldCheck, MailCheck } from 'lucide-react';
 import {
   AuthError,
-  DEFAULT_PASSWORD,
   changePassword,
   lookupAccount,
-  requestPasswordResetForName,
+  registerAccount,
+  requestPasswordReset,
   signInWithPassword,
 } from '../lib/accounts';
 import { useT } from '../i18n';
@@ -15,28 +15,29 @@ interface LoginViewProps {
   onSignedIn: (name: string) => void;
 }
 
-type Step = 'name' | 'password' | 'change' | 'forgot-sent';
+type Step = 'name' | 'password' | 'register' | 'change' | 'forgot' | 'forgot-sent';
 
 /**
- * Name, then password, then a forced change if the account is still on the
- * default. Splitting the steps lets the password screen say whether this is a
- * brand new account, which is the difference between "type 0101" and "type
- * the password you chose".
+ * Name first. A name nobody has yet goes to `register`, where the person chooses
+ * their own password; a taken one goes to `password`. There is no shared starting
+ * password any more — `change` only appears for an old account that is still sitting
+ * on the retired default and has to move to one of its own.
  *
  * Setting up a recovery email is not part of this flow at all — App shows a
  * dismissible reminder for that after signing in, since making it a gate here
  * would lock someone out of their own conversation over a step they might
  * simply not want to do yet.
  *
- * "Forgot password" on the password step already knows the name (it's right
- * there on screen), so it fires straight to forgot-sent — there is nothing
- * left to ask.
+ * "Forgot password" asks for the recovery email instead of looking it up by name:
+ * the address is private now, so there is nothing public to look up. Whether that
+ * address really belongs to this account is decided later, when the emailed link is
+ * opened — so the screen always answers "sent" and never confirms or denies a match.
  */
 export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
   const t = useT();
   const [step, setStep] = useState<Step>('name');
   const [name, setName] = useState('');
-  const [isNewAccount, setIsNewAccount] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState('');
 
   const [password, setPassword] = useState('');
   const [nextPassword, setNextPassword] = useState('');
@@ -65,9 +66,10 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
     setError('');
     try {
       const account = await lookupAccount(clean);
-      setIsNewAccount(!account.exists);
-      setPassword(account.exists ? '' : DEFAULT_PASSWORD);
-      setStep('password');
+      setPassword('');
+      setNextPassword('');
+      setConfirmPassword('');
+      setStep(account.exists ? 'password' : 'register');
     } catch (err) {
       fail(err);
     } finally {
@@ -116,14 +118,35 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
     }
   };
 
-  /** The name is already on screen — nothing left to ask before sending. */
-  const handleForgotClick = async () => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (busy) return;
+
+    if (nextPassword !== confirmPassword) {
+      setError(t('login.mismatch'));
+      return;
+    }
 
     setBusy(true);
     setError('');
     try {
-      await requestPasswordResetForName(name);
+      const account = await registerAccount(name, nextPassword);
+      onSignedIn(account.name);
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleForgotSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy || !recoveryEmail.trim()) return;
+
+    setBusy(true);
+    setError('');
+    try {
+      await requestPasswordReset(recoveryEmail);
       setStep('forgot-sent');
     } catch (err) {
       fail(err);
@@ -196,7 +219,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
     return shell(
       <KeyRound className="w-7 h-7" />,
       name.trim(),
-      isNewAccount ? t('login.newAccountHint', { password: DEFAULT_PASSWORD }) : t('login.enterPassword'),
+      t('login.enterPassword'),
       <form onSubmit={handlePasswordSubmit} className="space-y-3">
         <div className="space-y-1.5">
           <label htmlFor="login-password" className="block text-xs font-bold text-[#7A6C5E]">
@@ -228,17 +251,111 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
           >
             {t('login.changeName')}
           </button>
-          {!isNewAccount && (
-            <button
-              type="button"
-              onClick={handleForgotClick}
-              disabled={busy}
-              className="py-2 text-xs font-semibold text-[#7A6C5E] hover:text-[#4A3F35] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {busy ? t('login.sending') : t('login.forgot')}
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => {
+              setRecoveryEmail('');
+              setError('');
+              setStep('forgot');
+            }}
+            disabled={busy}
+            className="py-2 text-xs font-semibold text-[#7A6C5E] hover:text-[#4A3F35] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {t('login.forgot')}
+          </button>
         </div>
+      </form>
+    );
+  }
+
+  if (step === 'register') {
+    return shell(
+      <ShieldCheck className="w-7 h-7" />,
+      name.trim(),
+      t('login.newAccountHint'),
+      <form onSubmit={handleRegisterSubmit} className="space-y-3">
+        <div className="space-y-1.5">
+          <label htmlFor="register-password" className="block text-xs font-bold text-[#7A6C5E]">
+            {t('login.passwordLabel')}
+          </label>
+          <input
+            id="register-password"
+            type="password"
+            value={nextPassword}
+            onChange={(e) => setNextPassword(e.target.value)}
+            placeholder={t('login.newPasswordPlaceholder')}
+            autoComplete="new-password"
+            autoFocus
+            className={field}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label htmlFor="register-confirm" className="block text-xs font-bold text-[#7A6C5E]">
+            {t('login.confirmLabel')}
+          </label>
+          <input
+            id="register-confirm"
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            placeholder={t('login.confirmPlaceholder')}
+            autoComplete="new-password"
+            className={field}
+          />
+        </div>
+        <button type="submit" disabled={!nextPassword || !confirmPassword || busy} className={submit}>
+          {busy ? t('login.creating') : t('login.createAccount')}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setStep('name');
+            setNextPassword('');
+            setConfirmPassword('');
+            setError('');
+          }}
+          className="w-full py-2 text-xs font-semibold text-[#7A6C5E] hover:text-[#4A3F35] cursor-pointer"
+        >
+          {t('login.changeName')}
+        </button>
+      </form>
+    );
+  }
+
+  if (step === 'forgot') {
+    return shell(
+      <MailCheck className="w-7 h-7" />,
+      t('login.forgotTitle'),
+      t('login.forgotSubtitle'),
+      <form onSubmit={handleForgotSubmit} className="space-y-3">
+        <div className="space-y-1.5">
+          <label htmlFor="forgot-email" className="block text-xs font-bold text-[#7A6C5E]">
+            {t('login.emailLabel')}
+          </label>
+          <input
+            id="forgot-email"
+            type="email"
+            value={recoveryEmail}
+            onChange={(e) => setRecoveryEmail(e.target.value)}
+            placeholder={t('login.emailPlaceholder')}
+            autoComplete="email"
+            autoFocus
+            className={field}
+          />
+        </div>
+        <button type="submit" disabled={!recoveryEmail.trim() || busy} className={submit}>
+          {busy ? t('login.sending') : t('login.sendLink')}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setStep('password');
+            setError('');
+          }}
+          className="w-full py-2 text-xs font-semibold text-[#7A6C5E] hover:text-[#4A3F35] cursor-pointer"
+        >
+          {t('login.backToSignIn')}
+        </button>
       </form>
     );
   }
@@ -291,7 +408,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSignedIn }) => {
     t('login.sentSubtitle'),
     <div className="space-y-3">
       <p className="text-xs text-[#7A6C5E] text-center leading-relaxed">
-        {t('login.sentBody', { name: name.trim() })}
+        {t('login.sentBodyEmail', { name: name.trim() })}
       </p>
       <p className="text-xs text-[#A68B6D] text-center leading-relaxed">{t('login.sentSpam')}</p>
       <button

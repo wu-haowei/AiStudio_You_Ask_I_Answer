@@ -1,4 +1,4 @@
-import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, setDoc, where } from 'firebase/firestore';
+import { deleteDoc, deleteField, doc, getDoc, onSnapshot, setDoc, writeBatch } from 'firebase/firestore';
 import {
   isSignInWithEmailLink,
   sendSignInLinkToEmail,
@@ -15,19 +15,17 @@ import { t } from '../i18n';
  * skip it: security rules compare a submitted hash against one stored in a
  * document no client may read.
  *
- *   users/{key}       public    { key, name, mustChangePassword, hasRecoveryEmail, email }
+ *   users/{key}       public    { key, name, mustChangePassword, hasRecoveryEmail, salt, hashVersion }
+ *   accountPrivate/{key}  owner only  { email }
  *   secrets/{key}     no read   { passwordHash }
  *   sessions/{uid}    own only  { key, name, passwordHash }
  *   emails/{email}    see below { key }
  *
- * `users.email` is deliberately public, same as the rest of that document —
- * that is what lets "forgot password" work by name alone (look the address up
- * and mail it, rather than asking the person to type back the address they
- * are, definitionally, the one person who might not have handy). There is no
- * backend to hide it behind a "prove you're allowed to know this" check the
- * way `secrets` and `emails` get to; anyone who knows a name can look up the
- * email on file for it. Never render the value anywhere outside a screen the
- * account's own owner is looking at.
+ * `users` is public by document — the login screen has to tell a new name from a
+ * taken one, and fetch the salt, before anybody has signed in — so it holds nothing
+ * private: not the recovery email (that is in `accountPrivate`, readable only by its
+ * owner) and nothing that can be replayed. Rules allow looking one name up but refuse
+ * listing the collection, so the accounts that exist cannot be harvested in bulk.
  *
  * `key` is the lowercased name and is the document id, so "Amy" and "amy" are
  * the same account. The original spelling is kept in `name` and is what other
@@ -59,12 +57,17 @@ import { t } from '../i18n';
  * screen this app never sees the result of.
  */
 
-export const DEFAULT_PASSWORD = '0101';
+/**
+ * The shared starting password older versions gave every new account. Nothing hands it
+ * out any more; it is kept only so it can be refused as a password someone chooses.
+ */
+const LEGACY_DEFAULT_PASSWORD = '0101';
 
 const USERS = 'users';
 const SECRETS = 'secrets';
 const SESSIONS = 'sessions';
 const EMAILS = 'emails';
+const PRIVATE = 'accountPrivate';
 
 const isValidEmail = (email: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
@@ -105,10 +108,10 @@ export interface AccountRecord {
   name: string;
   exists: boolean;
   mustChangePassword: boolean;
-  /** Whether a recovery email is on file — the login screen requires one before letting a person in. */
+  /** Whether a recovery email is on file — a yes/no; the address itself is in accountPrivate. */
   hasRecoveryEmail: boolean;
-  /** The recovery email itself, when there is one. Public data — see the module doc comment — but still only for the owner's own eyes in the UI. */
-  email?: string;
+  /** Per-account password salt. Absent on accounts that have not moved to the salted scheme yet. */
+  salt?: string;
 }
 
 export class AuthError extends Error {}
@@ -117,38 +120,120 @@ export class AuthError extends Error {}
 export const accountKey = (name: string): string => assertUsableName(name).toLowerCase();
 
 /**
- * Hashes with SHA-256 and a fixed application salt plus the account key.
+ * How a password becomes the value stored in `secrets`.
  *
- * The key rather than the display name, so typing "Amy" and "amy" produces the
- * same hash — otherwise case-insensitive login would still fail at the password
- * check.
+ * Version 2 — every account created, or whose password is changed, from now on:
+ * PBKDF2-SHA-256 with 210,000 rounds and a random per-account salt. The salt lives
+ * on the public users document. It is not a secret; its job is to make every
+ * account's hash different so one precomputed table cannot cover them all. The
+ * rounds are what make each guess expensive for someone who does get hold of a hash.
  *
- * Not bcrypt — without a server there is nowhere to run a slow KDF — but it
- * keeps plain passwords out of the database and out of network payloads.
+ * Version 1 — accounts from before this: one SHA-256 over a fixed application salt
+ * and the account key. Still understood so those accounts can sign in once; a
+ * successful sign-in rewrites them as version 2 (see writePassword).
+ *
+ * Neither is a substitute for a server that can count guesses and lock an account
+ * out. Firestore rules compare hashes but cannot rate-limit, so an online guess is
+ * still cheap to make — which is why passwords are required to be reasonably long,
+ * and why the shared default password is gone.
  */
-export const hashPassword = async (name: string, password: string): Promise<string> => {
-  const data = new TextEncoder().encode(`youaskianswer:${name.trim().toLowerCase()}:${password}`);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(digest))
+const PBKDF2_ROUNDS = 210_000;
+const HASH_VERSION = 2;
+
+/** Shortest password accepted when one is chosen or changed. */
+export const MIN_PASSWORD_LENGTH = 8;
+
+const toHex = (bytes: ArrayBuffer | Uint8Array): string =>
+  Array.from(new Uint8Array(bytes as ArrayBuffer))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+
+const newSalt = (): string => toHex(crypto.getRandomValues(new Uint8Array(16)));
+
+/** The version-1 hash, for accounts that have not been upgraded yet. */
+const legacyHash = async (name: string, password: string): Promise<string> => {
+  const data = new TextEncoder().encode(`youaskianswer:${name.trim().toLowerCase()}:${password}`);
+  return toHex(await crypto.subtle.digest('SHA-256', data));
 };
 
-/** Only reveals whether the name is taken, never anything secret. */
+/** The version-2 hash. The key rather than the display name, so "Amy" and "amy" agree. */
+const saltedHash = async (key: string, password: string, salt: string): Promise<string> => {
+  const encoder = new TextEncoder();
+  const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, [
+    'deriveBits',
+  ]);
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      hash: 'SHA-256',
+      salt: encoder.encode(`youaskianswer:${key}:${salt}`),
+      iterations: PBKDF2_ROUNDS,
+    },
+    material,
+    256
+  );
+  return `v2:${toHex(bits)}`;
+};
+
+/** The hash for `password` the way this account stores it: salted when it has a salt, the old way when it does not. */
+const hashFor = (key: string, password: string, salt?: string): Promise<string> =>
+  salt ? saltedHash(key, password, salt) : legacyHash(key, password);
+
+/** A password somebody is choosing (registering, changing, resetting) — not one they are merely typing to sign in. */
+const assertAcceptablePassword = (password: string) => {
+  if (password.length < MIN_PASSWORD_LENGTH) throw new AuthError(t('auth.newPasswordTooShort'));
+  if (password === LEGACY_DEFAULT_PASSWORD) throw new AuthError(t('auth.noDefaultPassword'));
+};
+
+/**
+ * Replaces an account's password and its salt in one atomic batch.
+ *
+ * The secret and the salt have to change together: someone signing in reads the salt
+ * from the users document and derives a hash from it, so if only one of the two
+ * landed the account would reject its own correct password. A batch commits both or
+ * neither. Returns the new hash, for re-binding the session.
+ */
+const writePassword = async (
+  key: string,
+  password: string,
+  extraUserFields: Record<string, unknown> = {}
+): Promise<string> => {
+  const salt = newSalt();
+  const hash = await saltedHash(key, password, salt);
+  const now = new Date().toISOString();
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, SECRETS, key), { passwordHash: hash, updatedAt: now }, { merge: true });
+  batch.set(doc(db, USERS, key), { salt, hashVersion: HASH_VERSION, ...extraUserFields }, { merge: true });
+  await batch.commit();
+  return hash;
+};
+
+/** Writes the session document — which is also the password check, since rules refuse a wrong hash. */
+const bindSession = (uid: string, key: string, name: string, passwordHash: string) =>
+  setDoc(doc(db, SESSIONS, uid), {
+    key,
+    name,
+    passwordHash,
+    boundAt: new Date().toISOString(),
+  });
+
+/** Only reveals whether the name is taken (and the public salt), never anything secret. */
 export const lookupAccount = async (name: string): Promise<AccountRecord> => {
   const clean = assertUsableName(name);
   try {
     const snap = await getDoc(doc(db, USERS, accountKey(clean)));
     if (!snap.exists()) {
-      return { name: clean, exists: false, mustChangePassword: true, hasRecoveryEmail: false };
+      return { name: clean, exists: false, mustChangePassword: false, hasRecoveryEmail: false };
     }
+    const data = snap.data();
     return {
       // The stored spelling wins, so signing in as "amy" still shows "Amy"
-      name: (snap.data().name as string) || clean,
+      name: (data.name as string) || clean,
       exists: true,
-      mustChangePassword: snap.data().mustChangePassword !== false,
-      hasRecoveryEmail: snap.data().hasRecoveryEmail === true,
-      email: (snap.data().email as string) || undefined,
+      mustChangePassword: data.mustChangePassword !== false,
+      hasRecoveryEmail: data.hasRecoveryEmail === true,
+      salt: typeof data.salt === 'string' && data.salt ? data.salt : undefined,
     };
   } catch (err) {
     console.warn('[accounts] lookup failed:', err);
@@ -157,7 +242,59 @@ export const lookupAccount = async (name: string): Promise<AccountRecord> => {
 };
 
 /**
- * Signs in, creating the account with the default password when it is new.
+ * Creates a new account with a password the person chose themselves.
+ *
+ * There is no shared starting password any more: one that everybody knows lets anyone
+ * claim a name before its owner arrives, and be signed in as them. The secret is
+ * written first because rules only let a secret be created, never overwritten, so it is
+ * what actually decides who got the name if two people try at once.
+ */
+export const registerAccount = async (name: string, password: string): Promise<AccountRecord> => {
+  const clean = assertUsableName(name);
+  assertAcceptablePassword(password);
+
+  const key = accountKey(clean);
+  const user = await ensureSignedIn();
+  if ((await lookupAccount(clean)).exists) throw new AuthError(t('auth.nameTaken'));
+
+  const salt = newSalt();
+  const hash = await saltedHash(key, password, salt);
+  const now = new Date().toISOString();
+
+  try {
+    await setDoc(doc(db, SECRETS, key), { passwordHash: hash, createdAt: now });
+  } catch (err) {
+    console.warn('[accounts] secret creation rejected:', err);
+    throw new AuthError(t('auth.cannotCreate'));
+  }
+
+  try {
+    await setDoc(doc(db, USERS, key), {
+      key,
+      name: clean,
+      exists: true,
+      mustChangePassword: false,
+      salt,
+      hashVersion: HASH_VERSION,
+      createdAt: now,
+    });
+  } catch (err) {
+    console.warn('[accounts] user creation rejected:', err);
+    throw new AuthError(t('auth.cannotCreate'));
+  }
+
+  try {
+    await bindSession(user.uid, key, clean, hash);
+  } catch (err) {
+    console.warn('[accounts] new account session rejected:', err);
+    throw new AuthError(t('auth.cannotCreate'));
+  }
+
+  return { name: clean, exists: true, mustChangePassword: false, hasRecoveryEmail: false, salt };
+};
+
+/**
+ * Signs in to an existing account.
  *
  * The session is rewritten on every login, which is what makes the app
  * survivable: anonymous uids change whenever browser data is cleared, so the
@@ -173,53 +310,57 @@ export const signInWithPassword = async (
 
   const key = accountKey(clean);
   const user = await ensureSignedIn();
-  const account = await lookupAccount(clean);
+  let account = await lookupAccount(clean);
+  if (!account.exists) throw new AuthError(t('auth.noSuchAccount'));
   // Whatever the person typed, the display name is the registered spelling
   const display = account.name;
-  const hash = await hashPassword(key, password);
 
-  if (!account.exists) {
-    if (password !== DEFAULT_PASSWORD) {
-      throw new AuthError(t('auth.newAccountUseDefault', { password: DEFAULT_PASSWORD }));
-    }
+  /*
+   * The real check. Rules permit this write only when the hash matches the stored
+   * secret, so a wrong password is refused by Firestore rather than by code that
+   * devtools could step over.
+   */
+  const attempt = async (record: AccountRecord): Promise<string> => {
+    const hash = await hashFor(key, password, record.salt);
+    await bindSession(user.uid, key, display, hash);
+    return hash;
+  };
 
+  let hash: string;
+  try {
+    hash = await attempt(account);
+  } catch (err) {
     /*
-     * Rules only allow creating a secret that does not exist yet, so this can
-     * never overwrite someone else's password. Failures are logged rather than
-     * thrown: if a previous attempt half-created the account, the session write
-     * below is still the honest test of whether the password is right.
+     * One retry: if the password was upgraded to the salted scheme on another device
+     * between the lookup and this attempt, the salt just read is stale.
      */
-    await setDoc(doc(db, SECRETS, key), {
-      passwordHash: hash,
-      createdAt: new Date().toISOString(),
-    }).catch((err) => console.warn('[accounts] secret creation rejected:', err));
-
-    await setDoc(doc(db, USERS, key), {
-      key,
-      name: display,
-      exists: true,
-      mustChangePassword: true,
-      createdAt: new Date().toISOString(),
-    }).catch((err) => console.warn('[accounts] user creation rejected:', err));
+    const fresh = await lookupAccount(clean).catch(() => account);
+    if (fresh.salt === account.salt) {
+      console.warn('[accounts] password rejected:', err);
+      throw new AuthError(t('auth.wrongPassword'));
+    }
+    try {
+      hash = await attempt(fresh);
+      account = fresh;
+    } catch (retryErr) {
+      console.warn('[accounts] password rejected:', retryErr);
+      throw new AuthError(t('auth.wrongPassword'));
+    }
   }
 
   /*
-   * The real check. Rules permit this write only when the hash matches the
-   * stored secret, so a wrong password is refused by Firestore rather than by
-   * code that devtools could step over.
+   * An account still on the old scheme is moved to the salted one now that the
+   * password has just been proven. Accounts that must change their password anyway are
+   * left alone — changePassword does the same upgrade a moment later.
    */
-  try {
-    await setDoc(doc(db, SESSIONS, user.uid), {
-      key,
-      name: display,
-      passwordHash: hash,
-      boundAt: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.warn('[accounts] password rejected:', err);
-    throw new AuthError(
-      account.exists ? t('auth.wrongPassword') : t('auth.cannotCreate')
-    );
+  if (!account.salt && !account.mustChangePassword) {
+    try {
+      const upgraded = await writePassword(key, password);
+      await bindSession(user.uid, key, display, upgraded);
+    } catch (err) {
+      // Atomic, so a failure leaves the account exactly as it was; it upgrades next time
+      console.warn('[accounts] upgrading to a salted hash failed:', err);
+    }
   }
 
   await setDoc(
@@ -230,9 +371,7 @@ export const signInWithPassword = async (
     // A failed timestamp update must not block a successful login
   });
 
-  return account.exists
-    ? account
-    : { name: display, exists: true, mustChangePassword: true, hasRecoveryEmail: false };
+  return account;
 };
 
 /** Replaces the password, then refreshes the session so it stays valid. */
@@ -243,59 +382,83 @@ export const changePassword = async (
 ): Promise<void> => {
   const clean = assertUsableName(name);
   const key = accountKey(clean);
-  if (nextPassword.length < 4) throw new AuthError(t('auth.newPasswordTooShort'));
-  if (nextPassword === DEFAULT_PASSWORD) throw new AuthError(t('auth.noDefaultPassword'));
+  assertAcceptablePassword(nextPassword);
   if (nextPassword === currentPassword) throw new AuthError(t('auth.newPasswordSame'));
 
   const user = await ensureSignedIn();
-  const nextHash = await hashPassword(key, nextPassword);
 
+  let nextHash: string;
   try {
     // Rules require the caller's session to be bound to this name, which it
     // only can be if the current password was correct at sign-in.
-    await setDoc(
-      doc(db, SECRETS, key),
-      { passwordHash: nextHash, updatedAt: new Date().toISOString() },
-      { merge: true }
-    );
+    nextHash = await writePassword(key, nextPassword, { mustChangePassword: false });
   } catch (err) {
     console.warn('[accounts] change password rejected:', err);
     throw new AuthError(t('auth.changeFailed'));
   }
 
   // The session carries the old hash; leaving it stale would fail later checks
-  await setDoc(doc(db, SESSIONS, user.uid), {
-    key,
-    name: clean,
-    passwordHash: nextHash,
-    boundAt: new Date().toISOString(),
-  });
+  await bindSession(user.uid, key, clean, nextHash);
+};
 
-  await setDoc(
-    doc(db, USERS, key),
-    { mustChangePassword: false },
-    { merge: true }
-  );
+/**
+ * The recovery email on file for this account, for its owner's eyes only.
+ *
+ * It lives in `accountPrivate/{key}`, which rules let only the signed-in owner read.
+ * Older accounts still carry it on the public `users` document, so that is the
+ * fallback until syncVerifiedEmail has moved it across.
+ */
+export const getRecoveryEmail = async (name: string): Promise<string | undefined> => {
+  const key = accountKey(name);
+  try {
+    const snap = await getDoc(doc(db, PRIVATE, key));
+    const email = (snap.data()?.email as string | undefined)?.trim();
+    if (email) return email;
+  } catch (err) {
+    console.warn('[accounts] private email read failed:', err);
+  }
+  try {
+    const snap = await getDoc(doc(db, USERS, key));
+    return (snap.data()?.email as string | undefined)?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * Moves an address that older versions left on the public `users` document into
+ * `accountPrivate`, and removes it from the public one. Runs on sign-in, as the owner
+ * — the only person rules let write either document — so every account cleans itself
+ * up the next time it is used, without anyone having to run a migration.
+ */
+const moveLegacyEmailToPrivate = async (key: string): Promise<void> => {
+  const snap = await getDoc(doc(db, USERS, key));
+  const legacy = (snap.data()?.email as string | undefined)?.trim();
+  if (!legacy) return;
+
+  await setDoc(doc(db, PRIVATE, key), { email: legacy, updatedAt: new Date().toISOString() }, { merge: true });
+  await setDoc(doc(db, USERS, key), { email: deleteField() }, { merge: true });
 };
 
 /**
  * Best-effort duplicate check, run before touching Firebase Auth at all so a
  * taken address is rejected immediately instead of after one or two email
- * round-trips. Exact-string match on `users.email`, not case-normalized —
- * the actual uniqueness guarantee is `emails/{emailKey}` (create-only, keyed
- * by the lowercased address), enforced later once ownership is proven; this
- * is purely for a faster, friendlier error when the casing already matches.
- * It can run this early because `users/{key}` is public — see the module doc
- * comment — unlike `emails/{emailKey}`, which requires proof of ownership of
- * that exact address to even read.
+ * round-trips. The actual uniqueness guarantee is `emails/{emailKey}` (create-only,
+ * keyed by the lowercased address), enforced later once ownership is proven; this
+ * is purely for a faster, friendlier error.
+ *
+ * It reads that one document. Rules answer a lookup of an address nobody holds, or
+ * one this account holds, normally — and refuse a lookup of one somebody else holds,
+ * which is how "taken" is learned without ever seeing whose it is.
  */
-const findAccountKeyUsingEmail = async (trimmedEmail: string): Promise<string | null> => {
+const isEmailTaken = async (email: string, ownKey: string): Promise<boolean> => {
   try {
-    const snap = await getDocs(query(collection(db, USERS), where('email', '==', trimmedEmail)));
-    return snap.docs[0]?.id ?? null; // whichever account (if any) already has this exact string on file
+    const snap = await getDoc(doc(db, EMAILS, emailKey(email)));
+    return snap.exists() && snap.data()?.key !== ownKey;
   } catch (err) {
+    if ((err as { code?: string })?.code === 'permission-denied') return true;
     console.warn('[accounts] duplicate-email check failed:', err);
-    return null; // best-effort only — a failed check must not block a legitimate change
+    return false; // best-effort only — a failed check must not block a legitimate change
   }
 };
 
@@ -355,14 +518,12 @@ export const setRecoveryEmail = async (
   const trimmedEmail = email.trim();
   if (!isValidEmail(trimmedEmail)) throw new AuthError(t('auth.emailInvalid'));
 
-  const priorSnap = await getDoc(doc(db, USERS, key));
-  const priorEmail = (priorSnap.data()?.email as string | undefined)?.trim();
+  const priorEmail = await getRecoveryEmail(clean);
   if (priorEmail && emailKey(priorEmail) === emailKey(trimmedEmail)) {
     return 'linked'; // already set to this exact email — nothing to do
   }
 
-  const dupKey = await findAccountKeyUsingEmail(trimmedEmail);
-  if (dupKey && dupKey !== key) throw new AuthError(t('auth.emailTaken'));
+  if (await isEmailTaken(trimmedEmail, key)) throw new AuthError(t('auth.emailTaken'));
 
   if (priorEmail) {
     try {
@@ -460,6 +621,11 @@ export const syncVerifiedEmail = async (name: string): Promise<void> => {
   const key = accountKey(clean);
   const user = await ensureSignedIn();
 
+  // Older accounts keep the address on the public record; take it off there (best-effort)
+  await moveLegacyEmailToPrivate(key).catch((err) =>
+    console.warn('[accounts] moving the email off the public record failed:', err)
+  );
+
   try {
     await user.reload();
   } catch {
@@ -469,8 +635,7 @@ export const syncVerifiedEmail = async (name: string): Promise<void> => {
   const liveEmail = user.email?.trim();
   if (!liveEmail || !user.emailVerified) return;
 
-  const snap = await getDoc(doc(db, USERS, key));
-  const storedEmail = (snap.data()?.email as string | undefined)?.trim();
+  const storedEmail = await getRecoveryEmail(clean);
   if (storedEmail && emailKey(storedEmail) === emailKey(liveEmail)) return; // already in sync
 
   try {
@@ -486,7 +651,9 @@ export const syncVerifiedEmail = async (name: string): Promise<void> => {
     );
   }
 
-  await setDoc(doc(db, USERS, key), { hasRecoveryEmail: true, email: liveEmail }, { merge: true });
+  // The address goes to the private record; the public one only learns that there is one
+  await setDoc(doc(db, PRIVATE, key), { email: liveEmail, updatedAt: new Date().toISOString() }, { merge: true });
+  await setDoc(doc(db, USERS, key), { hasRecoveryEmail: true, email: deleteField() }, { merge: true });
 };
 
 /** Where completePasswordReset looks first for the email a reset link belongs to. */
@@ -519,24 +686,6 @@ export const requestPasswordReset = async (email: string): Promise<void> => {
     console.warn('[accounts] password reset request failed:', err);
     throw friendlyEmailSendError(err, t('auth.resetSendFailed'));
   }
-};
-
-/**
- * "Forgot password", by name rather than by typing back an email — looks up
- * whatever address this account has on file and mails the reset link there.
- * Unlike requestPasswordReset, this one *does* say plainly when there is
- * nothing to send to, since the name itself is already public knowledge in
- * this app (the ordinary login screen already reveals whether a name is
- * registered) — there is no equivalent secrecy left to protect here.
- */
-export const requestPasswordResetForName = async (name: string): Promise<void> => {
-  const clean = assertUsableName(name);
-  const account = await lookupAccount(clean);
-  if (!account.exists) throw new AuthError(t('auth.noSuchAccount'));
-  if (!account.hasRecoveryEmail || !account.email) {
-    throw new AuthError(t('auth.noRecoveryEmail'));
-  }
-  await requestPasswordReset(account.email);
 };
 
 /** Whether the current URL is the "old address, please approve" link setRecoveryEmail sends when changing an already-set email. */
@@ -607,8 +756,7 @@ export const completePasswordReset = async (
   link: string,
   newPassword: string
 ): Promise<AccountRecord> => {
-  if (newPassword.length < 4) throw new AuthError(t('auth.newPasswordTooShort'));
-  if (newPassword === DEFAULT_PASSWORD) throw new AuthError(t('auth.noDefaultPassword'));
+  assertAcceptablePassword(newPassword);
   if (!isPasswordResetLink(link)) throw new AuthError(t('auth.linkInvalid'));
 
   let email = '';
@@ -652,7 +800,6 @@ export const completePasswordReset = async (
 
   const userSnap = await getDoc(doc(db, USERS, key));
   const display = (userSnap.data()?.name as string) || key;
-  const hash = await hashPassword(key, newPassword);
 
   // Firebase's own copy is kept in step for tidiness — nothing here depends
   // on it succeeding, since app login never checks it.
@@ -660,18 +807,10 @@ export const completePasswordReset = async (
     console.warn('[accounts] updating Firebase-side password failed:', err)
   );
 
-  await setDoc(
-    doc(db, SECRETS, key),
-    { passwordHash: hash, updatedAt: new Date().toISOString() },
-    { merge: true }
-  );
+  // Secret and salt together, or neither — see writePassword. A reset gives the account a fresh salt.
+  const hash = await writePassword(key, newPassword, { mustChangePassword: false });
 
-  await setDoc(doc(db, SESSIONS, uid), {
-    key,
-    name: display,
-    passwordHash: hash,
-    boundAt: new Date().toISOString(),
-  });
+  await bindSession(uid, key, display, hash);
 
   await setDoc(
     doc(db, USERS, key),
@@ -681,7 +820,7 @@ export const completePasswordReset = async (
     // A failed timestamp update must not block a successful reset
   });
 
-  return { name: display, exists: true, mustChangePassword: false, hasRecoveryEmail: true, email };
+  return { name: display, exists: true, mustChangePassword: false, hasRecoveryEmail: true };
 };
 
 /**
@@ -730,7 +869,6 @@ export const subscribeToAccount = (name: string, onUpdate: (account: AccountReco
         exists: snap.exists(),
         mustChangePassword: snap.data()?.mustChangePassword !== false,
         hasRecoveryEmail: snap.data()?.hasRecoveryEmail === true,
-        email: (snap.data()?.email as string) || undefined,
       }),
     (err) => console.warn('[accounts] account snapshot error:', err)
   );

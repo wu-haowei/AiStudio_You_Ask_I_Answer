@@ -1,4 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import {
   connectFirestoreEmulator,
   getFirestore,
@@ -52,6 +53,36 @@ export const firebaseConfig = {
 };
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+
+/*
+ * App Check: proves a request comes from this app running in a real browser, not from a
+ * script that copied the (public) API key. Firestore and Auth can then be set to refuse
+ * anything without a valid token from the Firebase console.
+ *
+ * Opt-in by design: it only turns on when a reCAPTCHA v3 site key is provided at build
+ * time (VITE_APPCHECK_SITE_KEY), so a deployment without one behaves exactly as before
+ * and the local emulator is never affected. The site key is public by nature. Turn
+ * enforcement on in the console only after the console's App Check metrics show the
+ * real traffic is being verified — see SETUP.md.
+ *
+ * For local development against the real project, VITE_APPCHECK_DEBUG_TOKEN (a token
+ * registered under App Check > Manage debug tokens) lets a machine that reCAPTCHA
+ * would not recognise through.
+ */
+if (env.VITE_APPCHECK_SITE_KEY && env.VITE_USE_EMULATOR !== 'true') {
+  try {
+    if (env.VITE_APPCHECK_DEBUG_TOKEN) {
+      (self as any).FIREBASE_APPCHECK_DEBUG_TOKEN = env.VITE_APPCHECK_DEBUG_TOKEN;
+    }
+    initializeAppCheck(app, {
+      provider: new ReCaptchaV3Provider(env.VITE_APPCHECK_SITE_KEY),
+      isTokenAutoRefreshEnabled: true,
+    });
+  } catch (err) {
+    // A broken App Check setup must not take the whole app down with it
+    console.warn('[firebase] App Check could not start:', err);
+  }
+}
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 
