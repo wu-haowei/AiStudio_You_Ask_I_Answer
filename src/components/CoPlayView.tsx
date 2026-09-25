@@ -49,7 +49,7 @@ import { useIdentity } from '../lib/identity';
 import { sameName } from '../lib/pairing';
 import { CoPlayInviteModals } from './coplay/CoPlayInviteModals';
 import { CoPlayActiveQuestionModal } from './coplay/CoPlayActiveQuestionModal';
-import { RevealResultCard } from './coplay/RevealResultCard';
+import { RevealResultCard, revealSummary } from './coplay/RevealResultCard';
 import {
   displayCategory,
   localizedQuestion,
@@ -358,6 +358,29 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
   const handleStartReply = (m: RoomMessage) => {
     setReplyTarget({ id: m.id, author: m.author, text: m.text });
     chatInputRef.current?.focus();
+  };
+
+  /**
+   * A quote as this reader should see it. The snapshot stored with a reply is in the language
+   * it was written in, which is fine for chat but wrong for notices the app itself wrote —
+   * so when the quoted message is a system one and is still loaded, it is re-described in the
+   * reader's language. If it has scrolled out of the loaded history, the snapshot's author is
+   * at least mapped back from its stored Chinese name.
+   */
+  const resolveReply = (ref: MessageReplyRef): { author: string; text: string } => {
+    const original = visibleMessages.find((m) => m.id === ref.id);
+    if (original && original.type === 'system') {
+      if (original.author === REVEAL_AUTHOR) {
+        return {
+          author: t('reveal.title'),
+          text: original.gameQuestion ? revealSummary(original.text, original.gameQuestion, lang) : original.text,
+        };
+      }
+      return { author: t('sys.author'), text: messageText(original) };
+    }
+    if (ref.author === REVEAL_AUTHOR) return { author: t('reveal.title'), text: ref.text };
+    if (ref.author === SYSTEM_AUTHOR) return { author: t('sys.author'), text: ref.text };
+    return { author: ref.author, text: ref.text };
   };
 
   /** Jumps to a quoted message and flashes it, when it is still loaded. */
@@ -1746,9 +1769,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
                           }`}
                         >
                           <span className="block text-[10px] font-bold truncate">
-                            {m.replyTo.author}
+                            {resolveReply(m.replyTo).author}
                           </span>
-                          <span className="block text-[11px] truncate">{m.replyTo.text}</span>
+                          <span className="block text-[11px] truncate">{resolveReply(m.replyTo).text}</span>
                         </button>
                       )}
                       <span className="whitespace-pre-line">{messageText(m)}</span>
@@ -1779,9 +1802,9 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
               <Reply className="w-3.5 h-3.5 text-[#A68B6D] shrink-0" />
               <div className="min-w-0 flex-1">
                 <div className="text-[10px] font-bold text-[#4A3F35] truncate">
-                  {t('coplay.replyingTo', { name: replyTarget.author })}
+                  {t('coplay.replyingTo', { name: resolveReply(replyTarget).author })}
                 </div>
-                <div className="text-[11px] text-[#7A6C5E] truncate">{replyTarget.text}</div>
+                <div className="text-[11px] text-[#7A6C5E] truncate">{resolveReply(replyTarget).text}</div>
               </div>
               <button
                 type="button"
@@ -1800,7 +1823,7 @@ export const CoPlayView: React.FC<CoPlayViewProps> = ({
               type="text"
               value={chatMessageText}
               onChange={(e) => setChatMessageText(e.target.value)}
-              placeholder={replyTarget ? t('coplay.replyPlaceholder', { name: replyTarget.author }) : t('coplay.messagePlaceholder')}
+              placeholder={replyTarget ? t('coplay.replyPlaceholder', { name: resolveReply(replyTarget).author }) : t('coplay.messagePlaceholder')}
               onKeyDown={(e) => {
                 if (e.key === 'Escape' && replyTarget) setReplyTarget(null);
               }}

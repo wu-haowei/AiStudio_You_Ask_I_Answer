@@ -407,6 +407,9 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
     return !!form && !!(form.question.trim() || form.answer.trim() || form.options.some((o) => o.trim()));
   };
 
+  /** The language the question being edited is written in: recorded on it, or the current one for a new question. */
+  const originalLang: Lang | undefined = editingFaq ? editingFaq.sourceLang : lang;
+
   const handleOpenAddModal = () => {
     setEditingFaq(null);
     setFormQuestion('');
@@ -487,6 +490,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         category: formCategory,
         options: optionsArray.length > 0 ? optionsArray : undefined,
         translations: savedTranslations,
+        sourceLang: editingFaq.sourceLang,
         updatedAt: new Date().toISOString(),
       });
       showToast(t('admin.updated'), undefined, 'success');
@@ -497,6 +501,7 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
         category: formCategory,
         options: optionsArray.length > 0 ? optionsArray : undefined,
         translations: savedTranslations,
+        sourceLang: lang,
       });
       showToast(t('admin.added'), undefined, 'success');
     }
@@ -911,7 +916,13 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
               <div className="flex flex-wrap gap-1.5" role="tablist">
                 {(['original', ...LANGS.map((l) => l.code)] as const).map((tab) => {
                   const active = formTab === tab;
-                  const label = tab === 'original' ? t('tr.tabOriginal') : LANGS.find((l) => l.code === tab)!.label;
+                  const originalLabel = originalLang
+                    ? t('tr.tabOriginalIn', { language: LANGS.find((l) => l.code === originalLang)!.label })
+                    : t('tr.tabOriginal');
+                  const label = tab === 'original' ? originalLabel : LANGS.find((l) => l.code === tab)!.label;
+                  // A new question has nothing to translate yet, and the original's own language never needs a translation
+                  const isOriginalLang = tab !== 'original' && tab === originalLang && !tabHasContent(tab);
+                  const disabled = tab !== 'original' && (!editingFaq || isOriginalLang);
                   return (
                     <button
                       key={tab}
@@ -919,10 +930,14 @@ export const AdminManageView: React.FC<AdminManageViewProps> = ({
                       role="tab"
                       aria-selected={active}
                       onClick={() => setFormTab(tab)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
+                      disabled={disabled}
+                      title={
+                        disabled ? (isOriginalLang ? t('tr.isOriginalLang') : t('tr.addFirst')) : undefined
+                      }
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors inline-flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed ${
                         active
-                          ? 'bg-[#8C6D53] text-white border-[#8C6D53]'
-                          : 'bg-white text-[#7A6C65] border-[#D0BFAC] hover:bg-[#F4ECE1]'
+                          ? 'bg-[#8C6D53] text-white border-[#8C6D53] cursor-pointer'
+                          : 'bg-white text-[#7A6C65] border-[#D0BFAC] hover:bg-[#F4ECE1] disabled:hover:bg-white cursor-pointer'
                       }`}
                     >
                       {label}

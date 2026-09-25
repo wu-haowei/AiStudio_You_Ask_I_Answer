@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { MessageSquare, UserRound, Send, Check, X, RefreshCw } from 'lucide-react';
+import { MessageSquare, UserRound, Send, Check, X, RefreshCw, Search } from 'lucide-react';
 import {
   ChatInvite,
   PRESENCE_HEARTBEAT_MS,
@@ -46,6 +46,9 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
   const [incoming, setIncoming] = useState<ChatInvite[]>([]);
   const [outgoing, setOutgoing] = useState<ChatInvite[]>([]);
   const [busyWith, setBusyWith] = useState('');
+  // Narrowing the conversation list: filters as you type, no submit button
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshRooms = async () => {
@@ -131,6 +134,24 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
 
   const card = 'rounded-2xl border border-[#D9C5B2] bg-white';
 
+  /** Online people first, then by name within each group; filtered by the search box and the status select. */
+  const visibleRooms = rooms
+    .map((room) => {
+      const partner = partnerOf(room.participants, me);
+      return { room, partner, online: people.some((p) => sameName(p.name, partner)) };
+    })
+    .filter(({ partner, online }) => {
+      if (statusFilter === 'online' && !online) return false;
+      if (statusFilter === 'offline' && online) return false;
+      const needle = query.trim().toLowerCase();
+      return !needle || partner.toLowerCase().includes(needle);
+    })
+    .sort(
+      (a, b) =>
+        Number(b.online) - Number(a.online) ||
+        a.partner.localeCompare(b.partner, undefined, { sensitivity: 'base', numeric: true })
+    );
+
   /*
    * The list is capped in width: it is a short column of names, and letting it
    * run the full width of a desktop monitor strands the buttons at the far
@@ -185,6 +206,32 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
       <section className="space-y-2">
         <h2 className="text-xs font-bold text-[#7A6C5E] px-1">{t('convo.myChats')}</h2>
 
+        {!isLoading && rooms.length > 0 && (
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#A69684]" />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t('convo.search')}
+                aria-label={t('convo.search')}
+                className="w-full pl-9 pr-3 py-2.5 text-sm rounded-xl milk-tea-input"
+              />
+            </div>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as 'all' | 'online' | 'offline')}
+              aria-label={t('convo.filterAll')}
+              className="shrink-0 px-3 py-2.5 text-sm rounded-xl milk-tea-input"
+            >
+              <option value="all">{t('convo.filterAll')}</option>
+              <option value="online">{t('convo.online')}</option>
+              <option value="offline">{t('convo.offline')}</option>
+            </select>
+          </div>
+        )}
+
         {isLoading ? (
           <div className={`${card} p-6 flex items-center justify-center gap-2 text-xs text-[#7A6C5E]`}>
             <RefreshCw className="w-4 h-4 animate-spin" />
@@ -194,29 +241,42 @@ export const ConversationListView: React.FC<ConversationListViewProps> = ({
           <div className={`${card} p-6 text-center text-xs text-[#A69684]`}>
             {t('convo.empty')}
           </div>
+        ) : visibleRooms.length === 0 ? (
+          <div className={`${card} p-6 text-center text-xs text-[#A69684]`}>{t('convo.noMatch')}</div>
         ) : (
-          rooms.map((room) => {
-            const partner = partnerOf(room.participants, me);
-            const online = people.some((p) => sameName(p.name, partner));
+          visibleRooms.map(({ room, partner, online }) => {
             return (
               <button
                 key={room.id}
                 type="button"
                 onClick={() => onOpenRoom(room.id, partner)}
-                className={`${card} w-full p-4 flex items-center gap-3 hover:border-[#A68B6D] transition-colors text-left cursor-pointer`}
+                className={`w-full p-4 flex items-center gap-3 transition-colors text-left cursor-pointer rounded-2xl border ${
+                  online
+                    ? 'border-emerald-300 bg-emerald-50/70 hover:border-emerald-400'
+                    : 'border-[#D9C5B2] bg-white hover:border-[#A68B6D]'
+                }`}
               >
-                <div className="w-10 h-10 rounded-2xl bg-[#E8D8C4] text-[#5C4B3A] flex items-center justify-center shrink-0">
+                <div
+                  className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+                    online ? 'bg-emerald-100 text-emerald-700' : 'bg-[#E8D8C4] text-[#5C4B3A]'
+                  }`}
+                >
                   <MessageSquare className="w-5 h-5" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-bold text-[#4A3F35] truncate">{partner}</div>
-                  <div className="text-[11px] text-[#7A6C5E]">{online ? t('convo.online') : t('convo.offline')}</div>
+                  <div className={`text-[11px] ${online ? 'font-bold text-emerald-700' : 'text-[#7A6C5E]'}`}>
+                    {online ? t('convo.online') : t('convo.offline')}
+                  </div>
                 </div>
-                <span
-                  className={`w-2 h-2 rounded-full shrink-0 ${
-                    online ? 'bg-emerald-500' : 'bg-[#D9C5B2]'
-                  }`}
-                />
+                {online ? (
+                  <span className="relative flex w-2.5 h-2.5 shrink-0">
+                    <span className="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
+                    <span className="relative inline-flex w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  </span>
+                ) : (
+                  <span className="w-2 h-2 rounded-full shrink-0 bg-[#D9C5B2]" />
+                )}
               </button>
             );
           })

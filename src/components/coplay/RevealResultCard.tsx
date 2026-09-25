@@ -139,6 +139,33 @@ export const buildOptionRows = (question: RoomQuestion, lang: Lang): OptionRow[]
   });
 };
 
+/**
+ * One-line version of a reveal for quoting it in a reply: "Not quite. Honest answer: 1. … Guess: 1. …".
+ * Built from the round's stored picks in the reader's language, like the card itself,
+ * so the quote is not stuck in the language the reveal happened to be written in.
+ */
+export const revealSummary = (text: string, question: RoomQuestion | undefined, lang: Lang): string => {
+  const lines = parseRevealText(text);
+  const rows = question ? buildOptionRows(question, lang) : [];
+  return lines
+    .map((line) => {
+      if (line.picks.length === 0) {
+        if (line.raw.startsWith('猜對了')) return t('reveal.correct');
+        if (line.raw.startsWith('沒猜中')) return t('reveal.wrong');
+        return line.raw.trim();
+      }
+      const isHonest = line.label === '真心話';
+      const picked = question ? readPicks(question, isHonest ? 'target' : 'initiator') : [];
+      const labels = line.picks.map((pick, i) => {
+        const row = rows.find((r) => r.index === picked[i]);
+        return `${pick.rank || i + 1}. ${row ? row.label : pick.label}`;
+      });
+      return `${isHonest ? t('reveal.honest') : t('reveal.guess')}: ${labels.join(' / ')}`;
+    })
+    .filter(Boolean)
+    .join(' ');
+};
+
 type ToneName = 'correct' | 'wrong';
 
 interface Tone {

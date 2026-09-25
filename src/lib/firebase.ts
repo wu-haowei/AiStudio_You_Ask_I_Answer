@@ -899,6 +899,23 @@ export const setPlayedQuestionText = async (code: string, questionText: string, 
 };
 
 /**
+ * Takes a batch of question texts off the durable "answered" record.
+ *
+ * A question counts as answered if its id is in a played list *or* its text is in
+ * playedQuestionTexts, so putting a question back into circulation on purpose has to
+ * clear both — freeing only the id leaves it showing as answered.
+ */
+export const removePlayedQuestionTexts = async (code: string, questionTexts: string[]) => {
+  const texts = [...new Set(questionTexts.map((text) => text.trim()).filter(Boolean))];
+  if (!code || texts.length === 0) return;
+  await setDoc(
+    roomRef(code),
+    { playedQuestionTexts: arrayRemove(...texts), updatedAt: new Date().toISOString() },
+    { merge: true }
+  );
+};
+
+/**
  * Drops ids from every category's played list.
  *
  * Called after those questions are deleted — leaving them behind would keep

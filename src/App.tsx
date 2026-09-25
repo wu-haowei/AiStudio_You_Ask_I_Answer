@@ -21,6 +21,7 @@ import {
   isInviteRequired,
   isMember,
   saveRoomFaq,
+  removePlayedQuestionTexts,
   saveRoomFaqs,
   subscribeToRoomFaqs,
 } from './lib/firebase';
@@ -34,7 +35,7 @@ import {
   syncVerifiedEmail,
 } from './lib/accounts';
 import { useIdentity } from './lib/identity';
-import { isLang, setLang, useT } from './i18n';
+import { getLang, isLang, setLang, useT } from './i18n';
 import { clearPresence } from './lib/pairing';
 import {
   DEFAULT_PREFERENCES,
@@ -570,16 +571,20 @@ export default function App() {
    * on the room document for something only this screen reads would not pay for
    * itself.
    *
-   * Marking answered also records the question's text (see
-   * playedQuestionTexts), and that half is one-way: un-marking only frees the
-   * id up for the replay filter, it does not make the text forget having been
-   * answered. If it genuinely never happened, delete the question instead.
+   * Marking answered also records the question's text (see playedQuestionTexts).
+   * Un-marking clears the text as well as the id: the list counts a question as
+   * answered if either is present, so leaving the text behind made the toggle
+   * appear to do nothing.
    */
   const handleToggleAnswered = async (faq: FAQItem, answered: boolean) => {
     const roomId = requireRoom();
     try {
       if (answered) await markFaqPlayed(roomId, faq.category, faq.id, faq.question);
-      else await forgetPlayedFaqIds(roomId, [faq.id]);
+      else {
+        // Both halves of "answered" — see removePlayedQuestionTexts — or it would stay marked
+        await forgetPlayedFaqIds(roomId, [faq.id]);
+        await removePlayedQuestionTexts(roomId, [faq.question]);
+      }
 
       setPlayedFaqIds((prev) => {
         const next = new Set(prev);
@@ -587,9 +592,12 @@ export default function App() {
         else next.delete(faq.id);
         return next;
       });
-      if (answered) {
-        setPlayedQuestionTexts((prev) => new Set(prev).add(faq.question.trim()));
-      }
+      setPlayedQuestionTexts((prev) => {
+        const next = new Set(prev);
+        if (answered) next.add(faq.question.trim());
+        else next.delete(faq.question.trim());
+        return next;
+      });
     } catch (err: any) {
       console.error('Toggle answered failed:', err);
       showToast(t('app.markFailed'), err?.message || t('app.tryLater'), 'error');
@@ -633,10 +641,17 @@ export default function App() {
     const roomId = requireRoom();
     if (ids.length === 0) return;
 
+    const texts = faqs.filter((f) => ids.includes(f.id)).map((f) => f.question.trim());
     await forgetPlayedFaqIds(roomId, ids);
+    await removePlayedQuestionTexts(roomId, texts);
     setPlayedFaqIds((prev) => {
       const next = new Set(prev);
       ids.forEach((id) => next.delete(id));
+      return next;
+    });
+    setPlayedQuestionTexts((prev) => {
+      const next = new Set(prev);
+      texts.forEach((text) => next.delete(text));
       return next;
     });
     showToast(t('app.restored'), t('app.restoredCount', { count: ids.length }), 'success');
@@ -683,7 +698,8 @@ export default function App() {
       if (!item.question || !item.question.trim()) continue;
       if (existingIds.has(item.id)) {
         const current = stored.find((f) => f.id === item.id)!;
-        toWrite.push({ ...current, ...item, updatedAt: new Date().toISOString() });
+        // The language a question was first written in does not change because it was imported again
+        toWrite.push({ ...current, ...item, sourceLang: current.sourceLang ?? item.sourceLang, updatedAt: new Date().toISOString() });
       } else if (!existingQuestions.has(item.question.trim())) {
         toWrite.push({ ...item, updatedAt: item.updatedAt || new Date().toISOString() });
         existingQuestions.add(item.question.trim());
@@ -721,11 +737,16 @@ export default function App() {
             answer: item.answer || '對應真心話題目',
             category: item.category || UNFILED_CATEGORY,
             options: options.length > 0 ? options : undefined,
+            // Imported as written, and marked as being in the language the importer is using
+            sourceLang: isLang(item.sourceLang) ? item.sourceLang : getLang(),
             updatedAt: new Date().toISOString(),
           };
         });
       } else if (parsed.faqs && Array.isArray(parsed.faqs)) {
-        importedItems = parsed.faqs;
+        importedItems = parsed.faqs.map((faq: FAQItem) => ({
+          ...faq,
+          sourceLang: isLang(faq.sourceLang) ? faq.sourceLang : getLang(),
+        }));
       }
 
       if (importedItems.length === 0) throw new Error(t('app.importNoQuestions'));

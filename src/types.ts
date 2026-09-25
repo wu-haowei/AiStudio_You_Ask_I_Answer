@@ -42,6 +42,12 @@ export interface FAQItem {
    */
   /** Two or more choices. Absent means the question has no preset options. */
   options?: string[];
+  /**
+   * The language `question` / `answer` / `options` are written in — the app language of whoever
+   * added or imported the question. There is nothing to translate into that language, so the
+   * editor does not offer it. Absent on questions from before this existed: unknown.
+   */
+  sourceLang?: Lang;
   /** Other-language versions, shown to players whose language has one. Absent means original only. */
   translations?: QuestionTranslations;
   updatedAt: string;
