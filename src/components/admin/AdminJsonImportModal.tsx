@@ -1,9 +1,10 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { Upload, X, Sparkles, Check, Cloud, Loader2, CheckCheck, Eye, EyeOff } from 'lucide-react';
+import { Upload, X, Sparkles, Check, Cloud, Loader2, CheckCheck, Eye, EyeOff, ChevronDown, ChevronRight } from 'lucide-react';
 import {
   DEFAULT_DRIVE_LINK,
   fetchDriveFiles,
   fetchGoogleDriveFileTextById,
+  groupAndSortDriveFiles,
   IS_MOCK_DRIVE,
   isJsonDriveFile,
   listDriveFolderFiles,
@@ -84,8 +85,10 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
 
   /** JSON files found in a fetched folder, awaiting a pick of which ones to actually read. */
   const [driveFolderFiles, setDriveFolderFiles] = useState<DriveFileEntry[] | null>(null);
-  /** Which of driveFolderFiles to read content from — defaults to all of them. */
+  /** Which of driveFolderFiles to read content from — starts empty, the person picks. */
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+  /** Keys of the file groups folded shut. Folding only hides rows — it never touches what is ticked. */
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   /** Fetched cloud questions awaiting a pick, or null before any fetch / after import. */
   const [driveItems, setDriveItems] = useState<DriveQuestion[] | null>(null);
@@ -107,6 +110,9 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
   const listScrollRef = useRef<HTMLDivElement | null>(null);
   /** Which row's options/answer are currently shown below the list — a fixed-height panel, not row expansion, since that would break the virtualization math. */
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+
+  /** The folder's files in display order, grouped by AI and type. The flat list stays unsorted; only what is shown and read follows this. */
+  const fileGroups = useMemo(() => (driveFolderFiles ? groupAndSortDriveFiles(driveFolderFiles) : []), [driveFolderFiles]);
 
   /** One pass over every item rather than re-filtering the whole array per category in the dropdown. */
   const categoryCounts = useMemo(() => {
@@ -170,7 +176,9 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
           return;
         }
         setDriveFolderFiles(files);
-        setSelectedFileIds(new Set(files.map((f) => f.id)));
+        // Nothing pre-ticked: with dozens of files, the usual job is picking a few, not dropping most.
+        setSelectedFileIds(new Set());
+        setCollapsedGroups(new Set());
         setDriveItems(null);
       } else {
         const text = await fetchGoogleDriveFileTextById(target.id);
@@ -219,9 +227,29 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
     });
   };
 
+  const toggleGroupCollapsed = (key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  /** Ticks every file in a group, or clears the group if they were all ticked already. */
+  const toggleGroup = (groupFiles: { id: string }[]) => {
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      if (groupFiles.every((f) => next.has(f.id))) groupFiles.forEach((f) => next.delete(f.id));
+      else groupFiles.forEach((f) => next.add(f.id));
+      return next;
+    });
+  };
+
   const handleLoadSelectedFiles = async () => {
     if (!driveFolderFiles || selectedFileIds.size === 0) return;
-    const files = driveFolderFiles.filter((f) => selectedFileIds.has(f.id));
+    // Read in display order, so the question picker that follows lists them the same way.
+    const files = fileGroups.flatMap((g) => g.files).filter((f) => selectedFileIds.has(f.id));
 
     setIsFetchingDrive(true);
     setDriveProgress(null);
@@ -410,21 +438,63 @@ export const AdminJsonImportModal: React.FC<AdminJsonImportModalProps> = ({
                   <span className="text-xs text-[#7A6C65]">已選 {selectedFileIds.size} 個檔案</span>
                 </div>
 
-                <div className="max-h-48 overflow-y-auto rounded-xl border border-[#E8DFD3] bg-white divide-y divide-[#F0E9DE]">
-                  {driveFolderFiles.map((file) => (
-                    <label
-                      key={file.id}
-                      className="flex items-start gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-[#F5EFE6]"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedFileIds.has(file.id)}
-                        onChange={() => toggleFileId(file.id)}
-                        className="w-4 h-4 mt-0.5 accent-[#8C6D53] cursor-pointer shrink-0"
-                      />
-                      <span className="min-w-0 flex-1 break-all text-[#3A2E2B]">{file.name}</span>
-                    </label>
-                  ))}
+                <div className="max-h-64 overflow-y-auto rounded-xl border border-[#E8DFD3] bg-white">
+                  {fileGroups.map((group) => {
+                    const selectedInGroup = group.files.filter((f) => selectedFileIds.has(f.id)).length;
+                    const allInGroup = selectedInGroup === group.files.length;
+                    const isCollapsed = collapsedGroups.has(group.key);
+                    return (
+                      <div key={group.key}>
+                        {/* Sticks to the top while its own files scroll past, so the group is never lost mid-list. */}
+                        {/* The checkbox ticks the group; everything else in the bar folds it. Two jobs, two targets. */}
+                        <div className="sticky top-0 z-10 flex items-center gap-2 px-3 py-1.5 bg-[#F5EFE6] border-b border-[#E8DFD3] text-xs font-bold text-[#4A3F35] select-none">
+                          <input
+                            type="checkbox"
+                            checked={allInGroup}
+                            ref={(el) => {
+                              if (el) el.indeterminate = selectedInGroup > 0 && !allInGroup;
+                            }}
+                            onChange={() => toggleGroup(group.files)}
+                            aria-label={`勾選整組 ${group.label}`}
+                            className="w-4 h-4 accent-[#8C6D53] cursor-pointer shrink-0"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => toggleGroupCollapsed(group.key)}
+                            aria-expanded={!isCollapsed}
+                            className="flex items-center gap-1.5 min-w-0 flex-1 text-left cursor-pointer"
+                          >
+                            {isCollapsed ? (
+                              <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[#7A6C65]" />
+                            ) : (
+                              <ChevronDown className="w-3.5 h-3.5 shrink-0 text-[#7A6C65]" />
+                            )}
+                            <span className="min-w-0 flex-1 truncate">{group.label}</span>
+                            <span className="font-normal text-[#7A6C65] shrink-0">
+                              {selectedInGroup}/{group.files.length}
+                            </span>
+                          </button>
+                        </div>
+                        <div className={isCollapsed ? 'hidden' : 'divide-y divide-[#F0E9DE]'}>
+                          {group.files.map((file) => (
+                            <label
+                              key={file.id}
+                              // pl-9 lines a file's checkbox up under its group's arrow (px-3 + checkbox + gap), so the nesting reads at a glance.
+                              className="flex items-start gap-2 pl-9 pr-3 py-2 text-xs cursor-pointer hover:bg-[#F5EFE6]"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedFileIds.has(file.id)}
+                                onChange={() => toggleFileId(file.id)}
+                                className="w-4 h-4 mt-0.5 accent-[#8C6D53] cursor-pointer shrink-0"
+                              />
+                              <span className="min-w-0 flex-1 break-all text-[#3A2E2B]">{file.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
 
                 <button

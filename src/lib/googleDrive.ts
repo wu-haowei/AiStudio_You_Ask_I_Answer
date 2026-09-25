@@ -18,9 +18,18 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 export const IS_MOCK_DRIVE = env.VITE_MOCK_GOOGLE_DRIVE === 'true';
 
+/*
+ * Deliberately out of order and covering every shape the picker has to cope
+ * with: with and without a type, a count other than 50, a stray trailing
+ * underscore, and one name that does not follow the convention at all.
+ * Contents for the ones without an entry below fall back to mock-file-a's.
+ */
 const MOCK_FILES: DriveFileEntry[] = [
-  { id: 'mock-file-a', name: 'mock_questions_A.json', mimeType: 'application/json' },
-  { id: 'mock-file-b', name: 'mock_questions_B.json', mimeType: 'application/json' },
+  { id: 'mock-file-e', name: 'notes_backup.json', mimeType: 'application/json' },
+  { id: 'mock-file-b', name: 'gemini_spark_questions_20260904_01_50.json', mimeType: 'application/json' },
+  { id: 'mock-file-d', name: 'claude_questions_20260820_02_37_.json', mimeType: 'application/json' },
+  { id: 'mock-file-c', name: 'claude_scheduled_questions_20260828_01_50.json', mimeType: 'application/json' },
+  { id: 'mock-file-a', name: 'claude_questions_20260821_05_50.json', mimeType: 'application/json' },
 ];
 
 /** Deliberately includes one duplicate question (by text) across the two files, since real folders do too. */
@@ -147,10 +156,19 @@ const handleDriveError = async (res: Response, notFoundMsg: string, forbiddenMsg
   if (!res.ok) throw new Error(`讀取失敗（HTTP ${res.status}）`);
 };
 
+/** The most Drive allows per page — a folder of a few hundred files is still a single request. */
+const LIST_PAGE_SIZE = 1000;
+/** Backstop against a runaway loop, not a limit anyone should meet. */
+const LIST_MAX_PAGES = 20;
+
 /**
  * Lists the files directly inside a publicly-shared folder (subfolders are
  * dropped — picking a question set one level deep is enough, and recursing
  * would make the picker unpredictable).
+ *
+ * Follows every page. The picker sorts on the client, so a listing cut off at
+ * the first page would not just be incomplete, it would sort a random slice
+ * and make older files look like they had vanished.
  */
 export const listDriveFolderFiles = async (folderId: string): Promise<DriveFileEntry[]> => {
   if (IS_MOCK_DRIVE) {
@@ -160,19 +178,122 @@ export const listDriveFolderFiles = async (folderId: string): Promise<DriveFileE
   requireApiKey();
 
   const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
-  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType)&pageSize=100&key=${DRIVE_API_KEY}`;
+  const baseUrl =
+    `https://www.googleapis.com/drive/v3/files?q=${q}` +
+    `&fields=nextPageToken,files(id,name,mimeType)&pageSize=${LIST_PAGE_SIZE}&key=${DRIVE_API_KEY}`;
 
-  let res: Response;
-  try {
-    res = await fetch(url);
-  } catch {
-    throw new Error('連線失敗，請檢查網路連線');
+  const files: DriveFileEntry[] = [];
+  let pageToken: string | undefined;
+
+  for (let page = 0; page < LIST_MAX_PAGES; page++) {
+    let res: Response;
+    try {
+      res = await fetch(pageToken ? `${baseUrl}&pageToken=${encodeURIComponent(pageToken)}` : baseUrl);
+    } catch {
+      throw new Error('連線失敗，請檢查網路連線');
+    }
+    await handleDriveError(res, '找不到這個資料夾，請確認連結正確', '沒有權限讀取，請確認資料夾的共用設定是「知道連結的人皆可查看」');
+
+    const data = await res.json();
+    files.push(...((data.files || []) as DriveFileEntry[]));
+
+    pageToken = data.nextPageToken;
+    if (!pageToken) {
+      return files.filter((f) => f.mimeType !== 'application/vnd.google-apps.folder');
+    }
   }
-  await handleDriveError(res, '找不到這個資料夾，請確認連結正確', '沒有權限讀取，請確認資料夾的共用設定是「知道連結的人皆可查看」');
 
-  const data = await res.json();
-  const files = (data.files || []) as DriveFileEntry[];
-  return files.filter((f) => f.mimeType !== 'application/vnd.google-apps.folder');
+  throw new Error('資料夾裡的檔案太多，無法完整列出');
+};
+
+/** Label for a file with no type in its name, so it still reads as a group of its own. */
+export const UNTYPED_LABEL = '一般';
+/** Label for the group of names that do not follow the naming convention. */
+export const UNPARSED_LABEL = '其他';
+
+export interface DriveFileGroup {
+  /** Stable key for React and for comparing groups — lowercased, so "Claude" and "claude" are one group. */
+  key: string;
+  label: string;
+  files: DriveFileEntry[];
+}
+
+interface ParsedFileName {
+  ai: string;
+  /** Empty when the name carries no type. */
+  type: string;
+  /** yyyymmdd, kept as text — it sorts correctly as text and never needs to be a Date. */
+  date: string;
+  seq: number;
+}
+
+/*
+ * AI_[type_]questions_yyyymmdd_seq[_count][_].json
+ *
+ * `questions` is the anchor: what comes before it is the AI name plus an
+ * optional type (which may itself contain underscores), what comes after is
+ * the date and running number. The trailing count is matched but ignored — it
+ * is whatever number of questions the file happens to hold, not always 50.
+ */
+const FILE_NAME_PATTERN = /^(.+?)_questions_(\d{8})_(\d+)(?:_\d+)?$/i;
+
+const parseDriveFileName = (name: string): ParsedFileName | null => {
+  const stem = name.replace(/\.json$/i, '').replace(/_+$/, '');
+  const match = FILE_NAME_PATTERN.exec(stem);
+  if (!match) return null;
+
+  const [ai, ...typeParts] = match[1].split('_');
+  if (!ai) return null;
+  return { ai, type: typeParts.join('_'), date: match[2], seq: Number(match[3]) };
+};
+
+const compareText = (a: string, b: string): number => a.localeCompare(b, undefined, { sensitivity: 'base' });
+
+/**
+ * Sorts a folder listing by AI, then type, then newest first, and gathers it
+ * into groups for the picker.
+ *
+ * A file with no type sorts ahead of the typed ones of the same AI. Names that
+ * do not fit the convention are never dropped or guessed at — they collect in
+ * one trailing group, ordered by name.
+ */
+export const groupAndSortDriveFiles = (files: DriveFileEntry[]): DriveFileGroup[] => {
+  const parsed: { file: DriveFileEntry; info: ParsedFileName }[] = [];
+  const unparsed: DriveFileEntry[] = [];
+
+  for (const file of files) {
+    const info = parseDriveFileName(file.name);
+    if (info) parsed.push({ file, info });
+    else unparsed.push(file);
+  }
+
+  // An empty type compares lower than any real one, which is what puts the untyped files first.
+  parsed.sort(
+    (a, b) =>
+      compareText(a.info.ai, b.info.ai) ||
+      compareText(a.info.type, b.info.type) ||
+      b.info.date.localeCompare(a.info.date) ||
+      b.info.seq - a.info.seq ||
+      compareText(a.file.name, b.file.name)
+  );
+
+  const groups: DriveFileGroup[] = [];
+  for (const { file, info } of parsed) {
+    const key = `${info.ai.toLowerCase()}\u0000${info.type.toLowerCase()}`;
+    const last = groups[groups.length - 1];
+    if (last && last.key === key) {
+      last.files.push(file);
+    } else {
+      groups.push({ key, label: `${info.ai} · ${info.type || UNTYPED_LABEL}`, files: [file] });
+    }
+  }
+
+  if (unparsed.length > 0) {
+    unparsed.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    groups.push({ key: '\u0000unparsed', label: UNPARSED_LABEL, files: unparsed });
+  }
+
+  return groups;
 };
 
 /**
