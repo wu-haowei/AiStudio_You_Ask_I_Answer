@@ -95,23 +95,42 @@ service cloud.firestore {
     }
 
     /*
-     * Public account record. Readable so the login screen can say "this name is
-     * new, use the default password", and so the rules below can confirm that a
-     * name and its document key belong together.
+     * Public account record — deliberately holds nothing private: the display
+     * name, whether the account is new or still on a forced password change, the
+     * per-account password salt, and whether a recovery email exists (a yes/no,
+     * never the address itself — that lives in accountPrivate below).
+     *
+     * It has to be readable without signing in so the login screen can tell a
+     * new name from a taken one and fetch the salt. That is a lookup by name
+     * (`get`) and nothing more: `list` is refused, so the collection cannot be
+     * walked to harvest every account that exists.
      */
     match /users/{key} {
-      allow read: if true;
+      allow get: if true;
+      allow list: if false;
       /*
        * The id is the lowercased name. Enforcing that here is what keeps
        * "Amy" and "amy" one account — and stops a session being bound to one
        * person's name using another person's secret.
        */
       allow create: if canRegister() && request.resource.data.name.lower() == key;
-      // Only the owner may touch it afterwards, and never rename it
-      allow update: if hasSession()
-        && myKey() == key
+      // Only the owner may touch it afterwards, and never rename it. Somebody who has just
+      // proven their recovery email may too: a reset has to be able to write the salt for an
+      // account that has none yet, and it is the same proof that already lets them replace
+      // the secret.
+      allow update: if ((hasSession() && myKey() == key) || canResetByEmail(key))
         && request.resource.data.name.lower() == key;
       allow delete: if false;
+    }
+
+    /*
+     * Things about an account that only its owner may see — today, the recovery
+     * email. It used to sit on the public users document, where anyone could read
+     * every address; the copy here is what the settings screen displays. It is
+     * display data only: the reset flow trusts emails/{email}, never this.
+     */
+    match /accountPrivate/{key} {
+      allow read, write: if hasSession() && myKey() == key;
     }
 
     /*
@@ -149,6 +168,14 @@ service cloud.firestore {
       allow create: if hasSession() && request.resource.data.key == myKey();
       allow update: if false;
       allow delete: if hasSession() && resource.data.key == myKey();
+      /*
+       * "Is this address already taken?" — asked before a confirmation mail is sent, so
+       * a duplicate is refused straight away. A signed-in person may look up one address:
+       * it is either absent, theirs, or somebody else's, and the last case is simply
+       * refused, so the answer is "taken" without the account it belongs to ever being
+       * shown. Single lookups only — there is no way to list the addresses on file.
+       */
+      allow get: if hasSession() && (resource == null || resource.data.key == myKey());
     }
 
     /*
@@ -281,8 +308,8 @@ service cloud.firestore {
 
     // Per-person display preferences, keyed by the name used to sign in.
     match /userPrefs/{key} {
-      allow read: if hasSession();
-      allow write: if hasSession() && myKey() == key;
+      // Nobody else's background or language is any of your business; the app only ever reads its own
+      allow read, write: if hasSession() && myKey() == key;
     }
 
     /*

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, Mail } from 'lucide-react';
-import { AuthError, lookupAccount, setRecoveryEmail } from '../lib/accounts';
+import { AuthError, getRecoveryEmail, setRecoveryEmail } from '../lib/accounts';
 import { useT } from '../i18n';
 
 interface EmailSettingsModalProps {
@@ -47,10 +47,10 @@ export const EmailSettingsModal: React.FC<EmailSettingsModalProps> = ({
     setIsLoading(true);
     setError('');
     setNextEmail('');
-    lookupAccount(name)
-      .then((account) => {
+    getRecoveryEmail(name)
+      .then((email) => {
         if (cancelled) return;
-        setCurrentEmail(account.email || null);
+        setCurrentEmail(email || null);
       })
       .catch(() => {
         if (!cancelled) setCurrentEmail(null);

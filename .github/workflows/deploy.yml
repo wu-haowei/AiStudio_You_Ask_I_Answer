@@ -43,6 +43,7 @@ jobs:
           VITE_FIREBASE_STORAGE_BUCKET: ${{ vars.VITE_FIREBASE_STORAGE_BUCKET }}
           VITE_GOOGLE_API_KEY: ${{ vars.VITE_GOOGLE_API_KEY }}
           VITE_GOOGLE_API_URL: ${{ vars.VITE_GOOGLE_API_URL }}
+          VITE_APPCHECK_SITE_KEY: ${{ vars.VITE_APPCHECK_SITE_KEY }}
         run: npm run build:pages
 
       - name: Setup Pages
